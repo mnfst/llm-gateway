@@ -1,4 +1,5 @@
 import { ACTIVATION_THRESHOLDS, KEYWORD_WEIGHTS, weightFor } from '../specificity-weights';
+import { PRIVATE_DOCS_KEYWORDS } from '../keywords/private-docs';
 
 describe('weightFor', () => {
   describe('returns correct weight for known keywords', () => {
@@ -207,17 +208,8 @@ describe('weightFor', () => {
     });
   });
 
-  /**
-   * Bare single-word tokens that collide with coding / science vocabulary
-   * (math.phi, the SoX audio library, biopython MSA, "network dynamic
-   * affinity", a React soc2 badge, "this document is confidential") must NOT
-   * be decisive on their own. They are demoted below the 1.0 activation
-   * threshold so a single occurrence cannot flip routing to private_docs; the
-   * unambiguous privacy acronyms (hipaa, pii, gdpr, ccpa, pdpa) stay strong.
-   * See the review finding on private-docs.ts:32.
-   */
-  describe('collisioning bare tokens are sub-threshold', () => {
-    const SUB_THRESHOLD = [
+  describe('private_docs collision and anchor weights', () => {
+    const AMBIGUOUS_BARE_TOKENS = [
       'phi',
       'sox',
       'msa',
@@ -228,8 +220,15 @@ describe('weightFor', () => {
       'prescription',
       'testimony',
     ];
-    it.each(SUB_THRESHOLD)('%j weighs less than the private_docs threshold (1.0)', (kw) => {
-      expect(weightFor(kw)).toBeLessThan(1.0);
+
+    it.each(AMBIGUOUS_BARE_TOKENS)('%j is not a private_docs keyword', (keyword) => {
+      expect(PRIVATE_DOCS_KEYWORDS).not.toContain(keyword);
+      expect(KEYWORD_WEIGHTS).not.toHaveProperty(keyword);
+    });
+
+    it('uses a strong contextual anchor for explicit document confidentiality', () => {
+      expect(PRIVATE_DOCS_KEYWORDS).toContain('document is confidential');
+      expect(weightFor('document is confidential')).toBe(3);
     });
 
     it('unambiguous privacy acronyms stay strong (weight 3)', () => {

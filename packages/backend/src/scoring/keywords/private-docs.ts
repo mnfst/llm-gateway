@@ -11,9 +11,9 @@
  * — it is only consumed by specificity detection, not tier selection.
  *
  * False-positive care: standalone words like "contract" / "phi" can appear in
- * non-private coding contexts, so they are written as multi-word phrases
- * whenever possible. Only standalone terms that unambiguously signal private
- * data are kept as bare words.
+ * non-private coding contexts, so ambiguous signals are written as multi-word
+ * phrases. Only standalone terms that unambiguously signal private data are
+ * kept as bare words.
  */
 export const PRIVATE_DOCS_KEYWORDS = [
   // ── Regulatory / compliance terms ──
@@ -23,15 +23,13 @@ export const PRIVATE_DOCS_KEYWORDS = [
   'gdpr-compliant',
   'ccpa',
   'pdpa',
-  'sox',
   'sarbanes-oxley',
   'personal data',
   'sensitive data',
   'personal information',
   'protected health information',
-  'phi',
   'pii',
-  'confidential',
+  'document is confidential',
   'privileged communication',
   'attorney-client privilege',
   'work product privilege',
@@ -42,8 +40,6 @@ export const PRIVATE_DOCS_KEYWORDS = [
   'patient file',
   'clinical note',
   'clinical record',
-  'prescription',
-  'diagnosis',
   'treatment plan',
   'health record',
   'healthcare data',
@@ -55,12 +51,10 @@ export const PRIVATE_DOCS_KEYWORDS = [
   'patient medical history',
 
   // ── Document types that are typically sensitive ──
-  'nda',
   'non-disclosure agreement',
   'confidentiality agreement',
   'confidential agreement',
   'master service agreement',
-  'msa',
   'service agreement',
   'client agreement',
   'employment agreement',
@@ -73,7 +67,6 @@ export const PRIVATE_DOCS_KEYWORDS = [
   'discovery documents',
   'deposition transcript',
   'witness statement',
-  'testimony',
   'insurance claim',
   'claims processing',
   'medical claim',
@@ -206,7 +199,6 @@ export const PRIVATE_DOCS_KEYWORDS = [
   'soc 2',
   'soc 1',
   'soc 3',
-  'soc2',
   'legal document',
   'medical document',
   'healthcare document',

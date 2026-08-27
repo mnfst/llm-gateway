@@ -18,7 +18,14 @@ describe('frontend SPECIFICITY_STAGES parity (static)', () => {
       join(__dirname, '../../../../frontend/src/services/providers.ts'),
       'utf8',
     );
-    const stageIds = [...source.matchAll(/id:\s*'([a-z_]+)'/g)].map((m) => m[1]);
+    const markerIndex = source.indexOf('export const SPECIFICITY_STAGES');
+    expect(markerIndex).toBeGreaterThanOrEqual(0);
+
+    const terminatorIndex = source.indexOf('\n];', markerIndex);
+    expect(terminatorIndex).toBeGreaterThan(markerIndex);
+
+    const stagesSource = source.slice(markerIndex, terminatorIndex);
+    const stageIds = [...stagesSource.matchAll(/id:\s*'([a-z_]+)'/g)].map((m) => m[1]);
     for (const category of SPECIFICITY_CATEGORIES) {
       expect(stageIds.includes(category)).toBe(true);
     }

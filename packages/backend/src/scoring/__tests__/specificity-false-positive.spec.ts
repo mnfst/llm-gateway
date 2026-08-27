@@ -270,9 +270,9 @@ describe('specificity false-positive regression', () => {
     /**
      * Regression for the review finding on private-docs.ts:32. These prompts
      * use bare tokens (phi, sox, msa, nda, soc2, confidential, diagnosis,
-     * prescription, testimony) in ordinary coding / science senses. Each
-     * demoted token is a single sub-threshold signal and must NOT route the
-     * request to the privacy-preserving provider on its own.
+     * prescription, testimony) in ordinary coding / science senses. Ambiguous
+     * bare tokens are not private-document signals and must not route the
+     * request to the privacy-preserving provider.
      */
     const CODING_SCIENCE_COLLISIONS = [
       'compute the phi coefficient for this contingency table',
@@ -281,7 +281,7 @@ describe('specificity false-positive regression', () => {
       'align the sequences and run msa with biopython',
       'generate a soc2-style badge component in react',
       'add an nda field to the network dynamic affinity model',
-      'this document is confidential, do not share it',
+      'the confidential option in this API should default to false',
       'what is the diagnosis code for this icd mapping',
       'the prescription pattern in this react hook is wrong',
       'witness testimony in the mock trial object',
@@ -298,9 +298,21 @@ describe('specificity false-positive regression', () => {
       expect(report.failures.length).toBe(0);
     });
 
-    it('a demoted token paired with a private anchor still routes to private_docs', () => {
-      // Positive control: demotion must not break detection when a genuine
-      // private signal is present alongside the bare token.
+    it('multiple or repeated bare-token collisions do not accumulate into private_docs', () => {
+      const prompts = [
+        'generate a soc2 badge and a phi chart in the sox audio module',
+        'parse the nda and msa fields in the diagnosis prescription fixture',
+        'phi phi phi phi phi phi phi phi phi phi',
+      ];
+
+      for (const prompt of prompts) {
+        expect(scan(prompt)?.category).not.toBe('private_docs');
+      }
+    });
+
+    it('an ambiguous term paired with a private anchor still routes to private_docs', () => {
+      // Positive control: removing the ambiguous bare term must not break
+      // detection when a genuine private signal is present alongside it.
       expect(scan('redact the diagnosis from this medical history file')?.category).toBe(
         'private_docs',
       );
@@ -309,6 +321,10 @@ describe('specificity false-positive regression', () => {
       );
       // Unambiguous acronyms stay decisive on their own.
       expect(scan('extract pii from this csv export')?.category).toBe('private_docs');
+    });
+
+    it('routes an explicitly confidential document to private_docs', () => {
+      expect(scan('this document is confidential, do not share it')?.category).toBe('private_docs');
     });
   });
 

@@ -73,15 +73,13 @@ export const KEYWORD_WEIGHTS: Record<string, number> = {
   'gdpr-compliant': 3,
   ccpa: 3,
   pdpa: 3,
-  sox: 0.5, // sub-threshold: SoX audio library collision
   'sarbanes-oxley': 3,
   'personal data': 3,
   'sensitive data': 3,
   'personal information': 3,
   'protected health information': 3,
-  phi: 0.5, // sub-threshold: math.phi / phi-coefficient collision
   pii: 3, // kept strong: unambiguous PII acronym
-  confidential: 0.5, // sub-threshold: "this document is confidential" is too common
+  'document is confidential': 3,
   'privileged communication': 3,
   'attorney-client privilege': 3,
   'work product privilege': 3,
@@ -96,8 +94,6 @@ export const KEYWORD_WEIGHTS: Record<string, number> = {
   'patient medical history': 3,
   'clinical note': 3,
   'clinical record': 3,
-  prescription: 0.5, // sub-threshold: react "prescription pattern" collision
-  diagnosis: 0.5, // sub-threshold: icd-mapping coding prompt collision
   'treatment plan': 3,
   'health record': 3,
   'health records': 3,
@@ -110,12 +106,10 @@ export const KEYWORD_WEIGHTS: Record<string, number> = {
   'healthcare document': 3,
   'health document': 3,
   'health files': 3,
-  nda: 0.5, // sub-threshold: "network dynamic affinity" collision
   'non-disclosure agreement': 3,
   'confidentiality agreement': 3,
   'confidential agreement': 3,
   'master service agreement': 3,
-  msa: 0.5, // sub-threshold: biopython multiple-sequence-alignment collision
   'service agreement': 3,
   'client agreement': 3,
   'employment agreement': 3,
@@ -128,7 +122,6 @@ export const KEYWORD_WEIGHTS: Record<string, number> = {
   'discovery documents': 3,
   'deposition transcript': 3,
   'witness statement': 3,
-  testimony: 0.5, // sub-threshold: mock-object "witness testimony" collision
   'insurance claim': 3,
   'claims processing': 3,
   'medical claim': 3,
@@ -175,7 +168,6 @@ export const KEYWORD_WEIGHTS: Record<string, number> = {
   'soc 2': 3,
   'soc 1': 3,
   'soc 3': 3,
-  soc2: 0.5, // sub-threshold: react "soc2 badge" / component-name collision
   'legal document': 3,
   'financial document': 3,
   'hr document': 3,
