@@ -14,7 +14,13 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
-import { AUTH_TYPES, RESPONSE_MODES, TIER_SLOTS, type ResponseMode } from 'manifest-shared';
+import {
+  AUTH_TYPES,
+  MAX_FALLBACKS,
+  RESPONSE_MODES,
+  TIER_SLOTS,
+  type ResponseMode,
+} from 'manifest-shared';
 import { PROVIDER_BY_ID_OR_ALIAS } from '../../common/constants/providers';
 
 const KNOWN_PROVIDER_IDS: readonly string[] = Array.from(PROVIDER_BY_ID_OR_ALIAS.keys());
@@ -199,7 +205,7 @@ export class CopilotPollDto {
 
 export class SetFallbacksDto {
   @IsArray()
-  @ArrayMaxSize(5)
+  @ArrayMaxSize(MAX_FALLBACKS)
   @IsString({ each: true })
   @IsNotEmpty({ each: true })
   models!: string[];
@@ -210,7 +216,7 @@ export class SetFallbacksDto {
   // pins which provider key is used for that fallback.
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(5)
+  @ArrayMaxSize(MAX_FALLBACKS)
   @ValidateNested({ each: true })
   @Type(() => ModelRouteDto)
   routes?: ModelRouteDto[];

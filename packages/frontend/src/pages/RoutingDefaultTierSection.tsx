@@ -161,7 +161,7 @@ const RoutingDefaultTierSection: Component<RoutingDefaultTierSectionProps> = (pr
   const subtitle = () =>
     props.complexityEnabled()
       ? 'Analyzes the complexity of each request on the fly and routes it to the matching tier.'
-      : 'Pick one model and up to 5 fallbacks as your default routing.';
+      : 'Pick one model and up to 100 fallbacks as your default routing.';
 
   const showComplexityToggle = () => props.showComplexityToggle?.() ?? true;
   const controls = () => (

@@ -170,9 +170,9 @@ describe('SetFallbacksDto', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('should pass with up to 5 model strings', async () => {
+  it('should pass with up to 100 model strings', async () => {
     const dto = toFallbacksDto({
-      models: ['gpt-4o', 'claude-3', 'gemini-pro', 'llama-3', 'mistral-large'],
+      models: Array.from({ length: 100 }, (_, i) => `model-${i}`),
     });
     const errors = await validate(dto);
     expect(errors).toHaveLength(0);
@@ -190,9 +190,9 @@ describe('SetFallbacksDto', () => {
     expect(errors.length).toBeGreaterThan(0);
   });
 
-  it('should reject more than 5 items', async () => {
+  it('should reject more than 100 items', async () => {
     const dto = toFallbacksDto({
-      models: ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'],
+      models: Array.from({ length: 101 }, (_, i) => `model-${i}`),
     });
     const errors = await validate(dto);
     expect(errors.length).toBeGreaterThan(0);

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@solidjs/testing-library';
-import type { ProviderParamSpecCatalog } from 'manifest-shared';
+import { MAX_FALLBACKS, type ProviderParamSpecCatalog } from 'manifest-shared';
 
 vi.mock('solid-js/web', async (importOriginal) => {
   const mod = await importOriginal<typeof import('solid-js/web')>();
@@ -223,9 +223,9 @@ describe('FallbackList', () => {
     expect(onAddFallback).toHaveBeenCalledTimes(1);
   });
 
-  it('hides add button when 5 fallbacks exist', () => {
-    const fiveFallbacks = ['m1', 'm2', 'm3', 'm4', 'm5'];
-    render(() => <FallbackList {...defaultProps} fallbacks={fiveFallbacks} />);
+  it('hides add button when the max number of fallbacks exist', () => {
+    const maxFallbacks = Array.from({ length: MAX_FALLBACKS }, (_, i) => `m${i}`);
+    render(() => <FallbackList {...defaultProps} fallbacks={maxFallbacks} />);
 
     expect(screen.queryByText('Add fallback')).toBeNull();
   });
@@ -408,7 +408,7 @@ describe('FallbackList', () => {
     expect(iconSpans.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('shows add button when fewer than 5 fallbacks', () => {
+  it('shows add button when fewer than the max number of fallbacks', () => {
     render(() => <FallbackList {...defaultProps} fallbacks={['model-a', 'model-b']} />);
 
     expect(screen.getByText('Add fallback')).toBeDefined();
