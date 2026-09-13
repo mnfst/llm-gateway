@@ -905,6 +905,11 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     buildHeaders: bearerHeaders,
     parse: parseOpenAI,
   },
+  edenai: {
+    endpoint: 'https://api.edenai.run/v3/models',
+    buildHeaders: bearerHeaders,
+    parse: parseOpenAI,
+  },
   byteplus: {
     endpoint: BYTEPLUS_CODING_MODELS_URL,
     buildHeaders: bearerHeaders,
