@@ -121,6 +121,18 @@ const OLLAMA_ENDPOINTS = new Set(['ollama', 'ollama-cloud']);
 const MISTRAL_TOOL_CALL_ID_REGEX = /^[A-Za-z0-9]{9}$/;
 
 /**
+ * NVIDIA Nemotron models served through OpenRouter (e.g. `nvidia/nemotron-3-*`)
+ * validate request params strictly and reject Anthropic's top-level `thinking`
+ * field with a 400 ("Unsupported parameter(s): `thinking`"). NeMo expresses
+ * reasoning through `extra_body.chat_template_kwargs.enable_thinking` instead,
+ * but OpenRouter is a passthrough provider so we can't inject that shape here —
+ * the safe fix is to drop `thinking` for just this family, leaving DeepSeek,
+ * Kimi, Gemma, etc. pass through unchanged. Matched on the bare model id so
+ * `nvidia/nemotron-3-ultra-550b-a55b` and `nemotron-3-super-120b-a12b` both hit.
+ */
+const NVIDIA_NEMOTRON_FAMILY_RE = /^nemotron(?:[-_.\d]|$)/i;
+
+/**
  * OpenAI models that require `max_completion_tokens` instead of `max_tokens`.
  * All o-series reasoning models and GPT-5+ models use the new parameter.
  */
@@ -318,6 +330,11 @@ export function sanitizeOpenAiBody(
   const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
   const convertMaxTokens =
     needsMaxCompletionTokens && 'max_tokens' in body && !('max_completion_tokens' in body);
+  // NVIDIA Nemotron hosts (reached through the OpenRouter passthrough) reject the
+  // Anthropic-style top-level `thinking` param; scope the strip to that family so
+  // the general OpenRouter passthrough stays untouched (mnfst/manifest#2464).
+  const isOpenRouterNemotron =
+    endpointKey === 'openrouter' && NVIDIA_NEMOTRON_FAMILY_RE.test(bareForRegex);
 
   const cleaned: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
@@ -333,6 +350,11 @@ export function sanitizeOpenAiBody(
       continue;
     }
     if (passthroughTopLevel) {
+      // OpenRouter forwards the whole body for most models, but NVIDIA Nemotron
+      // hosts validate strictly and reject Anthropic-style `thinking`. Drop it
+      // only for that family (see NVIDIA_NEMOTRON_FAMILY_RE) — mirroring the
+      // Ollama exception below — so DeepSeek/Kimi/Gemma passthrough is unaffected.
+      if (key === 'thinking' && isOpenRouterNemotron) continue;
       cleaned[key] = value;
       continue;
     }

@@ -137,6 +137,41 @@ describe('provider-client-converters', () => {
       expect(result).toHaveProperty('metadata');
     });
 
+    it('strips thinking for OpenRouter NVIDIA Nemotron models (fix for #2464)', () => {
+      // OpenRouter forwards most models as a total passthrough, but NVIDIA
+      // Nemotron hosts validate strictly and reject Anthropic's top-level
+      // `thinking` param with a 400. The fix drops that field only for the
+      // Nemotron family instead of guessing NeMo's `chat_template_kwargs`
+      // reasoning shape.
+      const body = {
+        messages: [{ role: 'user', content: 'Hi' }],
+        thinking: { type: 'enabled' },
+      };
+
+      const result = sanitizeOpenAiBody(body, 'openrouter', 'nvidia/nemotron-3-ultra-550b-a55b');
+
+      expect(result).not.toHaveProperty('thinking');
+    });
+
+    it('keeps thinking passthrough for non-Nemotron OpenRouter models', () => {
+      // Other OpenRouter-served families (Gemma, DeepSeek, Kimi, etc.) do not
+      // reject the param, so the general passthrough must stay intact.
+      const body = {
+        messages: [{ role: 'user', content: 'Hi' }],
+        thinking: { type: 'enabled' },
+      };
+
+      for (const model of [
+        'google/gemma-4-31b-it',
+        'deepseek/deepseek-v4-pro',
+        'moonshotai/kimi-k2.6',
+        'nvidia/llama-3.3-70b-instruct', // llama, not nemotron — keep passthrough
+      ]) {
+        const result = sanitizeOpenAiBody(body, 'openrouter', model);
+        expect(result).toHaveProperty('thinking', { type: 'enabled' });
+      }
+    });
+
     it('should strip Anthropic-style thinking params for Ollama endpoints', () => {
       const body = {
         messages: [{ role: 'user', content: 'Hi' }],
