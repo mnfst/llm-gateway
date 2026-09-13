@@ -28,6 +28,7 @@ describe('SUBSCRIPTION_PROVIDER_CONFIGS', () => {
         'opencode-go',
         'gemini',
         'xai',
+        'cline-pass',
       ]),
     );
   });
@@ -210,6 +211,22 @@ describe('getSubscriptionProviderConfig', () => {
       subscriptionLabel: 'GLM Coding Plan',
       subscriptionAuthMode: 'token',
       subscriptionKeyPlaceholder: 'Paste your Z.ai API key',
+    });
+  });
+
+  it('returns config for cline-pass', () => {
+    const config = getSubscriptionProviderConfig('cline-pass');
+    expect(config).toMatchObject({
+      supportsSubscription: true,
+      subscriptionLabel: 'ClinePass subscription',
+      subscriptionAuthMode: 'token',
+      subscriptionKeyPlaceholder: 'Paste your ClinePass API key',
+      knownModelsMatch: 'exact',
+    });
+    expect(config?.subscriptionCapabilities).toMatchObject({
+      maxContextWindow: 200000,
+      supportsPromptCaching: false,
+      supportsBatching: false,
     });
   });
 
@@ -406,6 +423,22 @@ describe('getSubscriptionKnownModels', () => {
     expect(models).toContain('cline-pass/kimi-k3');
   });
 
+  it('returns the curated cline-pass models list (including Kimi K3)', () => {
+    expect(getSubscriptionKnownModels('cline-pass')).toEqual([
+      'cline-pass/glm-5.2',
+      'cline-pass/kimi-k2.7-code',
+      'cline-pass/kimi-k2.6',
+      'cline-pass/kimi-k3',
+      'cline-pass/deepseek-v4-pro',
+      'cline-pass/deepseek-v4-flash',
+      'cline-pass/mimo-v2.5',
+      'cline-pass/mimo-v2.5-pro',
+      'cline-pass/minimax-m3',
+      'cline-pass/qwen3.7-max',
+      'cline-pass/qwen3.7-plus',
+    ]);
+  });
+
   it('returns null known models for ollama-cloud (relies on live /api/tags discovery)', () => {
     const models = getSubscriptionKnownModels('ollama-cloud');
     expect(models).toBeNull();
@@ -467,6 +500,12 @@ describe('getSubscriptionKnownModelsMatch', () => {
 
   it('returns exact for moonshot Kimi Coding Plan', () => {
     expect(getSubscriptionKnownModelsMatch('moonshot')).toBe('exact');
+  });
+
+  it('returns exact for cline-pass', () => {
+    // ClinePass does not expose a traditional OpenAI-compatible /v1/models
+    // endpoint, so the catalog is curated manually and matched exactly.
+    expect(getSubscriptionKnownModelsMatch('cline-pass')).toBe('exact');
   });
 
   it('returns exact for Mistral Vibe', () => {
@@ -573,6 +612,15 @@ describe('getSubscriptionCapabilities', () => {
     });
     expect(caps?.modelContextWindows?.['k3']).toBe(1048576);
     expect(caps?.modelContextWindows?.['k3-256k']).toBe(262144);
+  });
+
+  it('returns capabilities for cline-pass', () => {
+    const caps = getSubscriptionCapabilities('cline-pass');
+    expect(caps).toMatchObject({
+      maxContextWindow: 200000,
+      supportsPromptCaching: false,
+      supportsBatching: false,
+    });
   });
 
   it('returns capabilities for Qwen Token Plan', () => {
