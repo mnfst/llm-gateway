@@ -422,4 +422,57 @@ describe('ProxyRateLimiter', () => {
       clearIntervalSpy.mockRestore();
     });
   });
+
+  describe('env-configurable caps', () => {
+    const withEnv = (env: Record<string, string>, fn: (l: ProxyRateLimiter) => void) => {
+      const saved: Record<string, string | undefined> = {};
+      for (const [k, v] of Object.entries(env)) {
+        saved[k] = process.env[k];
+        process.env[k] = v;
+      }
+      const l = new ProxyRateLimiter();
+      try {
+        fn(l);
+      } finally {
+        l.onModuleDestroy();
+        for (const [k, v] of Object.entries(saved)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      }
+    };
+
+    it('honors RATE_MAX_REQUESTS', () => {
+      withEnv({ RATE_MAX_REQUESTS: '3' }, (l) => {
+        l.checkLimit('user-env');
+        l.checkLimit('user-env');
+        l.checkLimit('user-env');
+        expect(() => l.checkLimit('user-env')).toThrow(HttpException);
+      });
+    });
+
+    it('honors IP_RATE_MAX_REQUESTS', () => {
+      withEnv({ IP_RATE_MAX_REQUESTS: '2' }, (l) => {
+        l.checkIpLimit('10.0.0.9');
+        l.checkIpLimit('10.0.0.9');
+        expect(() => l.checkIpLimit('10.0.0.9')).toThrow(HttpException);
+      });
+    });
+
+    it('honors CONCURRENCY_MAX', () => {
+      withEnv({ CONCURRENCY_MAX: '1' }, (l) => {
+        l.acquireSlot('tenant-env');
+        expect(() => l.acquireSlot('tenant-env')).toThrow(HttpException);
+      });
+    });
+
+    it('keeps the default when the override is not a positive integer', () => {
+      for (const bad of ['0', '-5', 'abc', '2.5', '']) {
+        withEnv({ CONCURRENCY_MAX: bad }, (l) => {
+          for (let i = 0; i < 10; i++) l.acquireSlot('tenant-bad');
+          expect(() => l.acquireSlot('tenant-bad')).toThrow(HttpException);
+        });
+      }
+    });
+  });
 });
