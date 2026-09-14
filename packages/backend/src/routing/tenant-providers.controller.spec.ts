@@ -27,6 +27,7 @@ describe('TenantProvidersController', () => {
       priority: 0,
       api_key_encrypted: 'encrypted-same-key',
       key_prefix: 'sk-test',
+      stream_warmup_ms: null,
       region: null,
       is_active: true,
       connected_at: '2026-01-01T00:00:00.000Z',

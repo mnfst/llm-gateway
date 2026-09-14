@@ -391,6 +391,28 @@ For vLLM, text-generation-webui, TogetherAI proxies, Azure OpenAI gateways, or a
 
 If Ollama runs on a different host on your LAN, set `OLLAMA_HOST` in `.env` to the full URL (e.g. `http://192.168.1.20:11434`) and restart the stack. Private IPs are allowed in the self-hosted version.
 
+### Stream warmup timeout
+
+Local servers often need longer than the default 15 seconds to emit the first
+token after a fresh start — a cold Ollama model load or an LM Studio
+just-in-time load can take 30–60 s before streaming begins. When the warmup
+window expires, Manifest assumes the primary route failed and falls over to a
+fallback tier, so slow-but-healthy local models get skipped.
+
+The warmup window resolves in this order (first non-null wins, clamped to
+1–120 s):
+
+1. **Tier override** — per custom routing tier (tier edit → *Stream timeout
+   (ms)*). Most specific; wins over everything else.
+2. **Provider override** — per custom provider (Providers → *Edit provider* →
+   *Stream timeout (ms)*). Catches every tier that routes through a slow local
+   server without editing tiers one by one.
+3. **`STREAM_WARMUP_MS`** env var — deployment-wide default override.
+4. **Built-in default** — 15000 ms, unchanged for existing deployments.
+
+Changes apply on the next request — no restart needed. A 60-second in-memory
+cache keeps the lookup off the hot path.
+
 ### Podman / rootless containers
 
 Podman doesn't ship `/.dockerenv` or `host.docker.internal`. Manifest still
@@ -422,6 +444,7 @@ sets this automatically).
 | `MANIFEST_TELEMETRY_DISABLED`      | No          | `0`                                          | Set `1` to disable anonymous usage telemetry                                                                                                                                                               |
 | `TELEMETRY_ENDPOINT`               | No          | `https://telemetry.manifest.build/v1/report` | Send the usage report to your own collector instead                                                                                                                                                        |
 | `AUTOFIX_GLOBAL_ENABLED`           | No          | `true`                                       | Deployment-wide Autofix kill switch. Set `false` to make no calls to the Autofix service at all, boot health check included                                                                                |
+| `STREAM_WARMUP_MS`                 | No          | `15000`                                      | How long streaming waits for the first token before failing over. Raise it for local/JIT-loaded models (cold Ollama/LM Studio loads). See **Stream warmup timeout** below.                                    |
 
 `NODE_ENV` and `SEED_DATA` are deliberately fixed by the compose file and are
 not knobs here: the image is a production artifact, and the demo-data seeder

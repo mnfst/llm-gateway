@@ -447,6 +447,24 @@ export class ProviderService {
     return { provider: record, isNew: true };
   }
 
+  /**
+   * Set the per-provider stream warmup override on the companion tenant row
+   * for a custom provider. null clears the override (inherit tier/env/default).
+   */
+  async setCustomProviderStreamWarmup(
+    tenantId: string,
+    providerKey: string,
+    streamWarmupMs: number | null,
+  ): Promise<void> {
+    const row = await this.providerRepo.findOne({
+      where: { tenant_id: tenantId, provider: providerKey },
+    });
+    if (!row) return;
+    row.stream_warmup_ms = streamWarmupMs;
+    row.updated_at = new Date().toISOString();
+    await this.providerRepo.save(row);
+  }
+
   private async upsertProviderWithLabel(
     agentId: string | null,
     tenantId: string,

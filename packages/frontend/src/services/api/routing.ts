@@ -444,6 +444,7 @@ export interface CustomProviderData {
   base_url: string;
   api_kind: CustomProviderApiKind;
   has_api_key: boolean;
+  stream_warmup_ms?: number | null;
   models: CustomProviderModel[];
   created_at: string;
 }

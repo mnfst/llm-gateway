@@ -1,4 +1,11 @@
-import { DEFAULT_STREAM_WARMUP_MS, parseStreamWarmupMs, peekStream } from '../stream-warmup';
+import {
+  DEFAULT_STREAM_WARMUP_MS,
+  MIN_STREAM_WARMUP_MS,
+  MAX_STREAM_WARMUP_MS,
+  parseStreamWarmupMs,
+  clampStreamWarmupMs,
+  peekStream,
+} from '../stream-warmup';
 
 function makeStream(chunks: Uint8Array[], delayMs = 0): ReadableStream<Uint8Array> {
   let i = 0;
@@ -86,6 +93,40 @@ describe('peekStream', () => {
 
     it('falls back to 15000 ms when env var is zero', () => {
       expect(parseStreamWarmupMs('0')).toBe(DEFAULT_STREAM_WARMUP_MS);
+    });
+  });
+
+  describe('clampStreamWarmupMs', () => {
+    it('returns the value for an in-range integer', () => {
+      expect(clampStreamWarmupMs(30_000)).toBe(30_000);
+    });
+
+    it('accepts the lower and upper bounds', () => {
+      expect(clampStreamWarmupMs(MIN_STREAM_WARMUP_MS)).toBe(MIN_STREAM_WARMUP_MS);
+      expect(clampStreamWarmupMs(MAX_STREAM_WARMUP_MS)).toBe(MAX_STREAM_WARMUP_MS);
+    });
+
+    it('rounds fractional values to the nearest integer', () => {
+      expect(clampStreamWarmupMs(10_500.6)).toBe(10_501);
+    });
+
+    it('coerces numeric strings', () => {
+      expect(clampStreamWarmupMs('45000')).toBe(45_000);
+    });
+
+    it('returns undefined for values below the minimum', () => {
+      expect(clampStreamWarmupMs(999)).toBeUndefined();
+    });
+
+    it('returns undefined for values above the maximum', () => {
+      expect(clampStreamWarmupMs(120_001)).toBeUndefined();
+    });
+
+    it('returns undefined for non-numeric input', () => {
+      expect(clampStreamWarmupMs('abc')).toBeUndefined();
+      expect(clampStreamWarmupMs(null)).toBeUndefined();
+      expect(clampStreamWarmupMs(undefined)).toBeUndefined();
+      expect(clampStreamWarmupMs({})).toBeUndefined();
     });
   });
 

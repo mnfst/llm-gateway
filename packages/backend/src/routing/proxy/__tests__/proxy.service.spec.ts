@@ -1,4 +1,5 @@
 import { ManifestError } from '../../../common/errors/manifest-error';
+import type { DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import {
   getProviderParamSpecs,
@@ -202,6 +203,7 @@ describe('ProxyService — orchestration', () => {
       list: jest.fn().mockResolvedValue(specCatalog),
     };
     autofixService = { maybeHeal: jest.fn().mockResolvedValue(null) };
+    const dataSource = { query: jest.fn().mockResolvedValue([]) } as unknown as DataSource;
 
     svc = new ProxyService(
       resolveService as unknown as ResolveService,
@@ -216,6 +218,7 @@ describe('ProxyService — orchestration', () => {
       momentum as unknown as SessionMomentumService,
       limitCheck as unknown as LimitCheckService,
       fallbackService as unknown as ProxyFallbackService,
+      dataSource,
       configService,
       signatureCache,
       thinkingCache,

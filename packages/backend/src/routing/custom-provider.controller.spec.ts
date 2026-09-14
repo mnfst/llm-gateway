@@ -95,7 +95,9 @@ describe('CustomProviderController', () => {
         name: 'Groq',
         alias: 'groq',
         base_url: 'https://api.groq.com/v1',
+        api_kind: undefined,
         has_api_key: true,
+        stream_warmup_ms: null,
         models: [{ model_name: 'llama' }],
         created_at: '2026-03-04',
       });

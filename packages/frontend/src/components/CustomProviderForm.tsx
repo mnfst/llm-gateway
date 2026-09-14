@@ -85,6 +85,9 @@ const CustomProviderForm: Component<Props> = (props) => {
     props.initialData?.api_kind ?? 'openai',
   );
   const [apiKey, setApiKey] = createSignal(props.prefill?.apiKey ?? '');
+  const [streamWarmupMs, setStreamWarmupMs] = createSignal<string>(
+    props.initialData?.stream_warmup_ms != null ? String(props.initialData.stream_warmup_ms) : '',
+  );
   const [editingKey, setEditingKey] = createSignal(false);
   const [rows, setRows] = createSignal<ModelRow[]>(
     props.initialData ? toModelRows(props.initialData.models) : prefillRows(),
@@ -184,11 +187,15 @@ const CustomProviderForm: Component<Props> = (props) => {
 
   const handleUpdate = async () => {
     setError(null);
+    const warmRaw = streamWarmupMs().trim();
+    const warm = warmRaw === '' ? null : Math.round(Number(warmRaw));
     const data: Record<string, unknown> = {
       name: name().trim(),
       alias: normalizedAlias(),
       base_url: baseUrl().trim(),
       models: buildModels(),
+      stream_warmup_ms:
+        warm !== null && Number.isFinite(warm) && warm >= 1000 && warm <= 120000 ? warm : null,
     };
     if (editingKey()) {
       data.apiKey = apiKey().trim() || undefined;
@@ -391,6 +398,31 @@ const CustomProviderForm: Component<Props> = (props) => {
               {probeError()}
             </div>
           </Show>
+        </div>
+
+        <div class="provider-detail__field">
+          <label class="provider-detail__label" for="cp-stream-warmup">
+            Stream timeout (ms){' '}
+            <span style="color: hsl(var(--muted-foreground)); font-weight: 400;">optional</span>
+          </label>
+          <input
+            id="cp-stream-warmup"
+            class="provider-detail__input"
+            type="number"
+            min="1000"
+            max="120000"
+            step="1000"
+            placeholder="inherit (tier / env / 15000 default)"
+            value={streamWarmupMs()}
+            onInput={(e) => setStreamWarmupMs(e.currentTarget.value)}
+          />
+          <div
+            class="provider-detail__hint"
+            style="font-size: var(--font-size-xs); color: hsl(var(--muted-foreground)); margin-top: 4px;"
+          >
+            How long streaming waits for the first token before failover. Raise for local models
+            with slow cold loads (e.g. 45000–60000). Clamped 1000–120000; blank inherits.
+          </div>
         </div>
 
         <div class="provider-detail__field">

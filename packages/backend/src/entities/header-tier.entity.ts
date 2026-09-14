@@ -48,6 +48,10 @@ export class HeaderTier {
   @Column('varchar', { default: 'buffered' })
   response_mode!: ResponseMode;
 
+  /** Per-tier stream warmup override (ms). null => provider/global default applies. */
+  @Column('integer', { nullable: true })
+  stream_warmup_ms!: number | null;
+
   @Column(timestampType(), { default: timestampDefault() })
   created_at!: string;
 

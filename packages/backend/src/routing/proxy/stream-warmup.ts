@@ -21,6 +21,18 @@ export function parseStreamWarmupMs(rawValue = process.env.STREAM_WARMUP_MS): nu
 
 export const STREAM_WARMUP_MS = parseStreamWarmupMs();
 
+/** Bounds for tier/provider warmup overrides. */
+export const MIN_STREAM_WARMUP_MS = 1_000;
+export const MAX_STREAM_WARMUP_MS = 120_000;
+
+/** Clamp a candidate override; returns undefined when out of bounds. */
+export function clampStreamWarmupMs(value: unknown): number | undefined {
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (typeof n !== 'number' || !Number.isFinite(n)) return undefined;
+  const ms = Math.round(n);
+  return ms >= MIN_STREAM_WARMUP_MS && ms <= MAX_STREAM_WARMUP_MS ? ms : undefined;
+}
+
 export interface WarmupSuccess {
   ok: true;
   /** A new ReadableStream that yields the buffered chunk first, then the rest. */

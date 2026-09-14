@@ -15,6 +15,8 @@ export interface HeaderTier {
   fallback_routes: ModelRoute[] | null;
   output_modality?: OutputModality;
   response_mode?: ResponseMode;
+  /** Per-tier stream warmup override (ms). null/absent => provider/global default. */
+  stream_warmup_ms?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -84,6 +86,21 @@ export function setHeaderTierResponseMode(
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ response_mode: responseMode }),
+    },
+  );
+}
+
+export function setHeaderTierStreamWarmup(
+  agentName: string,
+  id: string,
+  streamWarmupMs: number | null,
+) {
+  return fetchMutate<HeaderTier>(
+    routingPath(agentName, `header-tiers/${encodeURIComponent(id)}/stream-warmup`),
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ stream_warmup_ms: streamWarmupMs }),
     },
   );
 }

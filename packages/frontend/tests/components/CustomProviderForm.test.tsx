@@ -903,6 +903,7 @@ describe("CustomProviderForm — edit mode", () => {
       expect(mockUpdateCustomProvider).toHaveBeenCalledWith("test-agent", "cp-1", {
         name: "Updated Groq",
         alias: null,
+        stream_warmup_ms: null,
         base_url: "https://api.groq.com/openai/v1",
         models: [
           {
@@ -945,6 +946,7 @@ describe("CustomProviderForm — edit mode", () => {
         alias: null,
         base_url: "https://api.groq.com/openai/v1",
         apiKey: "new-key-123",
+        stream_warmup_ms: null,
         models: [
           {
             model_name: "llama-3.1-70b",
@@ -1455,6 +1457,7 @@ describe("CustomProviderForm — edit mode: extra API key + delete UI branches",
         alias: null,
         base_url: "https://api.groq.com/openai/v1",
         apiKey: undefined,
+        stream_warmup_ms: null,
         models: [
           {
             model_name: "llama-3.1-70b",

@@ -132,6 +132,12 @@ export class ProbeCustomProviderDto {
 
 export class UpdateCustomProviderDto {
   @IsOptional()
+  @IsNumber()
+  @Min(1000)
+  @Type(() => Number)
+  stream_warmup_ms?: number | null;
+
+  @IsOptional()
   @IsString()
   @IsNotEmpty()
   @MinLength(1)

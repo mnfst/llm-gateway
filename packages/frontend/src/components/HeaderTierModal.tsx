@@ -5,6 +5,7 @@ import {
   createHeaderTier,
   getSeenHeaders,
   setHeaderTierResponseMode,
+  setHeaderTierStreamWarmup,
   updateHeaderTier,
   type HeaderTier,
   type SeenHeader,
@@ -49,6 +50,11 @@ const HeaderTierModal: Component<Props> = (props) => {
   );
   const [streamMode, setStreamMode] = createSignal<boolean>(
     editingTier?.response_mode === 'stream',
+  );
+
+  // Stream warmup override (ms). Empty string = inherit (provider -> global 15s default).
+  const [streamWarmup, setStreamWarmup] = createSignal<string>(
+    editingTier?.stream_warmup_ms != null ? String(editingTier.stream_warmup_ms) : '',
   );
   const [submitting, setSubmitting] = createSignal(false);
   const [triedSubmit, setTriedSubmit] = createSignal(false);
@@ -170,6 +176,19 @@ const HeaderTierModal: Component<Props> = (props) => {
         header_value: headerValue().trim(),
         badge_color: badgeColor(),
       };
+      // Validate stream warmup override before any persisting call so an
+      // invalid value cannot leave a partially saved tier behind.
+      const warmupRaw = streamWarmup().trim();
+      let warmupVal: number | null = null;
+      if (warmupRaw !== '') {
+        const parsed = Number(warmupRaw);
+        if (!Number.isInteger(parsed) || parsed < 1000 || parsed > 120000) {
+          throw new Error(
+            'Stream timeout must be a whole number between 1,000 and 120,000 ms, or left blank to inherit.',
+          );
+        }
+        warmupVal = parsed;
+      }
       let saved = editingTier
         ? await updateHeaderTier(props.agentName, editingTier.id, payload)
         : await createHeaderTier(props.agentName, payload);
@@ -177,6 +196,10 @@ const HeaderTierModal: Component<Props> = (props) => {
       const newMode: ResponseMode = streamMode() ? 'stream' : 'buffered';
       if (saved.response_mode !== newMode) {
         saved = await setHeaderTierResponseMode(props.agentName, saved.id, newMode);
+      }
+      // Persist stream warmup override if changed
+      if (warmupVal !== (saved.stream_warmup_ms ?? null)) {
+        saved = await setHeaderTierStreamWarmup(props.agentName, saved.id, warmupVal);
       }
       props.onSaved(saved);
       props.onClose();
@@ -371,6 +394,30 @@ const HeaderTierModal: Component<Props> = (props) => {
             </div>
           </div>
         </Show>
+
+        <label
+          class="modal-card__field-label"
+          for="header-tier-warmup"
+          style="margin-top: 16px; display: block;"
+        >
+          Stream timeout (ms)
+        </label>
+        <input
+          id="header-tier-warmup"
+          class="modal-card__input"
+          type="number"
+          min={1000}
+          max={120000}
+          step={1000}
+          value={streamWarmup()}
+          placeholder="15000 (default)"
+          onInput={(e) => setStreamWarmup(e.currentTarget.value)}
+        />
+        <p class="response-mode-modal__desc">
+          How long to wait for the first token before failing over. Leave blank to inherit the
+          provider setting, then the global default (15s). Raise this only for tiers that route to
+          local or JIT-loaded models — e.g. 60000 for cold model loads.
+        </p>
 
         <div class="header-tier-modal__footer">
           <Show when={editingTier && props.onDelete}>

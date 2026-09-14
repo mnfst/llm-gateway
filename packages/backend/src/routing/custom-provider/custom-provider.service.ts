@@ -393,6 +393,16 @@ export class CustomProviderService {
     // an alias or model-list edit shows in /v1/models on the next request.
     this.routingCache.invalidateTenant(tenantId);
 
+    // Stream warmup lives on the companion tenant_providers row (the row the
+    // proxy reads). Sync it when the modal sends the field; null clears it.
+    if ('stream_warmup_ms' in dto) {
+      await this.providerService.setCustomProviderStreamWarmup(
+        tenantId,
+        CustomProviderService.providerKey(id),
+        dto.stream_warmup_ms ?? null,
+      );
+    }
+
     // Reload pricing cache when the model list changes so explicit routes to
     // these models have fresh cost metadata.
     if (dto.models !== undefined) {

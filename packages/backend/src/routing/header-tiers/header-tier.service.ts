@@ -132,6 +132,29 @@ export class HeaderTierService {
     return row;
   }
 
+  async setStreamWarmup(
+    agentId: string,
+    id: string,
+    streamWarmupMs: number | null,
+  ): Promise<HeaderTier> {
+    const row = await this.findOrThrow(agentId, id);
+    if (streamWarmupMs !== null) {
+      const n = Math.round(streamWarmupMs);
+      if (!Number.isFinite(n) || n < 1000 || n > 120000) {
+        throw new BadRequestException(
+          'stream_warmup_ms must be between 1000 and 120000, or null to clear',
+        );
+      }
+      row.stream_warmup_ms = n;
+    } else {
+      row.stream_warmup_ms = null;
+    }
+    row.updated_at = new Date().toISOString();
+    await this.repo.save(row);
+    this.routingCache.invalidateAgent(agentId);
+    return row;
+  }
+
   async setEnabled(agentId: string, id: string, enabled: boolean): Promise<HeaderTier> {
     const row = await this.findOrThrow(agentId, id);
     row.enabled = enabled;

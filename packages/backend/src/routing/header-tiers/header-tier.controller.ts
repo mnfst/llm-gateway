@@ -11,6 +11,9 @@ import {
 } from '@nestjs/common';
 import {
   ArrayMaxSize,
+  IsInt,
+  Min,
+  Max,
   IsArray,
   IsIn,
   IsNotEmpty,
@@ -43,6 +46,15 @@ interface UpdateHeaderTierBody {
   header_key?: string;
   header_value?: string;
   badge_color?: TierColor;
+}
+
+export class StreamWarmupBody {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1000)
+  @Max(120000)
+  stream_warmup_ms!: number | null;
 }
 
 interface ReorderBody {
@@ -158,6 +170,17 @@ export class HeaderTierController {
     const agent = await this.resolveAgentService.resolve(ctx.tenantId, agentName);
     await this.headerTierService.delete(agent.id, id);
     return { ok: true };
+  }
+
+  @Patch(':agentName/header-tiers/:id/stream-warmup')
+  async setStreamWarmup(
+    @TenantCtx() ctx: TenantContext,
+    @Param('agentName') agentName: string,
+    @Param('id') id: string,
+    @Body() body: StreamWarmupBody,
+  ) {
+    const agent = await this.resolveAgentService.resolve(ctx.tenantId, agentName);
+    return this.headerTierService.setStreamWarmup(agent.id, id, body.stream_warmup_ms ?? null);
   }
 
   @Post(':agentName/header-tiers/reorder')

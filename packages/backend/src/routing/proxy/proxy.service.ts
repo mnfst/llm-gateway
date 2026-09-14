@@ -58,7 +58,7 @@ import {
   type ResolvedRouteCredentials,
   type RouteCredentialDeps,
 } from './route-credentials';
-import { peekStream, STREAM_WARMUP_MS } from './stream-warmup';
+import { peekStream, STREAM_WARMUP_MS, clampStreamWarmupMs } from './stream-warmup';
 import { toChatCompletionsRequest } from './responses-adapter';
 import { messagesToChatCompletionsRequest } from './anthropic-messages-adapter';
 import { effectiveRoutesForResponseMode } from '../routing-core/response-mode-guard';
@@ -73,6 +73,7 @@ import {
 import { AutofixService } from '../autofix/autofix.service';
 import type { AutofixRecord } from '../autofix/autofix.types';
 import { recordingResponseFromText } from './attempt-recording-capture';
+import { DataSource } from 'typeorm';
 
 type ResolvedRouting = Awaited<ReturnType<ResolveService['resolve']>> & {
   explicit_model_override?: boolean;
@@ -214,6 +215,10 @@ interface HealedReforwardContext {
   tenantProviderId: string | null;
 }
 
+// --- Per-tier/per-provider stream warmup overrides ---
+const warmupCache = new Map<string, number | null>();
+const WARMUP_CACHE_TTL_MS = 60_000;
+
 @Injectable()
 export class ProxyService {
   private readonly logger = new Logger(ProxyService.name);
@@ -231,6 +236,7 @@ export class ProxyService {
     private readonly momentum: SessionMomentumService,
     private readonly limitCheck: LimitCheckService,
     private readonly fallbackService: ProxyFallbackService,
+    private readonly dataSource: DataSource,
     private readonly config: ConfigService,
     private readonly signatureCache: ThoughtSignatureCache,
     private readonly thinkingCache: ThinkingBlockCache,
@@ -238,6 +244,65 @@ export class ProxyService {
     private readonly providerParamSpecs: ProviderParamSpecService,
     private readonly autofixService: AutofixService,
   ) {}
+
+  private async resolveStreamWarmupMs(
+    tenantId: string,
+    headerTierId: string | undefined,
+    provider: string | undefined,
+  ): Promise<number> {
+    // Hierarchy: header_tiers.stream_warmup_ms -> tenant_providers.stream_warmup_ms -> global STREAM_WARMUP_MS
+    try {
+      if (headerTierId) {
+        const key = `tier:${headerTierId}`;
+        if (warmupCache.has(key)) {
+          const v = warmupCache.get(key);
+          if (v) return v;
+        } else {
+          const rows: Array<{ stream_warmup_ms: number | null }> = await this.dataSource.query(
+            'SELECT stream_warmup_ms FROM header_tiers WHERE id = $1',
+            [headerTierId],
+          );
+          const ms = clampStreamWarmupMs(rows?.[0]?.stream_warmup_ms) ?? null;
+          warmupCache.set(key, ms);
+          setTimeout(() => warmupCache.delete(key), WARMUP_CACHE_TTL_MS).unref?.();
+          if (ms) {
+            this.logger.log(
+              `Stream warmup override applied: source=header_tier id=${headerTierId} ms=${ms}`,
+            );
+            return ms;
+          }
+        }
+      }
+      if (provider) {
+        const key = `prov:${tenantId}:${provider}`;
+        if (warmupCache.has(key)) {
+          const v = warmupCache.get(key);
+          if (v) return v;
+        } else {
+          const rows: Array<{ stream_warmup_ms: number | null }> = await this.dataSource.query(
+            `SELECT stream_warmup_ms FROM tenant_providers
+             WHERE tenant_id = $1 AND provider = $2 AND is_active AND stream_warmup_ms IS NOT NULL
+             ORDER BY updated_at DESC LIMIT 1`,
+            [tenantId, provider],
+          );
+          const ms = clampStreamWarmupMs(rows?.[0]?.stream_warmup_ms) ?? null;
+          warmupCache.set(key, ms);
+          setTimeout(() => warmupCache.delete(key), WARMUP_CACHE_TTL_MS).unref?.();
+          if (ms) {
+            this.logger.log(
+              `Stream warmup override applied: source=provider name=${provider} ms=${ms}`,
+            );
+            return ms;
+          }
+        }
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Stream warmup override lookup failed: ${err instanceof Error ? err.message : String(err)} — using global default`,
+      );
+    }
+    return STREAM_WARMUP_MS;
+  }
 
   async proxyRequest(opts: ProxyRequestOptions): Promise<ProxyResult> {
     const {
@@ -554,7 +619,10 @@ export class ProxyService {
     // actually starts delivering data before committing to the client.
     // If the stream stalls or dies, we can still try fallback providers.
     if (forward.response.ok && stream && forward.response.body) {
-      const warmup = await peekStream(forward.response.body, STREAM_WARMUP_MS);
+      const warmup = await peekStream(
+        forward.response.body,
+        await this.resolveStreamWarmupMs(tenantId, resolved.header_tier_id, route.provider),
+      );
       if (warmup.ok) {
         const peeked: ForwardResult = {
           response: new Response(warmup.stream, {
