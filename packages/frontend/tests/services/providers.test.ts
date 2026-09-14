@@ -1036,6 +1036,21 @@ describe('PROVIDERS', () => {
     });
   });
 
+  it('Requesty is an API-key router with a key URL and generic key validation', () => {
+    const requesty = PROVIDERS.find((p) => p.id === 'requesty')!;
+    expect(requesty).toBeDefined();
+    expect(requesty.name).toBe('Requesty');
+    expect(requesty.supportsSubscription).toBeUndefined();
+    expect(requesty.subscriptionOnly).toBeUndefined();
+    expect(requesty.models).toEqual([]);
+    expect(getRoutingProviderApiKeyUrl('requesty')).toBe('https://app.requesty.ai/api-keys');
+    expect(validateApiKey(requesty, '')).toEqual({
+      valid: false,
+      error: 'API key is required',
+    });
+    expect(validateApiKey(requesty, 'sk-' + 'a'.repeat(30))).toEqual({ valid: true });
+  });
+
   it('requires an API key URL for every provider that needs one', () => {
     const missingProviderIds = PROVIDERS.filter(
       (provider) =>

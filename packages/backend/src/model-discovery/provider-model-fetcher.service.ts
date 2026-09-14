@@ -1054,6 +1054,14 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     buildHeaders: () => ({}),
     parse: parseOpenRouter,
   },
+  // Requesty exposes an OpenAI-compatible model catalog at /v1/models.
+  // The endpoint requires a Bearer API key (unlike OpenRouter's public
+  // catalog), and returns a standard `{ data: [{ id, ... }] }` shape.
+  requesty: {
+    endpoint: 'https://router.requesty.ai/v1/models',
+    buildHeaders: bearerHeaders,
+    parse: parseOpenAI,
+  },
   ...MANAGED_FREE_FETCHER_CONFIGS,
   ollama: {
     endpoint: `${OLLAMA_HOST}/api/tags`,
