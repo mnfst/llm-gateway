@@ -1404,4 +1404,113 @@ describe('FallbackList', () => {
       expect(btn).toBeDefined();
     });
   });
+
+  // ── Reorder in-flight state (issue #1876) ──
+  describe('reorder in-flight state', () => {
+    /**
+     * Drags the first card past the last one and drops it. In jsdom every
+     * getBoundingClientRect is zeroed, so clientY=0 puts the drop slot after
+     * the last card — the same trick the existing drag/drop specs use.
+     */
+    const dropFirstCardLast = (container: HTMLElement) => {
+      const list = container.querySelector<HTMLElement>('.fallback-list__items')!;
+      const cards = list.querySelectorAll<HTMLElement>('.fallback-list__card');
+      fireEvent.dragStart(cards[0]!, { dataTransfer: { effectAllowed: '', setData: vi.fn() } });
+      fireEvent.dragOver(list, {
+        clientY: 0,
+        dataTransfer: { dropEffect: '' },
+        preventDefault: vi.fn(),
+      });
+      fireEvent.drop(list, { preventDefault: vi.fn() });
+    };
+
+    it('shows a skeleton on the moved row and locks dragging until the reorder persists', async () => {
+      let resolvePersist!: () => void;
+      mockSetFallbacks.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          resolvePersist = resolve;
+        }),
+      );
+      const onReorderingChange = vi.fn();
+      const { container } = render(() => (
+        <FallbackList
+          {...defaultProps}
+          fallbacks={['model-a', 'model-b']}
+          onReorderingChange={onReorderingChange}
+        />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(1);
+      });
+      const cards = container.querySelectorAll<HTMLElement>('.fallback-list__card');
+      expect(Array.from(cards).every((c) => c.draggable === false)).toBe(true);
+      expect(onReorderingChange).toHaveBeenCalledWith(true);
+
+      resolvePersist();
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(0);
+      });
+      expect(onReorderingChange).toHaveBeenLastCalledWith(false);
+      expect(
+        Array.from(container.querySelectorAll<HTMLElement>('.fallback-list__card')).every(
+          (c) => c.draggable === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('clears the in-flight state when the reorder fails to persist', async () => {
+      mockSetFallbacks.mockRejectedValueOnce(new Error('nope'));
+      const onReorderingChange = vi.fn();
+      const onUpdate = vi.fn();
+      const { container } = render(() => (
+        <FallbackList
+          {...defaultProps}
+          fallbacks={['model-a', 'model-b']}
+          onUpdate={onUpdate}
+          onReorderingChange={onReorderingChange}
+        />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(onReorderingChange).toHaveBeenLastCalledWith(false);
+      });
+      expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(0);
+      // Optimistic move reverted, then the drag lock released.
+      expect(onUpdate).toHaveBeenLastCalledWith(['model-a', 'model-b'], null);
+    });
+
+    it('reorders without a parent listener when onReorderingChange is omitted', async () => {
+      const { container } = render(() => (
+        <FallbackList {...defaultProps} fallbacks={['model-a', 'model-b']} />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(mockSetFallbacks).toHaveBeenCalledWith(
+          'test-agent',
+          'tier-1',
+          ['model-b', 'model-a'],
+          undefined,
+        );
+      });
+      expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(0);
+    });
+
+    it('locks every row while the parent reports a primary swap in flight', () => {
+      const { container } = render(() => (
+        <FallbackList {...defaultProps} fallbacks={['model-a', 'model-b']} swappingIndex={0} />
+      ));
+
+      const cards = container.querySelectorAll<HTMLElement>('.fallback-list__card');
+      expect(cards.length).toBe(2);
+      expect(Array.from(cards).every((c) => c.draggable === false)).toBe(true);
+    });
+  });
 });

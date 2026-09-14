@@ -80,6 +80,13 @@ interface FallbackListProps {
     params: RequestParamDefaults | null,
   ) => Promise<unknown>;
   swappingIndex?: number | null;
+  /**
+   * Notified when a reorder-drop starts and finishes persisting. The parent
+   * uses it to lock its own drag sources (the primary chip) for the duration,
+   * so a second swap can't be started against a tier whose fallback order is
+   * still being written.
+   */
+  onReorderingChange?: (reordering: boolean) => void;
   modelParamsScope?: string;
 }
 
@@ -101,7 +108,23 @@ const FallbackList: Component<FallbackListProps> = (props) => {
   const [removingIndex, setRemovingIndex] = createSignal<number | null>(null);
   const [dragIndex, setDragIndex] = createSignal<number | null>(null);
   const [dropSlot, setDropSlot] = createSignal<number | null>(null);
+  const [reorderingIndex, setReorderingIndex] = createSignal<number | null>(null);
   let listRef: HTMLDivElement | undefined;
+
+  /**
+   * A row whose new position is still being persisted. Covers both the
+   * primary/fallback swap driven by the parent (`swappingIndex`) and a
+   * reorder inside this list, which used to persist with no feedback at all.
+   */
+  const isPending = (index: number): boolean =>
+    props.swappingIndex === index || reorderingIndex() === index;
+
+  /**
+   * True while any drag-initiated update for this tier is in flight. Rows stay
+   * put until it resolves, so a retry-because-nothing-happened drag can't fire
+   * a second overlapping write against the same tier.
+   */
+  const dragLocked = (): boolean => props.swappingIndex != null || reorderingIndex() !== null;
 
   const modelLabel = (model: string): string => {
     const info = props.models.find((m) => m.model_name === model);
@@ -348,11 +371,16 @@ const FallbackList: Component<FallbackListProps> = (props) => {
     });
 
     props.onUpdate(reordered, reorderedRoutes);
+    setReorderingIndex(insertAt);
+    props.onReorderingChange?.(true);
     try {
       await persistSet(props.agentName, props.tier, reordered, reorderedRoutes ?? undefined);
       toast.success('Fallback order updated');
     } catch {
       props.onUpdate(original, originalRoutes);
+    } finally {
+      setReorderingIndex(null);
+      props.onReorderingChange?.(false);
     }
   };
 
@@ -399,7 +427,7 @@ const FallbackList: Component<FallbackListProps> = (props) => {
                     class="fallback-list__card"
                     classList={{
                       'fallback-list__card--dragging': dragIndex() === i(),
-                      'fallback-list__card--swapping': props.swappingIndex === i(),
+                      'fallback-list__card--swapping': isPending(i()),
                       'fallback-list__card--skipped': skippedInStream(model(), i()),
                     }}
                     title={
@@ -407,7 +435,7 @@ const FallbackList: Component<FallbackListProps> = (props) => {
                         ? 'Skipped while Stream mode is active'
                         : undefined
                     }
-                    draggable={true}
+                    draggable={!dragLocked()}
                     onDragStart={(e) => handleDragStart(i(), e)}
                     // Bind dragend on the draggable row itself rather than
                     // only on the container. When a fallback row is dropped
@@ -422,7 +450,7 @@ const FallbackList: Component<FallbackListProps> = (props) => {
                     onDragEnd={handleDragEnd}
                   >
                     <Show
-                      when={props.swappingIndex !== i()}
+                      when={!isPending(i())}
                       fallback={
                         <>
                           <div
