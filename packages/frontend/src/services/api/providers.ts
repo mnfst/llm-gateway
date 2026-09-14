@@ -11,6 +11,19 @@ export interface TenantProviderConnection {
   models_fetched_at: string | null;
   cached_model_count: number;
   is_active: boolean;
+  /**
+   * Set when an upstream rejected this connection's credential (401) and it is
+   * being skipped until re-authenticated. Sourced from the gateway's
+   * credential-health registry, so it reflects the current process only.
+   */
+  requires_reauth?: boolean;
+  last_auth_failure?: {
+    statusCode: number;
+    reason: 'subscription_token_rejected' | 'api_key_rejected';
+    keyLabel?: string;
+    provider?: string;
+    at: number;
+  } | null;
 }
 
 /**

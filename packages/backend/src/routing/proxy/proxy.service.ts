@@ -750,6 +750,8 @@ export class ProxyService {
       agentId: ctx.agentId,
       tenantProviderId: ctx.tenantProviderId,
       providerKeyLabel: ctx.keyLabel,
+      apiKey: ctx.apiKey,
+      rawApiKey: ctx.rawApiKey,
       startProviderAttempt: ctx.startProviderAttempt,
     });
   }
@@ -859,6 +861,8 @@ export class ProxyService {
       authType: ctx.authType,
       tenantProviderId: ctx.tenantProviderId,
       providerKeyLabel: ctx.keyLabel,
+      apiKey: ctx.apiKey,
+      rawApiKey: ctx.rawApiKey,
       startProviderAttempt: ctx.startProviderAttempt,
     });
   }

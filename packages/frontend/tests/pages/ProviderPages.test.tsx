@@ -274,6 +274,47 @@ describe('provider pages', () => {
     expect(screen.queryByText('84.2%')).toBeNull();
   });
 
+  it('flags connections whose credential an upstream rejected', async () => {
+    // A 401 from upstream leaves the connection active but skipped in routing.
+    // Both title branches render: one with the rejected status, one without.
+    mockGetGlobalProviders.mockResolvedValue({
+      ...globalProvidersResponse,
+      providers: globalProvidersResponse.providers.map((p) =>
+        p.provider === 'openai'
+          ? {
+              ...p,
+              connections: [
+                {
+                  ...connection('sub-openai', 'ChatGPT'),
+                  requires_reauth: true,
+                  last_auth_failure: {
+                    statusCode: 401,
+                    reason: 'subscription_token_rejected',
+                    keyLabel: 'ChatGPT',
+                    provider: 'openai',
+                    at: Date.now(),
+                  },
+                },
+                {
+                  ...connection('sub-openai-2', 'ChatGPT Backup'),
+                  requires_reauth: true,
+                  last_auth_failure: null,
+                },
+              ],
+            }
+          : p,
+      ),
+    });
+
+    render(() => <Subscriptions />);
+    await waitFor(() => expect(screen.getByText('ChatGPT')).toBeDefined());
+
+    await waitFor(() => expect(screen.getAllByText('Needs re-auth')).toHaveLength(2));
+    const badges = screen.getAllByText('Needs re-auth');
+    expect(badges[0].getAttribute('title')).toContain('HTTP 401');
+    expect(badges[1].getAttribute('title')).not.toContain('HTTP');
+  });
+
   it('renders the subscriptions page and opens the connect modal', async () => {
     render(() => <Subscriptions />);
 

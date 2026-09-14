@@ -1,4 +1,4 @@
-import { Injectable, Logger, Optional } from '@nestjs/common';
+import { Injectable, Logger, Optional, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { AuthType, ModelRoute } from 'manifest-shared';
@@ -14,6 +14,8 @@ import {
   inferProviderFromModelName,
 } from '../../common/utils/provider-aliases';
 import { isManifestUsableProvider } from '../../common/utils/subscription-support';
+import { forLogLabel } from '../../common/utils/log-sanitize';
+import { CredentialHealthService } from './credential-health.service';
 
 /**
  * Sentinel id for the built-in Ollama tile. getProviderKeys() short-circuits
@@ -23,27 +25,8 @@ import { isManifestUsableProvider } from '../../common/utils/subscription-suppor
  */
 export const SYNTHETIC_OLLAMA_PROVIDER_ID = 'ollama';
 
-/** Longest connection label echoed into a log line. */
-const MAX_LOGGED_LABEL_LENGTH = 64;
 const STALE_PIN_WARN_WINDOW_MS = 60_000;
 const MAX_STALE_PIN_WARNING_KEYS = 256;
-
-/**
- * Connection labels are user-authored text. Strip control characters (a
- * newline would let a label forge extra log lines) and cap the length before
- * interpolating one into a log message.
- */
-function forLog(label: string): string {
-  const cleaned = [...label]
-    .map((c) => {
-      const code = c.codePointAt(0) ?? 0;
-      return code < 0x20 || code === 0x7f ? ' ' : c;
-    })
-    .join('');
-  return cleaned.length > MAX_LOGGED_LABEL_LENGTH
-    ? `${cleaned.slice(0, MAX_LOGGED_LABEL_LENGTH)}…`
-    : cleaned;
-}
 
 @Injectable()
 export class ProviderKeyService {
@@ -60,8 +43,16 @@ export class ProviderKeyService {
     @Optional()
     @InjectRepository(AgentEnabledProvider)
     private readonly enabledProviderRepo: Repository<AgentEnabledProvider> | null = null,
+    /**
+     * Rejected-credential state from the proxy. Optional so key selection stays
+     * usable (and testable) standalone; when present, a connection whose token
+     * an upstream rejected is skipped in favor of a healthy sibling so routing
+     * does not keep hammering a dead credential.
+     */
+    @Optional()
+    @Inject(CredentialHealthService)
+    private readonly credentialHealth: CredentialHealthService | null = null,
   ) {}
-
   /**
    * Returns the ordered list of API keys for (tenant, provider, authType),
    * optionally filtered to only those the given agent has access to.
@@ -125,9 +116,21 @@ export class ProviderKeyService {
   ): Promise<CachedProviderKey | null> {
     const keys = await this.getProviderKeys(tenantId, provider, authType, agentId);
     if (keys.length === 0) return null;
+    // Prefer connections whose credential is still accepted upstream. When
+    // every key is rejected we keep the full set so selection is unchanged —
+    // the proxy short-circuits the dead credential with a clear reauth error
+    // instead of silently reporting "no provider key".
+    const healthy = this.healthyKeys(keys);
+    const pool = healthy.length > 0 ? healthy : keys;
     if (label) {
-      const match = keys.find((k) => k.label.toLowerCase() === label.toLowerCase());
+      const match = pool.find((k) => k.label.toLowerCase() === label.toLowerCase());
       if (match) return match;
+      // The pin names a real connection but its credential was skipped.
+      const pinned = keys.find((k) => k.label.toLowerCase() === label.toLowerCase());
+      if (pinned && healthy.length > 0) {
+        this.warnSkippedUnhealthyKey(tenantId, provider, authType, pinned, pool[0], agentId);
+        return pool[0];
+      }
       // A pin that names no connection is a stale route (the key was renamed
       // or deleted). Serving the default keeps traffic flowing, but it silently
       // bills a connection the operator did not choose. Throttle identical
@@ -146,12 +149,53 @@ export class ProviderKeyService {
           if (oldest !== undefined) this.stalePinWarnings.delete(oldest);
         }
         this.logger.warn(
-          `Key label "${forLog(label)}" matches no ${provider} connection for tenant=${tenantId} ` +
-            `authType=${authType ?? 'any'} — falling back to "${forLog(keys[0].label)}"`,
+          `Key label "${forLogLabel(label)}" matches no ${provider} connection for tenant=${tenantId} ` +
+            `authType=${authType ?? 'any'} — falling back to "${forLogLabel(pool[0].label)}"`,
         );
       }
     }
-    return keys[0];
+    return pool[0];
+  }
+
+  /** Keys whose credential has not been rejected upstream, or all keys if none are healthy. */
+  private healthyKeys(keys: CachedProviderKey[]): CachedProviderKey[] {
+    if (!this.credentialHealth) return keys;
+    return keys.filter((k) => !this.credentialHealth!.isRejected(k.id, k.apiKey));
+  }
+
+  private warnSkippedUnhealthyKey(
+    tenantId: string,
+    provider: string,
+    authType: AuthType | undefined,
+    skipped: CachedProviderKey,
+    selected: CachedProviderKey,
+    agentId: string | undefined,
+  ): void {
+    const warningKey = [
+      tenantId,
+      agentId ?? '',
+      provider.toLowerCase(),
+      authType ?? '',
+      skipped.label,
+      'unhealthy',
+    ]
+      .join('\0')
+      .toLowerCase();
+    const now = Date.now();
+    const warnedAt = this.stalePinWarnings.get(warningKey);
+    if (warnedAt !== undefined && now - warnedAt < STALE_PIN_WARN_WINDOW_MS) return;
+    this.stalePinWarnings.set(warningKey, now);
+    if (this.stalePinWarnings.size > MAX_STALE_PIN_WARNING_KEYS) {
+      // Evict the oldest entry; the map is non-empty here (size > max).
+      for (const oldest of this.stalePinWarnings.keys()) {
+        this.stalePinWarnings.delete(oldest);
+        break;
+      }
+    }
+    this.logger.warn(
+      `Skipping unhealthy ${provider} connection "${forLogLabel(skipped.label)}" for tenant=${tenantId} ` +
+        `authType=${authType ?? 'any'} — using "${forLogLabel(selected.label)}" until it is re-authenticated`,
+    );
   }
 
   /**

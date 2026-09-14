@@ -20,6 +20,7 @@ import {
   mergeUsage,
   connectionUsage,
   type TenantProviderSummary,
+  type TenantProviderConnection,
 } from '../../services/api/providers.js';
 import { analyticsPing, routingPing } from '../../services/sse.js';
 import { toggleScrollFade } from '../../services/scroll-fade.js';
@@ -173,6 +174,26 @@ const StatusBadge: Component<{ active: boolean }> = (props) => (
       Active
     </span>
   </Show>
+);
+
+/**
+ * An upstream 401 means this connection's token/API key was rejected. Routing
+ * skips it until it is reconnected, so make that state visible instead of
+ * leaving the connection looking "Active".
+ */
+const ReauthBadge: Component<{ failure?: TenantProviderConnection['last_auth_failure'] }> = (
+  props,
+) => (
+  <span
+    title={
+      props.failure
+        ? `Upstream rejected this credential (HTTP ${props.failure.statusCode}). Reconnect it to resume routing.`
+        : 'Upstream rejected this credential. Reconnect it to resume routing.'
+    }
+    style="display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--radius-sm); background: hsl(var(--warning)); color: white; font-size: var(--font-size-xs); font-weight: 600;"
+  >
+    Needs re-auth
+  </span>
 );
 
 const ProviderMark: Component<{ providerId: string; name: string; size?: number }> = (props) => {
@@ -749,7 +770,12 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
                           </Show>
                         </td>
                         <td>
-                          <StatusBadge active={row.connection.is_active} />
+                          <span style="display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                            <StatusBadge active={row.connection.is_active} />
+                            <Show when={row.connection.requires_reauth}>
+                              <ReauthBadge failure={row.connection.last_auth_failure} />
+                            </Show>
+                          </span>
                         </td>
                         <td>
                           <Show when={!usageLoading()} fallback={<UsageShimmer width={96} />}>

@@ -4,6 +4,8 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  Optional,
+  Inject,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, FindOptionsWhere, EntityManager } from 'typeorm';
@@ -16,6 +18,7 @@ import { HeaderTier } from '../../entities/header-tier.entity';
 import { AgentMessage } from '../../entities/agent-message.entity';
 import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
 import { RoutingCacheService } from './routing-cache.service';
+import { CredentialHealthService } from './credential-health.service';
 import { randomUUID } from 'crypto';
 import {
   encrypt,
@@ -91,6 +94,14 @@ export class ProviderService {
     private readonly routingCache: RoutingCacheService,
     @InjectRepository(AgentEnabledProvider)
     private readonly enabledProviderRepo: Repository<AgentEnabledProvider> | null = null,
+    /**
+     * Cleared when a connection's stored credential is replaced, so a
+     * reconnected key stops being reported as needing re-auth. Optional so
+     * narrow tests can keep constructing the service without it.
+     */
+    @Optional()
+    @Inject(CredentialHealthService)
+    private readonly credentialHealth: CredentialHealthService | null = null,
   ) {}
 
   /**
@@ -419,6 +430,9 @@ export class ProviderService {
       existing.is_active = true;
       existing.updated_at = new Date().toISOString();
       await repo.save(existing);
+      // Replacing the stored credential is re-authentication: stop reporting it
+      // as needing re-auth. A metadata-only edit never reaches this branch.
+      if (apiKeyEncrypted !== null) this.credentialHealth?.clearConnection(existing.id);
       await this.fanOutIfReactivated(wasInactive, tenantId, existing.id, manager);
       await this.afterProviderChange(agentId, tenantId, existing.id, manager);
       return { provider: existing, isNew: false };
@@ -485,6 +499,7 @@ export class ProviderService {
       existing.is_active = true;
       existing.updated_at = new Date().toISOString();
       await repo.save(existing);
+      if (apiKeyEncrypted !== null) this.credentialHealth?.clearConnection(existing.id);
       await this.fanOutIfReactivated(wasInactive, tenantId, existing.id, manager);
       await this.afterProviderChange(agentId, tenantId, existing.id, manager);
       return { provider: existing, isNew: false };
