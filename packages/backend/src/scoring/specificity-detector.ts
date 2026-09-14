@@ -24,6 +24,7 @@ const DIMENSION_MAP: Record<SpecificityCategory, string[]> = {
   email_management: ['emailManagement'],
   calendar_management: ['calendarManagement'],
   trading: ['trading'],
+  private_docs: ['privateDocs'],
 };
 
 /**

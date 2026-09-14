@@ -14,6 +14,7 @@ import { SOCIAL_MEDIA_KEYWORDS } from './keywords/social-media';
 import { EMAIL_MANAGEMENT_KEYWORDS } from './keywords/email-management';
 import { CALENDAR_MANAGEMENT_KEYWORDS } from './keywords/calendar-management';
 import { TRADING_KEYWORDS } from './keywords/trading';
+import { PRIVATE_DOCS_KEYWORDS } from './keywords/private-docs';
 
 export const DEFAULT_KEYWORDS: Record<string, string[]> = {
   ...COMPLEXITY_KEYWORDS,
@@ -25,4 +26,5 @@ export const DEFAULT_KEYWORDS: Record<string, string[]> = {
   emailManagement: EMAIL_MANAGEMENT_KEYWORDS,
   calendarManagement: CALENDAR_MANAGEMENT_KEYWORDS,
   trading: TRADING_KEYWORDS,
+  privateDocs: PRIVATE_DOCS_KEYWORDS,
 };

@@ -8,5 +8,6 @@ export const SPECIFICITY_CATEGORIES = [
   'email_management',
   'calendar_management',
   'trading',
+  'private_docs',
 ] as const;
 export type SpecificityCategory = (typeof SPECIFICITY_CATEGORIES)[number];

@@ -558,6 +558,16 @@ export interface StageDef {
   desc: string;
 }
 
+/**
+ * UI stage definitions for specificity categories. The `id` values must stay
+ * in lockstep with `SPECIFICITY_CATEGORIES` in `manifest-shared` — the backend
+ * validates emitted categories against that list, and every consumer here
+ * (RoutingSpecificitySection, MessageLog filters, ModelPickerModal) iterates
+ * this array to decide what to render. A category present in the shared list
+ * but missing here is accepted by the API yet invisible in the UI.
+ * Guard: `tests/services/specificity-stages.test.ts`.
+ */
+
 export const DEFAULT_STAGE: StageDef = {
   id: 'default',
   step: 0,
@@ -646,6 +656,12 @@ export const SPECIFICITY_STAGES: StageDef[] = [
     step: 9,
     label: 'Trading',
     desc: 'Analyze markets, place trades, track positions.',
+  },
+  {
+    id: 'private_docs',
+    step: 10,
+    label: 'Private Documents',
+    desc: 'Read, summarize, and act on sensitive or regulated documents.',
   },
 ];
 

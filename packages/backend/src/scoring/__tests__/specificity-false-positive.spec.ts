@@ -252,6 +252,109 @@ describe('specificity false-positive regression', () => {
     });
   });
 
+  describe('private_docs false-positive regression on coding prompts', () => {
+    it('does not trigger private_docs on frontend/web-app coding vocabulary', () => {
+      const report = measureFalsePositives(FRONTEND_CODING_PROMPTS, 'private_docs');
+      // The private_docs keyword list avoids bare terms that overlap with
+      // common coding vocabulary. Zero false positives on frontend/coding prompts.
+      expect(report.failures.length).toBe(0);
+    });
+
+    it('does not trigger private_docs on session-simulation coding turns', () => {
+      const report = measureFalsePositives(SESSION_CODING_TURNS, 'private_docs');
+      expect(report.failures.length).toBe(0);
+    });
+  });
+
+  describe('private_docs does not fire on bare coding/science vocabulary collisions', () => {
+    /**
+     * Regression for the review finding on private-docs.ts:32. These prompts
+     * use bare tokens (phi, sox, msa, nda, soc2, confidential, diagnosis,
+     * prescription, testimony) in ordinary coding / science senses. Each
+     * demoted token is a single sub-threshold signal and must NOT route the
+     * request to the privacy-preserving provider on its own.
+     */
+    const CODING_SCIENCE_COLLISIONS = [
+      'compute the phi coefficient for this contingency table',
+      'write a sox script to normalize audio volume',
+      'use math.phi to compute the golden ratio in python',
+      'align the sequences and run msa with biopython',
+      'generate a soc2-style badge component in react',
+      'add an nda field to the network dynamic affinity model',
+      'this document is confidential, do not share it',
+      'what is the diagnosis code for this icd mapping',
+      'the prescription pattern in this react hook is wrong',
+      'witness testimony in the mock trial object',
+    ];
+
+    it('no single bare-token collision routes to private_docs', () => {
+      const report = measureFalsePositives(CODING_SCIENCE_COLLISIONS, 'private_docs');
+      if (report.failures.length > 0) {
+        console.log(
+          `\nprivate_docs bare-token false positives (${report.failures.length}/${report.total}):`,
+        );
+        for (const f of report.failures) console.log(`  "${f.prompt}"`);
+      }
+      expect(report.failures.length).toBe(0);
+    });
+
+    it('a demoted token paired with a private anchor still routes to private_docs', () => {
+      // Positive control: demotion must not break detection when a genuine
+      // private signal is present alongside the bare token.
+      expect(scan('redact the diagnosis from this medical history file')?.category).toBe(
+        'private_docs',
+      );
+      expect(scan('read the patient record and redact phi before sharing')?.category).toBe(
+        'private_docs',
+      );
+      // Unambiguous acronyms stay decisive on their own.
+      expect(scan('extract pii from this csv export')?.category).toBe('private_docs');
+    });
+  });
+
+  describe('private_docs does not fire on general knowledge questions about financial topics', () => {
+    /**
+     * Paired with the private_docs coverage prompts: these are the SAME
+     * financial / medical terms but in a general-knowledge question context.
+     * They should NOT be routed to a privacy-preserving provider.
+     */
+    const GENERAL_KNOWLEDGE_ABOUT_PRIVATE_TOPICS = [
+      'explain Roth IRA income limits',
+      'how does a 529 plan work',
+      'when are 1099s due',
+      'what is a W-2',
+      'what does a CBC measure',
+      'what bloodwork is normally done annually',
+      'what are the HSA contribution limits',
+      'what is a 401k rollover',
+      'how do I open a brokerage account',
+      'what is the difference between a traditional and roth ira',
+      'how is mortgage interest calculated',
+      'what is the current federal tax rate',
+      'how does social security work',
+      'what is a credit score range',
+      'what is the difference between a traditional ira and roth ira',
+      'how to read a bank statement',
+      'what is an fsA',
+      'what does ssn stand for',
+      'what is the difference between medicare and medicaid',
+      'how to prepare for a blood test',
+    ];
+
+    it('does not trigger private_docs on general knowledge financial questions', () => {
+      const report = measureFalsePositives(GENERAL_KNOWLEDGE_ABOUT_PRIVATE_TOPICS, 'private_docs');
+
+      if (report.failures.length > 0) {
+        console.log(`\nprivate_docs false positives (${report.failures.length}/${report.total}):`);
+        for (const f of report.failures) console.log(`  "${f.prompt}"`);
+      }
+
+      // Every general-knowledge question about financial/medical topics should
+      // route to null or data_analysis — never to private_docs.
+      expect(report.failures.length).toBe(0);
+    });
+  });
+
   describe('coding prompts with actual URLs are the only strong web_browsing signal', () => {
     it('detects web_browsing when a real URL is present alongside browse intent', () => {
       const r = scan('visit https://example.com and summarize the article');
