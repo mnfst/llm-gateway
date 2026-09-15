@@ -2,7 +2,7 @@
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-white.svg" />
     <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" />
-    <img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" alt="Manifest" height="53" title="Manifest"/>
+    <img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg" alt="Manifest LLM Gateway" height="53" title="Manifest LLM Gateway"/>
   </picture>
 </p>
 <p align="center">
@@ -15,17 +15,15 @@
   <a href="https://discord.gg/FepAked3W7"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
-> ### 🚀 Manifest is becoming the self-healing layer for APIs
+> ### 🦚 Meet Manifest, the self-healing layer for APIs
 >
-> We're building a new product that fixes failed API requests on the fly, independently of the gateway.
+> Manifest fixes failed API requests in real time, before they break your app. This open-source LLM gateway is a Manifest product and stays maintained.
 >
-> **This open-source gateway stays available and maintained.**
->
-> **[Read more](https://manifest.build/blog/manifest-is-taking-a-new-direction/)**
+> **[Try Manifest](https://dashboard.manifest.build/signup)**
 
-## What is Manifest?
+## What is Manifest LLM Gateway?
 
-Manifest is a smart model router for **AI agents** like OpenClaw, Hermes, or anything speaking the OpenAI-compatible HTTP API. It sits between your agents and your providers (API keys, subscriptions, or local models) and sends each request to the right one. Simple questions go to fast, cheap models. Hard problems go to the powerful ones. One endpoint for every provider, and a smaller bill as a bonus.
+Manifest LLM Gateway is a smart model router for **AI agents** like OpenClaw, Hermes, or anything speaking the OpenAI-compatible HTTP API. It sits between your agents and your providers (API keys, subscriptions, or local models) and sends each request to the right one. Simple questions go to fast, cheap models. Hard problems go to the powerful ones. One endpoint for every provider, and a smaller bill as a bonus.
 
 - One endpoint, every provider: send each request to the right model
 - Automatic fallbacks: if a model fails, the next one picks up

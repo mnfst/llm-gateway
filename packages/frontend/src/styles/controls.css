@@ -291,8 +291,8 @@
 }
 
 .header__logo-img {
-  width: 104px;
-  height: auto;
+  height: 28px;
+  width: auto;
   object-fit: contain;
 }
 

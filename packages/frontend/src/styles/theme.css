@@ -1286,10 +1286,6 @@ h6 {
   select {
     font-size: 16px !important;
   }
-  .header__logo-img {
-    width: 124px;
-    margin-bottom: 7px;
-  }
   .header__separator,
   .header__breadcrumb-link,
   .header__docs-link,
@@ -1547,9 +1543,6 @@ h6 {
 }
 
 @media (max-width: 480px) {
-  .header__logo-img {
-    width: 112px;
-  }
   .header__mode-badge {
     display: none;
   }

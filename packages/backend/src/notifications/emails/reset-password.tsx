@@ -31,7 +31,7 @@ export function ResetPasswordEmail(props: ResetPasswordEmailProps) {
         <Container style={container}>
           {/* Logo */}
           <Section style={logoSection}>
-            <Img src={logoUrl} alt="Manifest" height="32" style={logoImg} />
+            <Img src={logoUrl} alt="Manifest LLM Gateway" width="174" height="32" style={logoImg} />
           </Section>
 
           {/* Main content */}

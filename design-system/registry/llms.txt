@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (314 BEM blocks, 1698 classes)
+## Blocks (313 BEM blocks, 1694 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -249,7 +249,7 @@ mobile-nav-toggle (theme.css): mobile-nav-toggle
 modal (modals.css, theme.css): modal modal__body modal__close modal__footer modal__header modal__title
 modal-back-btn (modals.css): modal-back-btn
 modal-backdrop (modals.css, theme.css): modal-backdrop
-modal-card (limits.css, modals.css, notifications.css, overview.css, pivot.css, routing-header-tiers.css, routing.css): modal-card modal-card__back-link modal-card__cta modal-card__desc modal-card__field-error modal-card__field-hint modal-card__field-label modal-card__field-link modal-card__footer modal-card__footer--split modal-card__input modal-card__input--error modal-card__input--lg modal-card__note modal-card__privacy modal-card__title
+modal-card (limits.css, modals.css, notifications.css, overview.css, routing-header-tiers.css, routing.css): modal-card modal-card__back-link modal-card__cta modal-card__desc modal-card__field-error modal-card__field-hint modal-card__field-label modal-card__field-link modal-card__footer modal-card__footer--split modal-card__input modal-card__input--error modal-card__input--lg modal-card__note modal-card__privacy modal-card__title
 modal-key-box (wizard.css): modal-key-box modal-key-box__copy modal-key-box__header modal-key-box__label modal-key-box__value modal-key-box__warning
 modal-overlay (modals.css): modal-overlay
 modal-stepper (modals.css): modal-stepper modal-stepper__circle modal-stepper__label modal-stepper__line modal-stepper__step modal-stepper__step--active modal-stepper__step--done
@@ -357,8 +357,7 @@ setup-step (wizard.css): setup-step__desc setup-step__heading
 setup-step-providers (overview.css): setup-step-providers
 setup-steps (controls.css): setup-steps setup-steps__content setup-steps__divider setup-steps__number setup-steps__step
 sidebar (controls.css, theme.css): sidebar sidebar--mobile-open sidebar__badge sidebar__feedback sidebar__feedback-hint sidebar__feedback-title sidebar__footer sidebar__link sidebar__link--disabled sidebar__link-row sidebar__logo sidebar__logo-dot sidebar__section-add sidebar__section-label sidebar__spacer
-sidebar-pivot (pivot.css): sidebar-pivot sidebar-pivot__bottom sidebar-pivot__btn sidebar-pivot__canvas sidebar-pivot__desc sidebar-pivot__dismiss sidebar-pivot__header sidebar-pivot__joined sidebar-pivot__title sidebar-pivot__top
-sidebar-pivot-modal (pivot.css): sidebar-pivot-modal sidebar-pivot-modal__features sidebar-pivot-modal__logo
+sidebar-pivot (pivot.css): sidebar-pivot sidebar-pivot__bottom sidebar-pivot__btn sidebar-pivot__canvas sidebar-pivot__desc sidebar-pivot__dismiss sidebar-pivot__header sidebar-pivot__title sidebar-pivot__top
 sidebar-upgrade (modals.css): sidebar-upgrade
 sidebar-usage (modals.css): sidebar-usage sidebar-usage__alert sidebar-usage__bar sidebar-usage__count sidebar-usage__count--danger sidebar-usage__fill sidebar-usage__fill--danger sidebar-usage__fill--warning sidebar-usage__header sidebar-usage__month sidebar-usage__title
 skeleton (skeleton.css): skeleton skeleton--rect skeleton--text

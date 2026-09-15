@@ -27,7 +27,7 @@ describe('loginCommand', () => {
   });
 
   it('omits the flag on cloud, where the CLI already defaults there', () => {
-    expect(loginCommand(false, 'https://app.manifest.build')).toBe('mnfst login');
+    expect(loginCommand(false, 'https://gateway.manifest.build')).toBe('mnfst login');
   });
 });
 
