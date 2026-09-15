@@ -228,9 +228,15 @@ describe('getSubscriptionProviderConfig', () => {
     });
   });
 
-  it('does not publish a hardcoded known-models list for opencode-go', () => {
+  it('publishes the curated opencode-go subscription models', () => {
     const config = getSubscriptionProviderConfig('opencode-go');
-    expect(config?.knownModels).toBeUndefined();
+    expect(config?.knownModels).toEqual([
+      'opencode-go/deepseek-flash',
+      'opencode-go/deepseek-v4.1-flash',
+      'opencode-go/muse-spark-1.3-contributor',
+      'opencode-go/omen-alpha',
+    ]);
+    expect(config?.knownModelsMatch).toBe('exact');
   });
 
   it('returns config for xai', () => {
@@ -418,8 +424,13 @@ describe('getSubscriptionKnownModels', () => {
     expect(models).toContain('glm-4.7');
   });
 
-  it('returns null for opencode-go (dynamic catalog, no hardcoded list)', () => {
-    expect(getSubscriptionKnownModels('opencode-go')).toBeNull();
+  it('returns known models for opencode-go', () => {
+    expect(getSubscriptionKnownModels('opencode-go')).toEqual([
+      'opencode-go/deepseek-flash',
+      'opencode-go/deepseek-v4.1-flash',
+      'opencode-go/muse-spark-1.3-contributor',
+      'opencode-go/omen-alpha',
+    ]);
   });
 
   it('returns known models for gemini', () => {
