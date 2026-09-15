@@ -23,6 +23,18 @@ describe('resolveForwardEndpoint', () => {
     expect(out.customEndpoint).toBeUndefined();
   });
 
+  it('builds the MiniMax CN endpoint for API-key credentials', () => {
+    const out = resolveForwardEndpoint({
+      provider: 'minimax',
+      authType: 'api_key',
+      model: 'minimax/MiniMax-M3',
+      providerRegion: 'cn',
+    });
+    expect(out.forwardModel).toBe('minimax/MiniMax-M3');
+    expect(out.customEndpoint?.baseUrl).toBe('https://api.minimaxi.com');
+    expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/v1/chat/completions');
+  });
+
   it('normalises a legacy MiniMax resource_url before building the region endpoint', () => {
     const out = resolveForwardEndpoint({
       provider: 'minimax',

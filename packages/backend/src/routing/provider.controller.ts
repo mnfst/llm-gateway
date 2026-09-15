@@ -32,6 +32,7 @@ import {
 import { QWEN_REGION_VALIDATION_MESSAGE, isQwenRegion } from './qwen-region';
 import { getSubscriptionEndpointRegionConfig } from './subscription-region';
 import { isBedrockProvider, isBedrockRegion } from './bedrock-region';
+import { isMinimaxRegion } from './oauth/minimax/minimax-oauth-helpers';
 import {
   CLOUD_LOCAL_PROVIDER_MESSAGE,
   isProviderAvailableForDeployment,
@@ -119,6 +120,8 @@ export class ProviderController {
       throw new BadRequestException(CLOUD_LOCAL_PROVIDER_MESSAGE);
     }
     const isQwenProvider = lowerProvider === 'qwen' || lowerProvider === 'alibaba';
+    const isMinimaxApiKey =
+      lowerProvider === 'minimax' && (body.authType ?? 'api_key') === 'api_key';
     const qwenBaseUrl = body.baseUrl ?? body.base_url;
     const qwenRegion = qwenBaseUrl ?? body.region;
     const subscriptionRegionConfig = getSubscriptionEndpointRegionConfig(
@@ -146,6 +149,10 @@ export class ProviderController {
       } else if (subscriptionRegionConfig) {
         if (!subscriptionRegionConfig.isRegion(body.region)) {
           throw new BadRequestException(subscriptionRegionConfig.validationMessage);
+        }
+      } else if (isMinimaxApiKey) {
+        if (!isMinimaxRegion(body.region)) {
+          throw new BadRequestException('MiniMax API-key region must be one of: global, cn');
         }
       } else {
         throw new BadRequestException(
