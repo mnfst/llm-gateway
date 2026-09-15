@@ -109,7 +109,7 @@ const Consent: Component = () => {
         <div class="auth-logo">
           <img
             src="/logotype-white.svg"
-            alt="Manifest"
+            alt="Manifest LLM Gateway"
             class="auth-logo__img auth-logo__img--light"
           />
           <img src="/logotype-dark.svg" alt="" class="auth-logo__img auth-logo__img--dark" />

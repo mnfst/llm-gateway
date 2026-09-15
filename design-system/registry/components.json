@@ -2024,7 +2024,6 @@
         "modals.css",
         "notifications.css",
         "overview.css",
-        "pivot.css",
         "routing-header-tiers.css",
         "routing.css"
       ]
@@ -3614,19 +3613,8 @@
         "sidebar-pivot__desc",
         "sidebar-pivot__dismiss",
         "sidebar-pivot__header",
-        "sidebar-pivot__joined",
         "sidebar-pivot__title",
         "sidebar-pivot__top"
-      ],
-      "files": [
-        "pivot.css"
-      ]
-    },
-    "sidebar-pivot-modal": {
-      "classes": [
-        "sidebar-pivot-modal",
-        "sidebar-pivot-modal__features",
-        "sidebar-pivot-modal__logo"
       ],
       "files": [
         "pivot.css"
@@ -5089,8 +5077,8 @@
   "stats": {
     "tokens": 79,
     "darkOverrides": 38,
-    "blocks": 314,
-    "classes": 1698,
+    "blocks": 313,
+    "classes": 1694,
     "canonicalRules": 46,
     "ghostRules": 46
   }

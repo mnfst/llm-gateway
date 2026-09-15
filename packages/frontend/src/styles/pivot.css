@@ -1,6 +1,6 @@
-/* ── Pivot announcement (PivotAnnouncement.tsx) ─────
-   Sidebar card + waiting-list modal extras. Same visual language as the
-   retired sidebar Autofix card. */
+/* ── Manifest card (PivotAnnouncement.tsx) ─────────
+   Sidebar card that links to Manifest. Same visual language as the retired
+   sidebar Autofix card. */
 
 /* No padding on the card itself: the top and bottom wrappers each carry
    their own, and overflow hidden clips the canvas to the rounded corners. */
@@ -99,72 +99,9 @@
   cursor: pointer;
   transition: opacity var(--transition-fast);
   text-align: center;
+  text-decoration: none;
 }
 
 .sidebar-pivot__btn:hover {
   opacity: 0.9;
-}
-
-/* Waiting-list modal: logo above the title, roomier description */
-.sidebar-pivot-modal__logo {
-  margin-bottom: var(--gap-md);
-}
-
-.sidebar-pivot-modal .modal-card__title {
-  line-height: 1.3;
-  margin-bottom: var(--gap-md);
-}
-
-.sidebar-pivot-modal .modal-card__desc {
-  font-size: var(--font-size-md);
-  color: hsl(var(--muted-foreground));
-  margin-bottom: var(--gap-md);
-}
-
-.sidebar-pivot-modal__features {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-sm);
-  margin: 0 0 var(--gap-lg);
-  padding: 0;
-  list-style: none;
-}
-
-.sidebar-pivot-modal__features li {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--gap-sm);
-  font-size: var(--font-size-sm);
-  line-height: 1.4;
-}
-
-/* Check marks use the logo blue: brand art color, not a theme token. */
-.sidebar-pivot-modal__features svg {
-  flex-shrink: 0;
-  margin-top: 1px;
-  color: #2430f0;
-}
-
-.sidebar-pivot-modal__features div {
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-pivot-modal__features strong {
-  font-weight: 600;
-  color: hsl(var(--foreground));
-}
-
-.sidebar-pivot-modal__features span {
-  color: hsl(var(--muted-foreground));
-}
-
-/* Joined state inside the waiting-list modal */
-.sidebar-pivot__joined {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-sm);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: hsl(var(--success));
 }
