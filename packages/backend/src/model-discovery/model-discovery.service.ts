@@ -186,6 +186,13 @@ export class ModelDiscoveryService {
         }
       }
     }
+    if (
+      lowerProvider === 'minimax' &&
+      provider.auth_type === 'api_key' &&
+      provider.region === 'cn'
+    ) {
+      endpointOverride = `${MINIMAX_BASE_URLS.cn}/v1`;
+    }
     if (isQwenProvider(provider.provider) && isQwenResolvedEndpoint(provider.region)) {
       endpointOverride = getQwenCompatibleBaseUrl(provider.region);
     }

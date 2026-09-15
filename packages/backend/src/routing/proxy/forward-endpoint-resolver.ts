@@ -131,6 +131,8 @@ export function resolveForwardEndpoint(
     customEndpoint = buildEndpointOverride(getVertexBaseUrl(vertexDeployment), 'vertex');
   } else if (resolveEndpointKey(provider) === 'qwen' && isQwenResolvedEndpoint(providerRegion)) {
     customEndpoint = buildEndpointOverride(getQwenCompatibleBaseUrl(providerRegion), 'qwen');
+  } else if (authType === 'api_key' && lower === 'minimax' && providerRegion === 'cn') {
+    customEndpoint = buildEndpointOverride(MINIMAX_BASE_URLS.cn, 'minimax');
   } else if (authType === 'subscription' && lower === 'minimax') {
     // OAuth tokens carry the region in resource_url; pasted Coding Plan tokens
     // (`sk-cp-`) don't, so fall back to the persisted region column. Only CN
