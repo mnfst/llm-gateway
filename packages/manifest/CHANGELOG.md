@@ -1,5 +1,28 @@
 # manifest
 
+## 6.25.0
+
+### Minor Changes
+
+- e1de563: Fallback-exhausted responses now say what the provider said. The error message leads with the primary provider's own sentence followed by a one-line summary of every attempt, `source` is always `provider` (the exhaustion is a routing outcome, carried by a new `fallback_exhausted: true` flag and the existing `X-Manifest-Fallback-Exhausted` header, not an error class), and `code` holds only the provider's own code. Each `attempted_fallbacks` entry now carries its sanitized `message`, `code` and `auth_type`, plus a request-scoped `autofix` summary (`applied`, `original_status`, `retry_status`) on the primary and on any hop where Phoenix was consulted. The provider-error parsers also understand FastAPI-style `{detail}` bodies (how ChatGPT Codex rejects an unsupported model) and bare `{"error":"…"}` strings, so those messages are no longer collapsed to a generic "Bad request to upstream provider".
+- 1dbd49f: Add an Integrations section to the dashboard sidebar with pages for the MCP server and the CLI. The MCP page shows this install's own endpoint and copy-paste setup for Claude Code, Codex and OpenCode; the CLI page shows the npm install and a login command that carries the host on self-hosted.
+- b43f461: Publish the management CLI to npm as `@mnfst/gateway-cli`. Install it with `npm i -g @mnfst/gateway-cli` instead of building the monorepo; the command is still `mnfst`. Its version tracks the Manifest release it ships with.
+- 81e6cb5: Requests log: filter by model, and isolate cancelled requests. The Model filter is multi-select and matches any provider attempt on the request, so filtering by the primary of a fallback chain still finds the request it was recovered on; a request Manifest blocked before any provider call matches on its requested model, which is what the Model column shows for those rows. `Cancelled` becomes its own status instead of being counted as `Failed`. The Min/Max $ inputs are gone — filtering by an absolute cost threshold required already knowing the distribution you were trying to find.
+
+### Patch Changes
+
+- c1b2d32: Fix the Release workflow, which failed on every merge to main after the CLI publishing change. Stamping the CLI version during the version PR made changesets look for a changelog the CLI does not have.
+- aca3257: Forward the caller's `anthropic-beta` header to Anthropic instead of dropping it. Manifest built the upstream header set from scratch, so a beta flag the caller sent never arrived: the API-key path sent no flag at all and the subscription path sent a fixed list that goes stale whenever Anthropic ships a new beta. Body fields those betas gate (`output_config`, `context_management`, `diagnostics`, `speed`, `thinking.adaptive`) then came back as `<field>: Extra inputs are not permitted`. The caller's flags are now appended to Manifest's own, sanitized and bounded, on the primary forward, the Autofix retry and fallback hops. Anthropic-compatible third parties (Bedrock, BytePlus, CommandCode, MiniMax, Kimi, OpenCode Go) are unaffected.
+- b02d350: Use gateway.manifest.build for cloud dashboard links and share previews. Build email image URLs from the configured dashboard URL so self-hosted installations use their own assets.
+
+  Use gateway.manifest.build for n8n and management CLI API defaults and the deprecated OTLP migration message. Generate SDK examples from the current dashboard origin.
+
+  Send self-hosted pivot waitlist submissions to gateway.manifest.build and allow that origin in the dashboard content security policy.
+
+- a50e129: Keep harness type selectors within compact dialogs by stacking category groups in two columns, switching to one column on mobile, and scrolling long menus. Share the option rendering between the creation dropdown and settings dialog.
+- 11b3942: The pivot waiting-list modal describes the new product and lists its three advantages.
+- 006e904: Show custom tiers in the Requests Tier filter. The log spans every harness unless one is picked, but the filter only listed custom tiers of a selected harness, so on the default view there were none to pick. Tier options now come from the tenant-scoped filter metadata, and same-named tiers on different harnesses share one option that matches all of them.
+
 ## 6.24.0
 
 ### Minor Changes
