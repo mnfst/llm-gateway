@@ -40,7 +40,15 @@ const Limits: Component = () => {
   const [routingStatus] = createResource(() => agentName(), getRoutingStatus);
   const [isSelfHosted] = createResource(checkIsSelfHosted);
   const [emailConfigured] = createResource(checkEmailConfigured);
-  const [emailProvider, { refetch: refetchProvider }] = createResource(getEmailProvider);
+  // Only fetch the provider config on self-hosted: cloud never renders it.
+  const [emailProvider, { refetch: refetchProvider }] = createResource(
+    () => (isSelfHosted() === true ? true : undefined),
+    getEmailProvider,
+  );
+  // Solid re-throws when you read an errored resource, so every read below goes
+  // through this accessor. A failed initial fetch or a failed refresh after a
+  // successful delete reads as "no provider saved" instead of taking the page down.
+  const savedProvider = () => (emailProvider.error ? undefined : emailProvider());
   const session = authClient.useSession();
   const [showModal, setShowModal] = createSignal(false);
   const [showEditProvider, setShowEditProvider] = createSignal(false);
@@ -57,7 +65,7 @@ const Limits: Component = () => {
   // Cloud always has a sender. Self-hosted has one when the operator saved a
   // provider in the dashboard or set the EMAIL_* environment variables.
   const hasProvider = () =>
-    isSelfHosted() !== true || !!emailProvider() || emailConfigured() === true;
+    isSelfHosted() !== true || !!savedProvider() || emailConfigured() === true;
 
   const hasEmailRules = () => {
     const r = rules();
@@ -69,13 +77,20 @@ const Limits: Component = () => {
     setRemovingProvider(true);
     try {
       await removeEmailProvider();
-      await refetchProvider();
-      setShowRemoveProvider(false);
-      toast.success('Email provider removed');
     } catch {
       // error toast from fetchMutate
-    } finally {
       setRemovingProvider(false);
+      return;
+    }
+    // The DELETE succeeded: acknowledge it before the refetch, whose own
+    // failure must not leave the modal open claiming nothing happened.
+    setRemovingProvider(false);
+    setShowRemoveProvider(false);
+    toast.success('Email provider removed');
+    try {
+      await refetchProvider();
+    } catch {
+      // next visit refetches
     }
   };
 
@@ -243,21 +258,25 @@ const Limits: Component = () => {
         </div>
       </Show>
 
-      <Show
-        when={isSelfHosted() === true}
-        fallback={
-          <div style="margin-bottom: var(--gap-lg);">
-            <CloudEmailInfo email={session().data?.user?.email ?? ''} />
-          </div>
-        }
-      >
-        <EmailProviderSection
-          emailProvider={emailProvider()}
-          loading={emailProvider.loading}
-          onConfigured={refetchProvider}
-          onEdit={() => setShowEditProvider(true)}
-          onRemove={() => setShowRemoveProvider(true)}
-        />
+      {/* Render nothing until the deployment mode is known: the cloud card makes
+          a factual claim about who sends emails that is false on self-hosted. */}
+      <Show when={isSelfHosted() !== undefined}>
+        <Show
+          when={isSelfHosted() === true}
+          fallback={
+            <div style="margin-bottom: var(--gap-lg);">
+              <CloudEmailInfo email={session().data?.user?.email ?? ''} />
+            </div>
+          }
+        >
+          <EmailProviderSection
+            emailProvider={savedProvider()}
+            loading={emailProvider.loading || emailProvider.state === 'unresolved'}
+            onConfigured={refetchProvider}
+            onEdit={() => setShowEditProvider(true)}
+            onRemove={() => setShowRemoveProvider(true)}
+          />
+        </Show>
       </Show>
 
       <LimitRuleTable
@@ -323,11 +342,11 @@ const Limits: Component = () => {
 
       <EmailProviderModal
         open={showEditProvider()}
-        initialProvider={emailProvider()?.provider ?? 'resend'}
+        initialProvider={savedProvider()?.provider ?? 'resend'}
         editMode={true}
-        existingKeyPrefix={emailProvider()?.keyPrefix ?? null}
-        existingDomain={emailProvider()?.domain ?? null}
-        existingNotificationEmail={emailProvider()?.notificationEmail ?? null}
+        existingKeyPrefix={savedProvider()?.keyPrefix ?? null}
+        existingDomain={savedProvider()?.domain ?? null}
+        existingNotificationEmail={savedProvider()?.notificationEmail ?? null}
         onClose={() => setShowEditProvider(false)}
         onSaved={() => refetchProvider()}
       />
