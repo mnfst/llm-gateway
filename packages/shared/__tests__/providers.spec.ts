@@ -75,6 +75,14 @@ describe('SHARED_PROVIDER_BY_ID_OR_ALIAS', () => {
     }
   });
 
+  it('resolves Atlas Cloud aliases to its canonical provider entry', () => {
+    for (const name of ['atlascloud', 'atlas-cloud', 'atlas cloud']) {
+      expect(SHARED_PROVIDER_BY_ID_OR_ALIAS.get(normalizeProviderName(name))?.id).toBe(
+        'atlascloud',
+      );
+    }
+  });
+
   it('resolves Hugging Face aliases to the canonical provider entry', () => {
     for (const name of ['huggingface', 'hugging-face', 'Hugging Face', 'hf']) {
       const normalized = normalizeProviderName(name);

@@ -890,6 +890,11 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     buildHeaders: bearerHeaders,
     parse: parseOpenAIDeduped,
   },
+  atlascloud: {
+    endpoint: 'https://api.atlascloud.ai/v1/models',
+    buildHeaders: bearerHeaders,
+    parse: parseOpenAI,
+  },
   'openai-subscription': {
     endpoint: `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLI_VERSION}`,
     buildHeaders: (key: string) => ({
