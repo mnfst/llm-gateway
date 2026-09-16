@@ -9,14 +9,14 @@ describe('billing plan emails', () => {
         kind: 'subscription_confirmed',
         userName: '<img src=x onerror="alert(1)">',
         planName: 'Pro',
-        appUrl: 'https://gateway.manifest.build',
-        manageBillingUrl: 'https://gateway.manifest.build/account',
+        appUrl: 'https://app.manifest.build',
+        manageBillingUrl: 'https://app.manifest.build/account',
       }),
     );
 
     expect(html).not.toMatch(/<img src=x/);
     expect(html).toContain('&lt;img src=x');
-    expect(html).toContain('href="https://gateway.manifest.build/account#email-preferences"');
+    expect(html).toContain('href="https://app.manifest.build/account#email-preferences"');
   });
 
   it('renders plan-change subscription copy', () => {
@@ -26,8 +26,8 @@ describe('billing plan emails', () => {
         userName: 'Ada',
         planName: 'Pro',
         previousPlanName: 'Free',
-        appUrl: 'https://gateway.manifest.build',
-        manageBillingUrl: 'https://gateway.manifest.build/account',
+        appUrl: 'https://app.manifest.build',
+        manageBillingUrl: 'https://app.manifest.build/account',
       }),
     );
 
@@ -41,8 +41,8 @@ describe('billing plan emails', () => {
         kind: 'cancellation_confirmed',
         userName: 'Ada',
         planName: 'Pro',
-        appUrl: 'https://gateway.manifest.build',
-        manageBillingUrl: 'https://gateway.manifest.build/account',
+        appUrl: 'https://app.manifest.build',
+        manageBillingUrl: 'https://app.manifest.build/account',
       }),
     );
 
@@ -58,7 +58,7 @@ describe('billing plan emails', () => {
         used: 8000,
         limit: FREE_PLAN_REQUESTS_PER_MONTH,
         periodEnd: '2026-08-01T00:00:00.000Z',
-        appUrl: 'https://gateway.manifest.build',
+        appUrl: 'https://app.manifest.build',
       }),
     );
 
@@ -75,13 +75,13 @@ describe('billing plan emails', () => {
         used: FREE_PLAN_REQUESTS_PER_MONTH,
         limit: FREE_PLAN_REQUESTS_PER_MONTH,
         periodEnd: '2026-08-01T00:00:00.000Z',
-        appUrl: 'https://gateway.manifest.build/',
+        appUrl: 'https://app.manifest.build/',
       }),
     );
 
-    expect(html).toContain('href="https://gateway.manifest.build/upgrade"');
-    expect(html).toContain('href="https://gateway.manifest.build/account#email-preferences"');
-    expect(html).not.toContain('https://gateway.manifest.build//upgrade');
-    expect(html).not.toContain('https://gateway.manifest.build//account');
+    expect(html).toContain('href="https://app.manifest.build/upgrade"');
+    expect(html).toContain('href="https://app.manifest.build/account#email-preferences"');
+    expect(html).not.toContain('https://app.manifest.build//upgrade');
+    expect(html).not.toContain('https://app.manifest.build//account');
   });
 });

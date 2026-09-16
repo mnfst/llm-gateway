@@ -1,11 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@solidjs/testing-library';
+import { render, screen, fireEvent } from '@solidjs/testing-library';
 
-const mockCheckIsSelfHosted = vi.fn();
-const mockSubmitPivotClaim = vi.fn();
 const mockStopBlobCanvas = vi.fn();
 const mockInitBlobCanvas = vi.fn(() => mockStopBlobCanvas);
-let mockSessionEmail = 'test@test.com';
 
 vi.mock('../../src/services/blob-canvas.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/services/blob-canvas.js')>();
@@ -15,53 +12,25 @@ vi.mock('../../src/services/blob-canvas.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../../src/services/auth-client.js', () => ({
-  authClient: {
-    useSession: () => () => ({
-      data: { user: { id: 'u1', name: 'Test', email: mockSessionEmail } },
-      isPending: false,
-    }),
-  },
-}));
+import PivotAnnouncement, { MANIFEST_SIGNUP_URL } from '../../src/components/PivotAnnouncement';
 
-vi.mock('../../src/services/setup-status.js', () => ({
-  checkIsSelfHosted: (...args: unknown[]) => mockCheckIsSelfHosted(...args),
-}));
-
-vi.mock('../../src/services/waitlist.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/services/waitlist.js')>();
-  return {
-    ...actual,
-    submitPivotClaim: (...args: unknown[]) => mockSubmitPivotClaim(...args),
-  };
-});
-
-import PivotAnnouncement, { PIVOT_ARTICLE_URL } from '../../src/components/PivotAnnouncement';
-
-const CARD_TITLE = 'Manifest is becoming the self-healing layer for APIs';
+const CARD_TITLE = 'Manifest, the self-healing layer for APIs';
 
 describe('PivotAnnouncement', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    localStorage.clear();
     sessionStorage.clear();
-    mockSessionEmail = 'test@test.com';
-    mockCheckIsSelfHosted.mockResolvedValue(true);
-    mockSubmitPivotClaim.mockResolvedValue(true);
   });
 
-  async function openModal() {
-    const result = render(() => <PivotAnnouncement />);
-    fireEvent.click(screen.getByText('Learn more'));
-    await screen.findByText('Join the waiting list');
-    return result;
-  }
-
-  it('renders the card unconditionally with a Learn more button', () => {
+  it('renders the card with a Try Manifest link to the dashboard signup', () => {
     const { container } = render(() => <PivotAnnouncement />);
-    expect(screen.getAllByText(CARD_TITLE).length).toBeGreaterThan(0);
-    expect(container.querySelector('.sidebar-pivot')).not.toBeNull();
-    expect(screen.getByText('Learn more')).toBeDefined();
+    expect(screen.getByText(CARD_TITLE)).toBeDefined();
+    const link = screen.getByText('Try Manifest').closest('a')!;
+    expect(MANIFEST_SIGNUP_URL).toBe('https://dashboard.manifest.build/signup');
+    expect(link.getAttribute('href')).toBe(MANIFEST_SIGNUP_URL);
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(container.querySelector('.modal-card')).toBeNull();
   });
 
   it('splits into a canvas-backed top band and a plain bottom band, without the star icon', () => {
@@ -73,9 +42,8 @@ describe('PivotAnnouncement', () => {
     // The header holds only the title and the dismiss button: no leading icon.
     expect(container.querySelectorAll('.sidebar-pivot__header > svg')).toHaveLength(0);
     const bottom = container.querySelector('.sidebar-pivot__bottom');
-    expect(bottom).not.toBeNull();
     expect(bottom!.querySelector('.sidebar-pivot__desc')).not.toBeNull();
-    expect(bottom!.querySelector('.sidebar-pivot__btn')).not.toBeNull();
+    expect(bottom!.querySelector('a.sidebar-pivot__btn')).not.toBeNull();
   });
 
   it('stops the canvas animation when the card is dismissed', () => {
@@ -89,7 +57,7 @@ describe('PivotAnnouncement', () => {
     const { container, unmount } = render(() => <PivotAnnouncement />);
     fireEvent.click(container.querySelector('.sidebar-pivot__dismiss')!);
     expect(container.querySelector('.sidebar-pivot')).toBeNull();
-    expect(sessionStorage.getItem('pivot-card-dismissed')).toBe('1');
+    expect(sessionStorage.getItem('manifest-card-dismissed')).toBe('1');
     unmount();
 
     const second = render(() => <PivotAnnouncement />);
@@ -101,100 +69,9 @@ describe('PivotAnnouncement', () => {
     expect(third.container.querySelector('.sidebar-pivot')).not.toBeNull();
   });
 
-  it('opens the modal with the logo, the session email prefilled, and the article link', async () => {
-    await openModal();
-    const input = document.querySelector('.modal-card__input') as HTMLInputElement;
-    expect(input.value).toBe('test@test.com');
-    const link = document.querySelector(`a[href="${PIVOT_ARTICLE_URL}"]`);
-    expect(link).not.toBeNull();
-    expect(link?.textContent?.trim()).toBe('Read more');
-    // The Manifest logotype sits above the title, in both theme variants.
-    const logo = document.querySelector('.sidebar-pivot-modal__logo');
-    expect(logo?.querySelector('img.auth-logo__img--light')).not.toBeNull();
-    expect(logo?.querySelector('img.auth-logo__img--dark')).not.toBeNull();
-  });
-
-  it('submits a corrected email, not the prefilled one', async () => {
-    await openModal();
-    const input = document.querySelector('.modal-card__input') as HTMLInputElement;
-    fireEvent.input(input, { target: { value: '  good@company.com ' } });
-    fireEvent.submit(document.querySelector('.modal-card form')!);
-
-    await waitFor(() => {
-      expect(mockSubmitPivotClaim).toHaveBeenCalledWith('good@company.com', true);
-    });
-    await screen.findByText("You're on the list. We'll reach out at launch.");
-    // The success message is announced and focus lands on Close.
-    expect(document.querySelector('.sidebar-pivot__joined')?.getAttribute('role')).toBe('status');
-    expect(document.activeElement?.textContent).toBe('Close');
-  });
-
-  it('resolves the deployment mode at submit time and passes the cloud flag', async () => {
-    mockCheckIsSelfHosted.mockResolvedValue(false);
-    await openModal();
-    // Not called on mount: the mode is resolved when the claim is sent, so a
-    // submit can never race the deployment detection.
-    expect(mockCheckIsSelfHosted).not.toHaveBeenCalled();
-    fireEvent.submit(document.querySelector('.modal-card form')!);
-    await waitFor(() => {
-      expect(mockSubmitPivotClaim).toHaveBeenCalledWith('test@test.com', false);
-    });
-  });
-
-  it('shows a real error instead of a fake success when the claim fails', async () => {
-    mockSubmitPivotClaim.mockResolvedValue(false);
-    await openModal();
-    fireEvent.submit(document.querySelector('.modal-card form')!);
-
-    await screen.findByText('Could not reach the waiting list. Please try again.');
-    expect(screen.queryByText("You're on the list. We'll reach out at launch.")).toBeNull();
-    expect(localStorage.getItem('manifest_pivot_waitlist_joined_u1')).toBeNull();
-  });
-
-  it('remembers the joined state for the user on reopen', async () => {
-    await openModal();
-    fireEvent.submit(document.querySelector('.modal-card form')!);
-    await screen.findByText("You're on the list. We'll reach out at launch.");
-    expect(localStorage.getItem('manifest_pivot_waitlist_joined_u1')).toBe('1');
-
-    fireEvent.click(screen.getByText('Close'));
-    expect(document.querySelector('.modal-card')).toBeNull();
-
-    fireEvent.click(screen.getByText('Learn more'));
-    await screen.findByText("You're on the list. We'll reach out at launch.");
-    expect(document.querySelector('.modal-card form')).toBeNull();
-  });
-
-  it('closes on overlay click and Escape without submitting', async () => {
-    await openModal();
-    fireEvent.click(document.querySelector('.modal-overlay')!);
-    expect(document.querySelector('.modal-card')).toBeNull();
-
-    fireEvent.click(screen.getByText('Learn more'));
-    await screen.findByText('Join the waiting list');
-    fireEvent.keyDown(document.querySelector('.modal-overlay')!, { key: 'Escape' });
-    expect(document.querySelector('.modal-card')).toBeNull();
-    expect(mockSubmitPivotClaim).not.toHaveBeenCalled();
-  });
-
-  it('ignores a re-submit while a claim is in flight', async () => {
-    let resolveClaim: (ok: boolean) => void = () => {};
-    mockSubmitPivotClaim.mockImplementation(
-      () =>
-        new Promise<boolean>((resolve) => {
-          resolveClaim = resolve;
-        }),
-    );
-    await openModal();
-    const form = document.querySelector('.modal-card form')!;
-    fireEvent.submit(form);
-    fireEvent.submit(form);
-    await waitFor(() => {
-      expect(mockSubmitPivotClaim).toHaveBeenCalledTimes(1);
-    });
-    resolveClaim(true);
-
-    await screen.findByText("You're on the list. We'll reach out at launch.");
-    expect(mockSubmitPivotClaim).toHaveBeenCalledTimes(1);
+  it('shows again for people who hid the old waiting-list card', () => {
+    sessionStorage.setItem('pivot-card-dismissed', '1');
+    const { container } = render(() => <PivotAnnouncement />);
+    expect(container.querySelector('.sidebar-pivot')).not.toBeNull();
   });
 });

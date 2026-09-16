@@ -307,11 +307,11 @@ describe("HermesSetup", () => {
 
   it("wizard tab uses custom base URL", () => {
     const { container } = render(() => (
-      <HermesSetup {...defaultProps} baseUrl="https://gateway.manifest.build/v1" />
+      <HermesSetup {...defaultProps} baseUrl="https://app.manifest.build/v1" />
     ));
     const segment = container.querySelector(".setup-segment--full");
     fireEvent.click(segment!.querySelectorAll(".setup-segment__btn")[1]);
-    expect(container.textContent).toContain("https://gateway.manifest.build/v1");
+    expect(container.textContent).toContain("https://app.manifest.build/v1");
   });
 
   it("wizard and CLI tabs have independent key reveal state", () => {

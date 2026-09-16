@@ -30,8 +30,8 @@ describe('configFilePath', () => {
 
 describe('normalizeOrigin', () => {
   it('reduces URLs to a lowercase origin', () => {
-    expect(normalizeOrigin('HTTPS://Gateway.Manifest.Build/dashboard?x=1')).toBe(
-      'https://gateway.manifest.build',
+    expect(normalizeOrigin('HTTPS://App.Manifest.Build/dashboard?x=1')).toBe(
+      'https://app.manifest.build',
     );
     expect(normalizeOrigin('http://localhost:2099/api')).toBe('http://localhost:2099');
   });

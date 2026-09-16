@@ -142,16 +142,10 @@ const Header: Component<HeaderProps> = (props) => {
         <A href="/" class="header__logo">
           <img
             src="/logotype-white.svg"
-            alt="Manifest"
-            width="104"
+            alt="Manifest LLM Gateway"
             class="header__logo-img header__logo-img--light"
           />
-          <img
-            src="/logotype-dark.svg"
-            alt=""
-            width="104"
-            class="header__logo-img header__logo-img--dark"
-          />
+          <img src="/logotype-dark.svg" alt="" class="header__logo-img header__logo-img--dark" />
         </A>
         <Show when={isSelfHosted()}>
           <span class="header__mode-badge" title="Running on the self-hosted version of Manifest">

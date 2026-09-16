@@ -32,16 +32,6 @@ vi.mock("../../src/services/api/billing.js", () => ({
   getBillingStatus: (...args: unknown[]) => mockGetBillingStatus(...args),
 }));
 
-// PivotAnnouncement reads the session for the email prefill.
-vi.mock("../../src/services/auth-client.js", () => ({
-  authClient: {
-    useSession: () => () => ({
-      data: { user: { id: "u1", name: "Test", email: "test@test.com" } },
-      isPending: false,
-    }),
-  },
-}));
-
 // Local providers only exist on self-hosted installs; the Sidebar hides the
 // Local nav entry in cloud. Default to self-hosted so the legacy link
 // assertions keep applying; cloud tests flip the flag.
@@ -405,18 +395,18 @@ describe("Sidebar — usage card", () => {
   });
 });
 
-describe("Sidebar — pivot announcement", () => {
-  it("always renders the pivot card in place of the retired Autofix card", async () => {
+describe("Sidebar — Manifest card", () => {
+  it("always renders the Manifest card in place of the retired Autofix card", async () => {
     const { container } = render(() => <Sidebar />);
-    await screen.findByText("Manifest is becoming the self-healing layer for APIs");
+    await screen.findByText("Manifest, the self-healing layer for APIs");
     expect(container.querySelector(".sidebar-pivot")).not.toBeNull();
     expect(container.querySelector(".sidebar-autofix")).toBeNull();
   });
 
-  it("renders the pivot card in cloud too", async () => {
+  it("renders the Manifest card in cloud too", async () => {
     mockIsSelfHosted = false;
     const { container } = render(() => <Sidebar />);
-    await screen.findByText("Manifest is becoming the self-healing layer for APIs");
+    await screen.findByText("Manifest, the self-healing layer for APIs");
     expect(container.querySelector(".sidebar-pivot")).not.toBeNull();
   });
 });

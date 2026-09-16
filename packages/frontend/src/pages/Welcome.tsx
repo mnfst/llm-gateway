@@ -762,7 +762,7 @@ const Welcome: Component = () => {
         <div class="welcome__sidebar-top">
           <img
             src="/logotype-white.svg"
-            alt="Manifest"
+            alt="Manifest LLM Gateway"
             class="welcome__logo-mark welcome__logo-light"
           />
           <img src="/logotype-dark.svg" alt="" class="welcome__logo-mark welcome__logo-dark" />

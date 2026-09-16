@@ -192,8 +192,9 @@ export interface PivotCorsRequest {
 }
 
 /**
- * Open CORS for the pivot waiting-list claim only. Self-hosted dashboards
- * post the claim straight from the browser, so any origin must be allowed on
+ * Open CORS for the pivot waiting-list claim only. Self-hosted dashboards on
+ * versions that still ship the waiting-list card post the claim straight
+ * from the browser, so any origin must be allowed on
  * this one route. Safe because no credentials ride along (`fetch` sends none
  * cross-origin by default and the allow-list CORS runs with
  * `credentials: false`) and the route only accepts an email. Returns true
@@ -210,10 +211,3 @@ export function applyPivotClaimCors(
   setHeader('Access-Control-Max-Age', '600');
   return req.method === 'OPTIONS';
 }
-
-/**
- * Origin of the cloud pivot claim endpoint. Production self-hosted dashboards
- * post the claim cross-origin from the browser, so the CSP `connect-src`
- * must allow it — CORS alone is not enough, the CSP blocks the fetch first.
- */
-export const PIVOT_CLAIM_CLOUD_ORIGIN = 'https://app.manifest.build';
