@@ -220,7 +220,7 @@ async function requestManifest(
 	body?: IDataObject,
 ): Promise<unknown> {
 	const credentials = await executeFunctions.getCredentials('manifestApi');
-	const baseUrl = trimTrailingSlash(String(credentials.baseUrl || 'https://gateway.manifest.build'));
+	const baseUrl = trimTrailingSlash(String(credentials.baseUrl || 'https://app.manifest.build'));
 	const options: IHttpRequestOptions = {
 		method,
 		url: `${baseUrl}${path}`,

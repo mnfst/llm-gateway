@@ -57,7 +57,7 @@ Manifest LLM Gateway is an open-source LLM gateway for AI agents and apps. Conne
 
 ### Cloud version
 
-Go to [gateway.manifest.build](https://gateway.manifest.build) and follow the guide.
+Go to [app.manifest.build](https://app.manifest.build) and follow the guide.
 
 ### Self-hosted
 

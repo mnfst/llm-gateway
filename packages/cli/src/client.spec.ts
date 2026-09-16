@@ -47,7 +47,7 @@ describe('ApiClient', () => {
   it('refuses a redirect with one request instead of following it', async () => {
     const stub = fetchStub([{ status: 302, body: {} }]);
     const client = new ApiClient({
-      origin: 'https://gateway.manifest.build',
+      origin: 'https://app.manifest.build',
       apiKey: 'secret-key',
       fetchImpl: stub.impl,
     });

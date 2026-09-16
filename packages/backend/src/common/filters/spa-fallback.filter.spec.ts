@@ -5,8 +5,8 @@ jest.mock('../utils/frontend-path', () => ({
 }));
 
 const SAMPLE_HTML =
-  '<html><head><meta property="og:url" content="https://gateway.manifest.build" />' +
-  '<meta property="og:image" content="https://gateway.manifest.build/og-image.png" /></head>' +
+  '<html><head><meta property="og:url" content="https://app.manifest.build" />' +
+  '<meta property="og:image" content="https://app.manifest.build/og-image.png" /></head>' +
   '<body>SPA</body></html>';
 
 jest.mock('fs', () => ({
@@ -123,7 +123,7 @@ describe('SpaFallbackFilter', () => {
       const sent = (res.send as jest.Mock).mock.calls[0][0] as string;
       expect(sent).toContain('content="https://manifest.example.com"');
       expect(sent).toContain('content="https://manifest.example.com/og-image.png"');
-      expect(sent).not.toContain('https://gateway.manifest.build');
+      expect(sent).not.toContain('https://app.manifest.build');
     });
 
     it('leaves og: tags alone when BETTER_AUTH_URL is empty', () => {
@@ -131,7 +131,7 @@ describe('SpaFallbackFilter', () => {
       const { host, res } = createMockHost('GET', '/');
       filter.catch(exception, host);
       const sent = (res.send as jest.Mock).mock.calls[0][0] as string;
-      expect(sent).toContain('content="https://gateway.manifest.build"');
+      expect(sent).toContain('content="https://app.manifest.build"');
     });
 
     it('falls back to process.env when no constructor arg is provided', () => {

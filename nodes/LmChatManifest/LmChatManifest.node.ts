@@ -25,7 +25,7 @@ interface ManifestChatModelOptions {
 }
 
 function manifestApiBaseUrl(credentials: { baseUrl?: unknown }): string {
-	const raw = String(credentials.baseUrl || 'https://gateway.manifest.build');
+	const raw = String(credentials.baseUrl || 'https://app.manifest.build');
 	return `${raw.replace(/\/+$/, '')}/v1`;
 }
 

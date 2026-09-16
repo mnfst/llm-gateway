@@ -1,5 +1,5 @@
 /** Dashboard origin only; API and waitlist destinations are configured separately. */
-export const DEFAULT_DASHBOARD_URL = 'https://gateway.manifest.build';
+export const DEFAULT_DASHBOARD_URL = 'https://app.manifest.build';
 
 /** Emails need absolute URLs because they are read outside the dashboard. */
 export function getDashboardBaseUrl(explicit?: string | null): string {

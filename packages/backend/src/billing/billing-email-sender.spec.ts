@@ -87,15 +87,15 @@ describe('billing-email-sender', () => {
     });
 
     it('falls back to the default app URL', () => {
-      expect(getBillingAppUrl()).toBe('https://gateway.manifest.build');
+      expect(getBillingAppUrl()).toBe('https://app.manifest.build');
     });
 
     it('falls back when explicit is null', () => {
-      expect(getBillingAppUrl(null)).toBe('https://gateway.manifest.build');
+      expect(getBillingAppUrl(null)).toBe('https://app.manifest.build');
     });
 
     it('returns the default when stripping slashes yields empty', () => {
-      expect(getBillingAppUrl('///')).toBe('https://gateway.manifest.build');
+      expect(getBillingAppUrl('///')).toBe('https://app.manifest.build');
     });
   });
 
@@ -141,8 +141,8 @@ describe('billing-email-sender', () => {
         planName: 'Pro',
         previousPlanName: null,
         periodEnd: null,
-        appUrl: 'https://gateway.manifest.build',
-        manageBillingUrl: 'https://gateway.manifest.build/account',
+        appUrl: 'https://app.manifest.build',
+        manageBillingUrl: 'https://app.manifest.build/account',
       };
       const result = await sendSubscriptionPlanEmail('ada@example.com', props);
 
@@ -164,8 +164,8 @@ describe('billing-email-sender', () => {
         planName: 'Free',
         previousPlanName: 'Pro',
         periodEnd: null,
-        appUrl: 'https://gateway.manifest.build',
-        manageBillingUrl: 'https://gateway.manifest.build/account',
+        appUrl: 'https://app.manifest.build',
+        manageBillingUrl: 'https://app.manifest.build/account',
       };
       await sendSubscriptionPlanEmail('ada@example.com', props, 'custom@manifest.build');
 
@@ -185,7 +185,7 @@ describe('billing-email-sender', () => {
         used: 10000,
         limit: 10000,
         periodEnd: '2026-08-01T00:00:00.000Z',
-        appUrl: 'https://gateway.manifest.build',
+        appUrl: 'https://app.manifest.build',
       };
       const result = await sendPlanUsageEmail('ada@example.com', props);
 
@@ -207,7 +207,7 @@ describe('billing-email-sender', () => {
         used: 8000,
         limit: 10000,
         periodEnd: '2026-08-01T00:00:00.000Z',
-        appUrl: 'https://gateway.manifest.build',
+        appUrl: 'https://app.manifest.build',
       };
       await sendPlanUsageEmail('ada@example.com', props, 'custom@manifest.build');
 

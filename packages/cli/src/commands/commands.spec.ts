@@ -3235,7 +3235,7 @@ describe('doctor', () => {
     expect(checks[0]).toEqual({
       name: 'config',
       ok: false,
-      detail: 'no credential for https://gateway.manifest.build (origin from default)',
+      detail: 'no credential for https://app.manifest.build (origin from default)',
       hint: 'Run mnfst login, or set MANIFEST_URL + MANIFEST_API_KEY',
     });
     expect(checks[1].ok).toBe(true);

@@ -19,7 +19,7 @@ describe('keystore', () => {
   });
 
   it('encodes agent names that need it (spaces stay unambiguous)', () => {
-    const p = agentKeyPath(env(), 'https://gateway.manifest.build', 'My Bot 2');
+    const p = agentKeyPath(env(), 'https://app.manifest.build', 'My Bot 2');
     expect(path.basename(p)).toBe('My%20Bot%202.key');
   });
 

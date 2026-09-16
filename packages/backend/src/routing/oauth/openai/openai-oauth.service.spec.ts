@@ -606,7 +606,7 @@ describe('OpenaiOauthService', () => {
       const url = await service.generateAuthorizationUrl(
         'agent-1',
         'user-1',
-        'https://gateway.manifest.build',
+        'https://app.manifest.build',
       );
 
       expect(url).toContain(

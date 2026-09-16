@@ -8,7 +8,7 @@ import {
 } from '../src/setup-snippets';
 
 describe('setup snippets', () => {
-  const URL = 'https://gateway.manifest.build/v1';
+  const URL = 'https://app.manifest.build/v1';
   const KEY = 'mnfst_test_key';
 
   it('openclaw snippet wires the provider and restarts the gateway', () => {
@@ -21,7 +21,7 @@ describe('setup snippets', () => {
 
   it('claude-code snippet strips /v1 (SDK appends /v1/messages itself)', () => {
     const s = getClaudeCodeSettingsSnippet(URL, KEY);
-    expect(s).toContain('"ANTHROPIC_BASE_URL": "https://gateway.manifest.build"');
+    expect(s).toContain('"ANTHROPIC_BASE_URL": "https://app.manifest.build"');
     expect(s).toContain(KEY);
     const noV1 = getClaudeCodeSettingsSnippet('https://x.test', KEY);
     expect(noV1).toContain('"ANTHROPIC_BASE_URL": "https://x.test"');

@@ -12,12 +12,12 @@ function renderEmail(props: Parameters<typeof DoctorReleaseEmail>[0]): string {
 describe('DoctorReleaseEmail', () => {
   it('renders the announcement with the two CTAs and waitlist footer', () => {
     const html = renderEmail({
-      appUrl: 'https://gateway.manifest.build',
+      appUrl: 'https://app.manifest.build',
       tutorialUrl: 'https://manifest.build/blog/auto-fix',
     });
     expect(html).toContain('Autofix is live on your account');
     expect(html).toContain('already running on your account');
-    expect(html).toContain('https://gateway.manifest.build');
+    expect(html).toContain('https://app.manifest.build');
     expect(html).toContain('Open your dashboard');
     expect(html).toContain('How Autofix works');
     expect(html).toContain('https://manifest.build/blog/auto-fix');
@@ -30,7 +30,7 @@ describe('DoctorReleaseEmail', () => {
   });
 
   it('omits the tutorial button until the article URL exists', () => {
-    const html = renderEmail({ appUrl: 'https://gateway.manifest.build' });
+    const html = renderEmail({ appUrl: 'https://app.manifest.build' });
     expect(html).not.toContain('How Autofix works');
     expect(html).toContain('Open your dashboard');
   });

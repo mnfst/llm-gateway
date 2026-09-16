@@ -133,10 +133,10 @@ describe("SetupModal", () => {
     expect(step!.getAttribute("data-key")).toBe("mnfst_full_key");
   });
 
-  it("computes production baseUrl on gateway.manifest.build hostname", () => {
+  it("builds the base URL from the cloud origin", () => {
     const origLocation = window.location;
     Object.defineProperty(window, "location", {
-      value: { ...origLocation, hostname: "gateway.manifest.build", origin: "https://gateway.manifest.build" },
+      value: { ...origLocation, hostname: "app.manifest.build", origin: "https://app.manifest.build" },
       writable: true,
       configurable: true,
     });
@@ -144,7 +144,7 @@ describe("SetupModal", () => {
       <SetupModal open={true} agentName="test-agent" onClose={onClose} />
     ));
     const step = container.querySelector('[data-testid="step-add-provider"]');
-    expect(step?.getAttribute("data-base-url")).toBe("https://gateway.manifest.build/v1");
+    expect(step?.getAttribute("data-base-url")).toBe("https://app.manifest.build/v1");
     Object.defineProperty(window, "location", { value: origLocation, writable: true, configurable: true });
   });
 

@@ -11,15 +11,15 @@ describe('claimRequestIsSameOrigin', () => {
   it('matches when the Origin host equals the Host header', () => {
     expect(
       claimRequestIsSameOrigin({
-        origin: 'https://gateway.manifest.build',
-        host: 'gateway.manifest.build',
+        origin: 'https://app.manifest.build',
+        host: 'app.manifest.build',
       }),
     ).toBe(true);
   });
 
   it('rejects a foreign origin', () => {
     expect(
-      claimRequestIsSameOrigin({ origin: 'https://someone.example', host: 'gateway.manifest.build' }),
+      claimRequestIsSameOrigin({ origin: 'https://someone.example', host: 'app.manifest.build' }),
     ).toBe(false);
   });
 
@@ -77,7 +77,7 @@ describe('WaitlistController', () => {
   it('infers cloud for a sourceless same-origin claim (stale cloud bundle)', async () => {
     await controller.receivePivotClaim(
       { email: 'jane@example.com' },
-      reqWith({ origin: 'https://gateway.manifest.build', host: 'gateway.manifest.build' }),
+      reqWith({ origin: 'https://app.manifest.build', host: 'app.manifest.build' }),
     );
     expect(chain.values).toHaveBeenCalledWith(expect.objectContaining({ source: 'cloud' }));
   });
@@ -90,7 +90,7 @@ describe('WaitlistController', () => {
   it('lets an explicit source win over the origin inference', async () => {
     await controller.receivePivotClaim(
       { email: 'jane@example.com', source: 'self-hosted' },
-      reqWith({ origin: 'https://gateway.manifest.build', host: 'gateway.manifest.build' }),
+      reqWith({ origin: 'https://app.manifest.build', host: 'app.manifest.build' }),
     );
     expect(chain.values).toHaveBeenCalledWith(expect.objectContaining({ source: 'self-hosted' }));
   });

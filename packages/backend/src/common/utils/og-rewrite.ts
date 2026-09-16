@@ -5,7 +5,7 @@ import { DEFAULT_DASHBOARD_URL } from './dashboard-url';
  * index.html so self-hosted instances expose their own URL in shared
  * link previews instead of the Cloud Manifest defaults.
  *
- * Only the leading `https://gateway.manifest.build` is replaced, preserving
+ * Only the leading `https://app.manifest.build` is replaced, preserving
  * any path suffix on `og:image` (e.g. `/og-image.png`). When `baseUrl`
  * is empty or matches the default, the input is returned unchanged.
  */

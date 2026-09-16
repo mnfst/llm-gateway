@@ -10,9 +10,9 @@ describe('dashboard URLs', () => {
   });
 
   it('uses the gateway dashboard when no deployment URL is configured', () => {
-    expect(getDashboardBaseUrl()).toBe('https://gateway.manifest.build');
+    expect(getDashboardBaseUrl()).toBe('https://app.manifest.build');
     expect(getEmailAssetUrl('manifest-logo.png')).toBe(
-      'https://gateway.manifest.build/manifest-logo.png',
+      'https://app.manifest.build/manifest-logo.png',
     );
   });
 

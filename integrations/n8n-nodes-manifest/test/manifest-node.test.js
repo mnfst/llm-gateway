@@ -256,5 +256,5 @@ test('sends requests to the gateway API when no base URL was saved', async () =>
 
 	await new Manifest().execute.call(context);
 
-	assert.equal(requests[0].url, 'https://gateway.manifest.build/v1/models');
+	assert.equal(requests[0].url, 'https://app.manifest.build/v1/models');
 });

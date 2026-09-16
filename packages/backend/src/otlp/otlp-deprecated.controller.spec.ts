@@ -119,7 +119,7 @@ describe('OtlpDeprecatedController', () => {
 
     it('includes the correct baseURL hint', () => {
       const result = controller.wrongChatPath();
-      expect(result.error.message).toContain('https://gateway.manifest.build/v1');
+      expect(result.error.message).toContain('https://app.manifest.build/v1');
     });
   });
 });

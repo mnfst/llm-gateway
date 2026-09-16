@@ -147,7 +147,7 @@ async function executeManifestOperation(executeFunctions, operation, itemIndex) 
 }
 async function requestManifest(executeFunctions, method, path, body) {
     const credentials = await executeFunctions.getCredentials('manifestApi');
-    const baseUrl = trimTrailingSlash(String(credentials.baseUrl || 'https://gateway.manifest.build'));
+    const baseUrl = trimTrailingSlash(String(credentials.baseUrl || 'https://app.manifest.build'));
     const options = {
         method,
         url: `${baseUrl}${path}`,

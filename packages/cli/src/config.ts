@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { CliError } from './errors';
 
-export const DEFAULT_URL = 'https://gateway.manifest.build';
+export const DEFAULT_URL = 'https://app.manifest.build';
 
 export interface HostConfig {
   apiKey: string;
@@ -32,7 +32,7 @@ export function normalizeOrigin(url: string): string {
     throw new CliError(
       'invalid_url',
       `Not a valid URL: ${url}`,
-      'Pass a full origin like https://gateway.manifest.build',
+      'Pass a full origin like https://app.manifest.build',
     );
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {

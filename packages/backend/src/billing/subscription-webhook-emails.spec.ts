@@ -1,7 +1,7 @@
 jest.mock('./billing-email-sender', () => ({
   formatPlanName: (plan: string | null | undefined) =>
     plan === 'pro' ? 'Pro' : plan === 'free' ? 'Free' : plan,
-  getBillingAppUrl: () => 'https://gateway.manifest.build',
+  getBillingAppUrl: () => 'https://app.manifest.build',
   getBillingEmailFrom: () => 'noreply@manifest.build',
   sendSubscriptionPlanEmail: jest.fn().mockResolvedValue(true),
 }));
@@ -188,8 +188,9 @@ describe('subscription webhook billing emails', () => {
   });
 
   it('returns false for plan_changed when previousPlan is null', async () => {
-    await expect(sendPlanChangedEmail({ query: jest.fn() }, event(), subscription(), null))
-      .resolves.toBe(false);
+    await expect(
+      sendPlanChangedEmail({ query: jest.fn() }, event(), subscription(), null),
+    ).resolves.toBe(false);
   });
 
   it('uses the stripeSubscriptionId fallback to subscription.id when stripeSubscriptionId is null', async () => {
@@ -213,11 +214,7 @@ describe('subscription webhook billing emails', () => {
       .mockResolvedValueOnce({ rows: [{ email: 'owner@example.com', name: 'Ada' }] })
       .mockResolvedValueOnce({ rows: [{ id: 'log-1' }] });
 
-    await sendSubscriptionCanceledEmail(
-      { query },
-      event(),
-      subscription({ cancelAt: cancelDate }),
-    );
+    await sendSubscriptionCanceledEmail({ query }, event(), subscription({ cancelAt: cancelDate }));
 
     expect(sendSubscriptionPlanEmail).toHaveBeenCalledWith(
       'owner@example.com',
@@ -320,8 +317,6 @@ describe('subscription webhook billing emails', () => {
     );
 
     // plan_changed uses the eventId as the dedupe action (not 'confirm' or 'cancel')
-    expect(query.mock.calls[0][1][0]).toBe(
-      'billing:plan_changed:sub_123:evt_plan_change_42',
-    );
+    expect(query.mock.calls[0][1][0]).toBe('billing:plan_changed:sub_123:evt_plan_change_42');
   });
 });

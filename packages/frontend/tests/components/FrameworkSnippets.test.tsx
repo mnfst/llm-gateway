@@ -290,9 +290,9 @@ describe("FrameworkSnippets", () => {
 
   it("includes baseUrl in snippets", () => {
     const { container } = render(() => (
-      <FrameworkSnippets {...defaultProps} baseUrl="https://gateway.manifest.build/v1" />
+      <FrameworkSnippets {...defaultProps} baseUrl="https://app.manifest.build/v1" />
     ));
-    expect(container.textContent).toContain("https://gateway.manifest.build/v1");
+    expect(container.textContent).toContain("https://app.manifest.build/v1");
   });
 
   it("uses setup-method-tabs class", () => {

@@ -10,37 +10,35 @@ describe('proxy-friendly-response', () => {
   describe('getDashboardUrl', () => {
     const prodConfig = {
       get: jest.fn((key: string) => {
-        if (key === 'app.betterAuthUrl') return 'https://gateway.manifest.build';
+        if (key === 'app.betterAuthUrl') return 'https://app.manifest.build';
         return undefined;
       }),
     } as unknown as ConfigService;
 
     it('returns agent Overview URL when agentName provided without section', () => {
       expect(getDashboardUrl(prodConfig, 'my-agent')).toBe(
-        'https://gateway.manifest.build/agents/my-agent',
+        'https://app.manifest.build/agents/my-agent',
       );
     });
 
     it('returns agent Routing URL when section is "routing"', () => {
       expect(getDashboardUrl(prodConfig, 'my-agent', 'routing')).toBe(
-        'https://gateway.manifest.build/agents/my-agent/routing',
+        'https://app.manifest.build/agents/my-agent/routing',
       );
     });
 
     it('returns agent Limits URL when section is "limits"', () => {
       expect(getDashboardUrl(prodConfig, 'my-agent', 'limits')).toBe(
-        'https://gateway.manifest.build/agents/my-agent/limits',
+        'https://app.manifest.build/agents/my-agent/limits',
       );
     });
 
     it('returns bare base URL (Workspace) when no agentName', () => {
-      expect(getDashboardUrl(prodConfig)).toBe('https://gateway.manifest.build');
+      expect(getDashboardUrl(prodConfig)).toBe('https://app.manifest.build');
     });
 
     it('ignores section when no agentName is supplied', () => {
-      expect(getDashboardUrl(prodConfig, undefined, 'routing')).toBe(
-        'https://gateway.manifest.build',
-      );
+      expect(getDashboardUrl(prodConfig, undefined, 'routing')).toBe('https://app.manifest.build');
     });
 
     it('falls back to localhost when no betterAuthUrl configured', () => {

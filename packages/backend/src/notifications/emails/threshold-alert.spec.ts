@@ -18,7 +18,7 @@ describe('ThresholdAlertEmail', () => {
       actualValue: 150,
       period: 'day',
       timestamp: '2026-04-23 12:00',
-      agentUrl: 'https://gateway.manifest.build/agents/attack',
+      agentUrl: 'https://app.manifest.build/agents/attack',
     });
 
     // The raw `<img` tag must never appear — it would render as an element.
@@ -37,7 +37,7 @@ describe('ThresholdAlertEmail', () => {
       actualValue: 2,
       period: 'month',
       timestamp: '2026-04-23 12:00',
-      agentUrl: 'https://gateway.manifest.build/agents/a',
+      agentUrl: 'https://app.manifest.build/agents/a',
     });
 
     // The raw unescaped quote must never appear with the agent name's

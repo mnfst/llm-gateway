@@ -46,7 +46,7 @@ The action node waits for a streamed response to finish before passing its parse
 
 Create a **Manifest API** credential with:
 
-- **Base URL**: `https://gateway.manifest.build` for Manifest Cloud, or your self-hosted URL.
+- **Base URL**: `https://app.manifest.build` for Manifest Cloud, or your self-hosted URL.
 - **API Key**: an agent API key from Manifest.
 
 The credential sends requests with:
