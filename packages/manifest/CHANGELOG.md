@@ -1,5 +1,21 @@
 # manifest
 
+## 6.25.2
+
+### Patch Changes
+
+- a782be5: Replace the CLI npm README with a public quick start and remove development-only details.
+- c140bd1: Fix the CLI npm publish, which failed on provenance because the package did not declare public access.
+- 77792bc: Forward the caller's `anthropic-beta` header on native Messages requests to Anthropic instead of dropping it. Manifest builds the upstream header set from scratch, so a beta flag the caller sent never arrived: the API-key path sent no flag at all and the subscription path sent a fixed list. A request whose body used a beta-gated field was then validated against the non-beta schema and rejected. The caller's flags are now appended to Manifest's own, on the primary forward, the Autofix retry and fallback hops.
+
+  Scope is deliberately narrow. Only `POST /v1/messages` to Anthropic itself, including a custom provider row pointed at it. Translated OpenAI-shaped requests are excluded, because their responses come back through converters that understand only known content blocks. The Anthropic-compatible third parties (Bedrock, BytePlus, CommandCode, MiniMax, Kimi, OpenCode Go) are excluded too.
+
+- 0c2273f: Show an email verification recovery path when social sign-in finds an unlinked account.
+- 099e20d: Make MCP OAuth registration and callback errors actionable, and resume signed authorization after login.
+- 0d44d41: Point every repository URL at `mnfst/llm-gateway` after the rename. The GitHub stars endpoint, the self-hosted update check, the `docker/install.sh` download source and the Docker image source label no longer rely on GitHub's redirect from the old name.
+- 5438859: Restore app.manifest.build as the default Cloud setup URL while keeping gateway.manifest.build available for existing MCP clients.
+- 8cbf2bf: Resolve the Better Auth `baseURL` per request when the dashboard and the API answer on more than one host. The OAuth `redirect_uri` and the session cookie are pinned to `baseURL`, so with a single static origin a sign-in started on `app.manifest.build` returned to `gateway.manifest.build` and set the cookie there — an origin the dashboard cannot read, which stranded the user. Allowed hosts are derived from `BETTER_AUTH_URL`, `CORS_ORIGIN`, and the optional `BETTER_AUTH_ALLOWED_HOSTS`; unknown hosts fall back to the canonical `BETTER_AUTH_URL`, and development keeps the static origin.
+
 ## 6.25.1
 
 ### Patch Changes
