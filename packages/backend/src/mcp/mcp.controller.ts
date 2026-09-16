@@ -1,5 +1,6 @@
 import { Controller, Delete, Get, Post, Req, Res, Inject, Logger } from '@nestjs/common';
-import { requireMcpAuth } from '@better-auth/mcp';
+import { createMcpProtectedRequestHandler } from '@better-auth/mcp';
+import { createDpopReplayStore } from 'better-auth/oauth2';
 import { createMcpHandler } from '@modelcontextprotocol/server';
 import { fromNodeHeaders } from 'better-auth/node';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -7,7 +8,12 @@ import type { Cache } from 'cache-manager';
 import type { Request, Response } from 'express';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { auth, MCP_READ_SCOPE, mcpResource } from '../auth/auth.instance';
+import {
+  auth,
+  authIssuerForHost,
+  mcpResourceForHost,
+  MCP_READ_SCOPE,
+} from '../auth/auth.instance';
 import { Public } from '../common/decorators/public.decorator';
 import { TenantCacheService } from '../common/services/tenant-cache.service';
 import { AgentListCacheService } from '../common/services/agent-list-cache.service';
@@ -40,7 +46,7 @@ import { McpToolDeps } from './tool-deps';
  *
  * `@Public()` bypasses the session/API-key guards because MCP carries its own
  * credential: an OAuth 2.1 bearer token minted by the Better Auth MCP plugin.
- * `requireMcpAuth` below is that credential's gate — the route is not open.
+ * The protected-request handler below verifies that credential — the route is not open.
  *
  * A missing or dead token answers 401 with `WWW-Authenticate`
  * `resource_metadata=…`, which is how an MCP client discovers it must run the
@@ -135,26 +141,35 @@ export class McpController {
   @Public()
   async handle(@Req() req: Request, @Res() res: Response): Promise<void> {
     const deps = this.deps();
-    const verify = requireMcpAuth(
-      auth,
-      async (request, claims) => {
-        const operator = await resolveMcpOperator(this.tenantCache, claims);
-        if (!operator) return unauthorizedResponse();
-        // A fresh handler per request keeps the operator closure un-forgeable:
-        // no caller-supplied field can change whose tenant a tool acts on.
-        const handler = createMcpHandler(() => buildMcpServer(deps, operator), {
-          responseMode: 'json',
-        });
-        return handler.fetch(request, { parsedBody: req.body });
-      },
-      { resource: mcpResource, requiredScopes: [MCP_READ_SCOPE] },
-    );
-
-    const webRequest = new globalThis.Request(mcpResource, {
+    const resource = mcpResourceForHost(req.headers.host);
+    const issuer = authIssuerForHost(req.headers.host);
+    const webRequest = new globalThis.Request(resource, {
       method: req.method,
       headers: fromNodeHeaders(req.headers),
     });
     try {
+      // Dynamic auth base URLs leave the global context's baseURL empty, so
+      // requireMcpAuth cannot infer verification settings from that context.
+      const { internalAdapter } = await auth.$context;
+      const verify = createMcpProtectedRequestHandler(
+        {
+          issuer,
+          audience: resource,
+          jwksUrl: `${issuer}/jwks`,
+          requiredScopes: [MCP_READ_SCOPE],
+          dpop: { replayStore: createDpopReplayStore(internalAdapter) },
+        },
+        async (request, claims) => {
+          const operator = await resolveMcpOperator(this.tenantCache, claims);
+          if (!operator) return unauthorizedResponse(resource);
+          // A fresh handler per request keeps the operator closure un-forgeable:
+          // no caller-supplied field can change whose tenant a tool acts on.
+          const handler = createMcpHandler(() => buildMcpServer(deps, operator), {
+            responseMode: 'json',
+          });
+          return handler.fetch(request, { parsedBody: req.body });
+        },
+      );
       const response = await verify(webRequest);
       await sendWebResponse(response, res);
     } catch (error) {
@@ -190,8 +205,8 @@ function methodNotAllowedResponse(): globalThis.Response {
   );
 }
 
-function unauthorizedResponse(): globalThis.Response {
-  const url = new URL(mcpResource);
+function unauthorizedResponse(resource: string): globalThis.Response {
+  const url = new URL(resource);
   const metadata = `${url.origin}/.well-known/oauth-protected-resource${url.pathname}`;
   return new globalThis.Response(
     JSON.stringify({

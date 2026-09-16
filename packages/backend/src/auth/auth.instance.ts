@@ -42,6 +42,81 @@ export const authIssuer = `${authOrigin}/api/auth`;
 export const mcpResource = `${authOrigin}/api/v1/mcp`;
 export { MCP_READ_SCOPE, MCP_WRITE_SCOPE, MCP_SCOPES } from './mcp-scopes';
 
+const CLOUD_ORIGINS = ['https://app.manifest.build', 'https://gateway.manifest.build'];
+const cloudOrigins = CLOUD_ORIGINS.includes(authOrigin) ? CLOUD_ORIGINS : [];
+export const mcpResources = (cloudOrigins.length ? cloudOrigins : [authOrigin]).map(
+  (origin) => `${origin}/api/v1/mcp`,
+);
+
+/** Keep each Cloud MCP endpoint bound to the host the client connected to. */
+export function authOriginForHost(host: string | undefined): string {
+  const normalizedHost = parseOriginHost(host);
+  return (
+    (cloudOrigins.length ? cloudOrigins : [authOrigin]).find(
+      (origin) => new URL(origin).host === normalizedHost,
+    ) ?? authOrigin
+  );
+}
+
+export function authIssuerForHost(host: string | undefined): string {
+  return `${authOriginForHost(host)}/api/auth`;
+}
+
+export function mcpResourceForHost(host: string | undefined): string {
+  return `${authOriginForHost(host)}/api/v1/mcp`;
+}
+
+/** Host (with optional port) of an origin or bare hostname, or null when junk. */
+function parseOriginHost(value: string | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `https://${raw}`);
+    return url.host || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Better Auth pins the OAuth callback and the session cookie to its `baseURL`.
+ * The dashboard and the API can answer on more than one host — the hosted
+ * Cloud serves app.manifest.build and gateway.manifest.build from the same
+ * service — so a single static origin sends a user who started on host A
+ * through a callback on host B, where the session cookie lands on an origin
+ * the dashboard cannot read. When a second host is configured, resolve the
+ * base URL from the request host instead, restricted to an allow-list.
+ *
+ * Hosts come from `BETTER_AUTH_URL` (canonical), both Cloud domains,
+ * `CORS_ORIGIN` (the dashboard origin already trusted for cross-origin calls),
+ * and the optional
+ * `BETTER_AUTH_ALLOWED_HOSTS` (comma-separated patterns, `*.` wildcards
+ * allowed). Unknown hosts fall back to the canonical origin, and dev keeps the
+ * static origin so the Vite proxy on :3000 doesn't move the callback off the
+ * registered :3001 URL.
+ */
+function buildAuthBaseURL():
+  string | { allowedHosts: string[]; fallback: string; protocol: 'http' | 'https' } {
+  if (isDev) return authOrigin;
+  const hosts = new Set<string>();
+  const add = (value: string | undefined) => {
+    const host = parseOriginHost(value);
+    if (host) hosts.add(host);
+  };
+  add(process.env['BETTER_AUTH_URL']);
+  add(process.env['CORS_ORIGIN']);
+  for (const origin of cloudOrigins) add(origin);
+  for (const entry of (process.env['BETTER_AUTH_ALLOWED_HOSTS'] ?? '').split(',')) add(entry);
+  if (hosts.size <= 1) return authOrigin;
+  return {
+    allowedHosts: [...hosts],
+    fallback: authOrigin,
+    protocol: authOrigin.startsWith('https://') ? 'https' : 'http',
+  };
+}
+
+export const authBaseURL = buildAuthBaseURL();
+
 function createDatabaseConnection() {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { Pool } = require('pg');
@@ -72,6 +147,7 @@ function buildTrustedOrigins(): string[] {
   if (process.env['CORS_ORIGIN']) {
     origins.push(process.env['CORS_ORIGIN']);
   }
+  origins.push(...cloudOrigins);
   if (isDev) {
     origins.push(
       `http://localhost:3000`,
@@ -102,16 +178,15 @@ function buildPlugins() {
       consentPage: '/consent',
       resource: mcpResource,
       scopes: [...MCP_SCOPES, 'offline_access'],
-      resources: [
-        {
-          identifier: mcpResource,
-          name: 'Manifest MCP',
-          // Short-lived bearer tokens; the refresh token (offline_access) is
-          // how an editor stays connected across a session.
-          accessTokenTtl: 15 * 60,
-          allowedScopes: [...MCP_SCOPES, 'offline_access'],
-        },
-      ],
+      resources: mcpResources.map((identifier) => ({
+        identifier,
+        name: 'Manifest MCP',
+        // Short-lived bearer tokens; the refresh token (offline_access) is
+        // how an editor stays connected across a session.
+        accessTokenTtl: 15 * 60,
+        allowedScopes: [...MCP_SCOPES, 'offline_access'],
+      })),
+      clientRegistrationDefaultResources: mcpResources,
       resourceSeedMode: 'overwrite',
       clientRegistrationDefaultScopes: [MCP_READ_SCOPE],
       clientRegistrationAllowedScopes: [MCP_WRITE_SCOPE, 'offline_access'],
@@ -162,7 +237,7 @@ function buildPlugins() {
 
 const pluginAuth = betterAuth({
   database,
-  baseURL: authOrigin,
+  baseURL: authBaseURL,
   basePath: '/api/auth',
   secret: betterAuthSecret,
   logger: { level: 'debug' },

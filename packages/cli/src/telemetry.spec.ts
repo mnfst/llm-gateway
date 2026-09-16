@@ -52,9 +52,9 @@ describe('telemetry', () => {
   it('classifies the target as cloud or self-hosted, never as a URL', () => {
     // Fresh install, nothing configured: the CLI defaults to Cloud.
     expect(telemetryTarget(makeIo())).toBe('cloud');
-    expect(telemetryTarget(makeIo({ env: { MANIFEST_URL: 'https://APP.manifest.build/' } }))).toBe(
-      'cloud',
-    );
+    expect(
+      telemetryTarget(makeIo({ env: { MANIFEST_URL: 'https://GATEWAY.manifest.build/' } })),
+    ).toBe('cloud');
     expect(telemetryTarget(makeIo({ env: { MANIFEST_URL: 'http://localhost:3001' } }))).toBe(
       'self-hosted',
     );
@@ -75,7 +75,7 @@ describe('telemetry', () => {
     // A per-command --url outranks everything, as it does for the command itself.
     expect(
       telemetryTarget(
-        makeIo({ env: { MANIFEST_URL: 'https://app.manifest.build' } }),
+        makeIo({ env: { MANIFEST_URL: 'https://gateway.manifest.build' } }),
         'http://10.0.0.5:3001',
       ),
     ).toBe('self-hosted');

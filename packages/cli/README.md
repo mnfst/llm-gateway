@@ -1,108 +1,79 @@
-# mnfst — Manifest management CLI
+# Manifest CLI
 
-Configure Manifest from the terminal (or from a coding agent): create agents, connect providers, set routing, and read usage — without opening the dashboard. Thin wrapper over the `/api/v1` management REST API; JSON output on stdout, exit `0`/`1`, never interactive mid-task.
+`mnfst` manages a Manifest gateway from your terminal. Use it to create agents, connect AI providers, configure model routing, and inspect requests. The dashboard calls agents **Harnesses**; CLI commands use `agent`.
 
-## Install / run
+The npm package is `mnfst-gateway-cli`. The command it installs is `mnfst`. Node.js 20 or later is required.
 
-Published to npm as [`mnfst-gateway-cli`](https://www.npmjs.com/package/mnfst-gateway-cli).
-The package name is gateway-qualified because the bare `mnfst` name on npm belongs to an
-unrelated project and `manifest` is the Manifest SDK; the command you type stays `mnfst`.
+## Install
 
 ```bash
 npm install -g mnfst-gateway-cli
 mnfst --help
 ```
 
-Or run it without installing:
+To run it without a global install:
 
 ```bash
 npx mnfst-gateway-cli --help
 ```
 
-The published version tracks the Manifest release it ships with, so `mnfst --version`
-tells you which server version the CLI was built against.
+## Quick start
 
-### From the monorepo
-
-```bash
-npm install
-npm run build --workspace=packages/shared
-npm run build --workspace=packages/cli
-node packages/cli/bin/mnfst.js --help
-# or link it:
-npm link --workspace=packages/cli && mnfst --help
-```
-
-## Login once, manage everything
-
-One global API key (a tenant credential from the `api_keys` table — e.g. the seeded
-`dev-api-key-manifest-001` on a dev stack) unlocks every management command. Per-agent
-`mnfst_…` keys are **never inputs**: the CLI only produces them, delivered to
-`--key-file` paths with mode `0600`.
+Sign in to the hosted Manifest gateway, then create an agent and connect a provider:
 
 ```bash
-# browser login (default): opens the dashboard, you approve, the CLI gets a token
-mnfst login --url http://localhost:2099
-
-# non-interactive alternatives — the secret is never passed as an argument
-printf '%s' "$MY_KEY" | mnfst login --token-stdin --url http://localhost:2099
-# or: mnfst login --token-env MY_KEY --url http://localhost:2099
-
-mnfst whoami
-mnfst agent create --name coding-assistant --platform openclaw --category coding --if-absent
-mnfst provider connect xai --auth-type api_key --credential-env XAI_API_KEY
-mnfst agent configure coding-assistant --models grok-4.5,grok-4 --provider xai
-mnfst routing test coding-assistant
-mnfst requests get --agent coding-assistant --range 7d
+mnfst login
+mnfst agent create --name my-app --platform openai-sdk
+mnfst provider connect openai --agent my-app --credential-env OPENAI_API_KEY
+mnfst models my-app --provider openai
+mnfst agent configure my-app --models gpt-4o-mini --provider openai
+mnfst routing status my-app
+mnfst agent setup my-app
 ```
 
-Credentials resolve as: `MANIFEST_API_KEY` env var → the stored credential whose origin
-exactly matches the target (`--url` → `MANIFEST_URL` → active login → Cloud). A key
-stored for one host is never sent to another. Config lives at
-`~/.config/manifest/config.json` (mode `0600`).
+Set `OPENAI_API_KEY` in your environment before connecting the provider. Choose a model shown by `mnfst models` if `gpt-4o-mini` is unavailable to your account. `mnfst agent setup` returns wiring instructions with the agent key masked.
 
-Browser login runs a one-shot loopback listener on `127.0.0.1`, sends the browser to
-`/cli/auth?port=…&state=…&code_challenge=…` (PKCE S256), and exchanges the returned
-one-time code plus the verifier for a token over a direct CLI→server call — the token
-itself never travels through the browser. It needs an interactive terminal (`no_tty`
-otherwise, so scripts get a clear pointer to `--token-stdin`). `mnfst logout` revokes the
-stored token server-side on a best-effort basis before deleting it locally, and reports
-`revoked` in its JSON.
+For a self-hosted gateway, pass its URL when you sign in:
 
-Destructive commands (`delete`, `rotate-key`, `disconnect`, `clear`) require `--yes`
-and fail rather than prompt. Run `mnfst --help` for the full command list.
+```bash
+mnfst login --url https://gateway.example.com
+```
 
-## Telemetry
+The CLI uses that gateway for later commands. You can select another gateway with `--url` or `MANIFEST_URL`.
 
-The CLI records one anonymous event per command in a local spool
-(`~/.config/manifest/telemetry-spool.jsonl`, mode `0600`) and ships the spool in **one request
-per install per day** — the first command that runs 24 h after the last send (or the very
-first command, so a new install is counted the day it appears). Nothing is sent per command.
-The spool is capped at 500 events; a failed send is retried at most hourly. The **entire**
-payload is:
+## Useful commands
 
-| Field                    | Value                                                                                                                                                                                                                             |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `anon_id`                | A persistent anonymous **install id** — a random UUID minted on first run and stored at `~/.config/manifest/telemetry-id` (mode `0600`). It identifies an install, not a person, tenant, or machine. Delete the file to reset it. |
-| `cli_version`            | The `mnfst` version.                                                                                                                                                                                                              |
-| `os`                     | `darwin`, `linux`, `win32`, or `other`.                                                                                                                                                                                           |
-| `schema_version`         | Payload schema version (currently `1`).                                                                                                                                                                                           |
-| `target`                 | `cloud` or `self-hosted` — which class of Manifest the install points at (`MANIFEST_URL`, then the active config host, then Cloud). Never the URL.                                                                                |
-| `events[]`               | One entry per command run since the last send, each with only the fields below.                                                                                                                                                   |
-| `events[].command`       | The command **name** only, as registered (`agent create`, `provider connect`) — never arguments.                                                                                                                                  |
-| `events[].ok`            | Whether the command exited `0`.                                                                                                                                                                                                   |
-| `events[].duration_ms`   | Wall-clock duration, clamped to 0–600000.                                                                                                                                                                                         |
-| `events[].at`            | When it ran, UTC, minute precision.                                                                                                                                                                                               |
-| `events[].agent_runtime` | Coarse coding-agent id (for example `claude-code` or `codex`) when a supported agent drives the CLI; omitted otherwise.                                                                                                           |
+| Task                           | Command                                        |
+| ------------------------------ | ---------------------------------------------- |
+| Check your connection          | `mnfst doctor`                                 |
+| List available agent platforms | `mnfst agent platforms`                        |
+| List connectable providers     | `mnfst provider catalog`                       |
+| Review an agent's routing      | `mnfst routing status my-app`                  |
+| Read recent requests           | `mnfst requests get --agent my-app --range 7d` |
+| See all commands and options   | `mnfst --help`                                 |
 
-Nothing else is collected: no arguments, agent or provider names, URLs, hostnames, prompts,
-API keys, tokens, file paths, or IP-derived data. `os` and `agent_runtime` are fixed enums, never
-free text. The daily request is fire-and-forget with a 1.5 s timeout, and every failure is
-swallowed — the spool is simply kept for the next attempt.
+Most commands write JSON to stdout for scripts and coding agents. `mnfst agent env` and `mnfst skill show` write text. `mnfst routing test` sends a real provider request, which may incur provider charges. Destructive commands require `--yes`.
 
-- **Opt out:** `MANIFEST_TELEMETRY_DISABLED=1` (also accepts `true`).
-- **Redirect:** `MANIFEST_CLI_TELEMETRY_ENDPOINT=<url>` overrides the default endpoint
-  (`https://telemetry.manifest.build/v1/cli-report`) — useful for self-hosted collection or
-  for inspecting exactly what is sent.
+## Credentials
 
-Design spec: `docs/superpowers/specs/2026-07-31-manifest-cli-design.md` (local-only).
+Browser login is the default. For a script, provide a management credential through standard input or an environment variable:
+
+```bash
+printf '%s' "$MY_KEY" | mnfst login --token-stdin
+# or
+mnfst login --token-env MY_KEY
+```
+
+The CLI stores login credentials for each gateway host in `~/.config/manifest/config.json` with file mode `0600`. A stored credential is only sent to the host where it was saved. `MANIFEST_API_KEY` overrides the stored credential for the selected host.
+
+Agent keys are separate from management credentials. The CLI stores a newly created agent key in its local keystore and does not print it in `mnfst agent setup` unless you pass `--reveal`. Use `mnfst agent env my-app` to get the key and URL for your application; its output contains the key, so handle it as a secret.
+
+## Usage telemetry
+
+The CLI records usage telemetry by default. It batches events locally and normally sends one request per install per day. The payload contains a random, persistent install ID; CLI version; operating system; Cloud or self-hosted target; and each command's name, result, duration, and minute-level time. It may include the detected coding-agent runtime. It does not include command arguments, agent or provider names, gateway URLs, prompts, or credentials.
+
+Set `MANIFEST_TELEMETRY_DISABLED=1` to opt out. Telemetry files are stored beside the CLI config. You can set `MANIFEST_CLI_TELEMETRY_ENDPOINT` to send usage data to your own endpoint.
+
+## Documentation
+
+See the [CLI documentation](https://manifest.build/docs/cli/) for more examples and the [GitHub repository](https://github.com/mnfst/llm-gateway) for source and issues.

@@ -87,7 +87,7 @@ describe('SocialButtons', () => {
     expect(mockSignInSocial).toHaveBeenCalledWith({
       provider: 'google',
       callbackURL: '/upgrade',
-      errorCallbackURL: '/login?plan=pro&error=oauth_failed',
+      errorCallbackURL: '/login?plan=pro&oauth=failed',
     });
   });
 
@@ -98,7 +98,7 @@ describe('SocialButtons', () => {
     expect(mockSignInSocial).toHaveBeenCalledWith({
       provider: 'github',
       callbackURL: '/upgrade?reason=requests',
-      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&error=oauth_failed',
+      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&oauth=failed',
     });
   });
 
@@ -108,7 +108,7 @@ describe('SocialButtons', () => {
     expect(mockSignInSocial).toHaveBeenCalledWith({
       provider: 'github',
       callbackURL: '/discovery?next=%2Fwelcome&signup=1',
-      errorCallbackURL: '/login?error=oauth_failed',
+      errorCallbackURL: '/login?oauth=failed',
     });
   });
 });

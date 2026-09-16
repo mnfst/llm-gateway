@@ -9,6 +9,7 @@ import SetupModal from '../components/SetupModal.jsx';
 import SettingsAutofixSection from './SettingsAutofixSection.jsx';
 import SettingsRecordingSection from './SettingsRecordingSection.jsx';
 import { agentDisplayName } from '../services/agent-display-name.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import {
   deleteAgent,
   getAgentInfo,
@@ -93,7 +94,7 @@ const Settings: Component = () => {
   };
 
   const baseUrl = () => {
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const handleDeleteAgent = async () => {

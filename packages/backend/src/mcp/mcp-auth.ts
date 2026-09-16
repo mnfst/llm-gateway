@@ -27,7 +27,7 @@ export { MCP_READ_SCOPE, MCP_WRITE_SCOPE };
  * acting operator.
  *
  * Signature, issuer, audience, expiry, and baseline scope checks happen before
- * this function — `requireMcpAuth` owns them. Here we only map `sub` (a Better
+ * this function — `createMcpProtectedRequestHandler` owns them. Here we only map `sub` (a Better
  * Auth user id) to that user's tenant through the same cache the session guard
  * uses, so every tool is scoped exactly like the dashboard and CLI are.
  *

@@ -51,7 +51,9 @@ export function buildSocialAuthUrls(searchParams: SearchParams): {
   if (firstParam(searchParams.plan) === 'pro') {
     errorParams.set('plan', 'pro');
   }
-  errorParams.set('error', 'oauth_failed');
+  // Better Auth appends the actual `error` code to this URL. Keep our fallback
+  // marker separate so the callback does not contain two `error` parameters.
+  errorParams.set('oauth', 'failed');
 
   return {
     callbackURL,

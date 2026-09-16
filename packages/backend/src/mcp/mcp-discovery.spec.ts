@@ -7,6 +7,16 @@ jest.mock('../auth/auth.instance', () => ({
   authOrigin: 'http://localhost:3001',
   authIssuer: 'http://localhost:3001/api/auth',
   mcpResource: 'http://localhost:3001/api/v1/mcp',
+  authOriginForHost: (host: string) =>
+    host === 'gateway.manifest.build' ? 'https://gateway.manifest.build' : 'http://localhost:3001',
+  authIssuerForHost: (host: string) =>
+    host === 'gateway.manifest.build'
+      ? 'https://gateway.manifest.build/api/auth'
+      : 'http://localhost:3001/api/auth',
+  mcpResourceForHost: (host: string) =>
+    host === 'gateway.manifest.build'
+      ? 'https://gateway.manifest.build/api/v1/mcp'
+      : 'http://localhost:3001/api/v1/mcp',
   MCP_SCOPES: ['mcp:read', 'mcp:write'],
 }));
 jest.mock('@better-auth/oauth-provider', () => ({
@@ -58,11 +68,40 @@ describe('mountMcpDiscovery', () => {
     await request(makeApp()).head('/.well-known/oauth-protected-resource').expect(200);
   });
 
+  it('advertises the gateway resource and issuer to gateway clients', async () => {
+    const res = await request(makeApp())
+      .get('/.well-known/oauth-protected-resource/api/v1/mcp')
+      .set('Host', 'gateway.manifest.build')
+      .expect(200);
+    expect(res.body).toMatchObject({
+      resource: 'https://gateway.manifest.build/api/v1/mcp',
+      authorization_servers: ['https://gateway.manifest.build/api/auth'],
+    });
+  });
+
   it('proxies the authorization-server metadata at the path-suffixed well-known', async () => {
     const res = await request(makeApp())
       .get('/.well-known/oauth-authorization-server/api/auth')
       .expect(200);
     expect(res.body).toMatchObject({ issuer: 'http://localhost:3001/api/auth' });
+  });
+
+  it('uses the gateway host for gateway authorization metadata', async () => {
+    const serve = jest.fn(async (req: Request) =>
+      new Response(JSON.stringify({ issuer: new URL(req.url).origin + '/api/auth' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    oauthProviderAuthServerMetadata.mockReturnValue(serve);
+    const res = await request(makeApp())
+      .get('/.well-known/oauth-authorization-server/api/auth')
+      .set('Host', 'gateway.manifest.build')
+      .expect(200);
+    expect(res.body.issuer).toBe('https://gateway.manifest.build/api/auth');
+    expect(serve.mock.calls[0][0].url).toBe(
+      'https://gateway.manifest.build/.well-known/oauth-authorization-server/api/auth',
+    );
   });
 
   it('answers the origin root well-known with JSON, not the SPA shell', async () => {

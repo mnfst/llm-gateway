@@ -1,6 +1,7 @@
 import { type Component, createResource } from 'solid-js';
 import FrameworkSnippets from './FrameworkSnippets.jsx';
 import { getAgentKey } from '../services/api.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import type { HeaderTier } from '../services/api/header-tiers.js';
 
 interface Props {
@@ -21,7 +22,7 @@ const HeaderTierSnippetModal: Component<Props> = (props) => {
   );
 
   const baseUrl = (): string => {
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const customHeaders = (): Record<string, string> => ({

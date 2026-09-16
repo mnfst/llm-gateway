@@ -178,10 +178,10 @@ describe("Login resend cooldown - timer edge cases", () => {
     });
     fireEvent.submit(container.querySelector("form")!);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain("Resend verification email");
+      expect(container.textContent).toContain("Send verification email");
     });
     return Array.from(container.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("Resend verification email"),
+      b.textContent?.includes("Send verification email"),
     ) as HTMLButtonElement;
   };
 
@@ -219,7 +219,7 @@ describe("Login resend cooldown - timer edge cases", () => {
     // Drain the entire 60-second window plus a generous overshoot
     vi.advanceTimersByTime(120_000);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain("Resend verification email");
+      expect(container.textContent).toContain("Send verification email");
     });
     // No negative seconds should ever render
     expect(container.textContent).not.toMatch(/Resend in -\d+s/);
@@ -237,7 +237,7 @@ describe("Login resend cooldown - timer edge cases", () => {
     });
     vi.advanceTimersByTime(60_000);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain("Resend verification email");
+      expect(container.textContent).toContain("Send verification email");
     });
     // clearInterval is called both inside the tick that hits zero and (potentially)
     // on unmount; at minimum it must have fired once before unmount.

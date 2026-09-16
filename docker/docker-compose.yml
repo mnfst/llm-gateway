@@ -65,6 +65,10 @@ services:
       # credentials. When unset, the backend falls back to BETTER_AUTH_SECRET.
       - MANIFEST_ENCRYPTION_KEY=${MANIFEST_ENCRYPTION_KEY:-}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${HOST_PORT:-${PORT:-2099}}}
+      # Extra hosts that may serve the dashboard/API, comma-separated. The
+      # OAuth callback and session cookie follow the request host, so set this
+      # when the same instance answers on more than one domain.
+      - BETTER_AUTH_ALLOWED_HOSTS=${BETTER_AUTH_ALLOWED_HOSTS:-}
       # Defaults to the host-installed Ollama. Override in .env if your
       # Ollama runs elsewhere (e.g. on another host on your LAN).
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}

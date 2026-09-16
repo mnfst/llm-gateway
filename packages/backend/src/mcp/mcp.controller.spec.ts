@@ -2,18 +2,36 @@ import { McpController } from './mcp.controller';
 import type { Request, Response } from 'express';
 
 jest.mock('../auth/auth.instance', () => ({
-  auth: {},
+  auth: { $context: Promise.resolve({ baseURL: '', internalAdapter: {} }) },
+  authIssuer: 'http://localhost:3001/api/auth',
   mcpResource: 'http://localhost:3001/api/v1/mcp',
+  authIssuerForHost: (host: string) =>
+    host === 'gateway.manifest.build'
+      ? 'https://gateway.manifest.build/api/auth'
+      : 'http://localhost:3001/api/auth',
+  mcpResourceForHost: (host: string) =>
+    host === 'gateway.manifest.build'
+      ? 'https://gateway.manifest.build/api/v1/mcp'
+      : 'http://localhost:3001/api/v1/mcp',
   MCP_READ_SCOPE: 'mcp:read',
 }));
 jest.mock('better-auth/node', () => ({ fromNodeHeaders: jest.fn(() => new Headers()) }));
-jest.mock('@better-auth/mcp', () => ({ requireMcpAuth: jest.fn() }));
+jest.mock('better-auth/oauth2', () => ({ createDpopReplayStore: jest.fn(() => ({})) }));
+jest.mock('@better-auth/mcp', () => ({ createMcpProtectedRequestHandler: jest.fn() }));
 jest.mock('@modelcontextprotocol/server', () => ({
   createMcpHandler: jest.fn(),
   McpServer: jest.fn(),
 }));
 
-const { requireMcpAuth } = jest.requireMock('@better-auth/mcp') as { requireMcpAuth: jest.Mock };
+const { auth } = jest.requireMock('../auth/auth.instance') as {
+  auth: { $context: Promise<{ baseURL: string; internalAdapter: object }> };
+};
+const { createDpopReplayStore } = jest.requireMock('better-auth/oauth2') as {
+  createDpopReplayStore: jest.Mock;
+};
+const { createMcpProtectedRequestHandler } = jest.requireMock('@better-auth/mcp') as {
+  createMcpProtectedRequestHandler: jest.Mock;
+};
 const { createMcpHandler } = jest.requireMock('@modelcontextprotocol/server') as {
   createMcpHandler: jest.Mock;
 };
@@ -47,32 +65,42 @@ const req = {
 
 describe('McpController', () => {
   beforeEach(() => {
-    requireMcpAuth.mockReset();
+    createMcpProtectedRequestHandler.mockReset();
+    createDpopReplayStore.mockClear();
     createMcpHandler.mockReset();
   });
 
-  it('serves a tool call through requireMcpAuth', async () => {
+  it('serves a tool call with an explicit issuer when auth has a dynamic base URL', async () => {
     createMcpHandler.mockReturnValue({
       fetch: jest.fn().mockResolvedValue(new Response('OK', { status: 200 })),
     });
-    requireMcpAuth.mockImplementation(
-      (_auth: unknown, cb: (r: unknown, c: unknown) => Promise<Response>) => (request: unknown) =>
-        cb(request, { sub: 'user-1', scope: 'mcp:read' }),
+    createMcpProtectedRequestHandler.mockImplementation(
+      (_options: unknown, cb: (r: unknown, c: unknown) => Promise<Response>) =>
+        (request: unknown) => cb(request, { sub: 'user-1', scope: 'mcp:read' }),
     );
     const res = makeRes();
     await makeController('tenant-1').handle(req, res as never);
     expect(res.status).toHaveBeenCalledWith(200);
     expect(res.send).toHaveBeenCalledWith('OK');
-    expect(requireMcpAuth).toHaveBeenCalledWith(expect.anything(), expect.any(Function), {
-      resource: 'http://localhost:3001/api/v1/mcp',
-      requiredScopes: ['mcp:read'],
-    });
+    const { internalAdapter, baseURL } = await auth.$context;
+    expect(baseURL).toBe('');
+    expect(createDpopReplayStore).toHaveBeenCalledWith(internalAdapter);
+    expect(createMcpProtectedRequestHandler).toHaveBeenCalledWith(
+      {
+        issuer: 'http://localhost:3001/api/auth',
+        audience: 'http://localhost:3001/api/v1/mcp',
+        jwksUrl: 'http://localhost:3001/api/auth/jwks',
+        requiredScopes: ['mcp:read'],
+        dpop: { replayStore: createDpopReplayStore.mock.results[0].value },
+      },
+      expect.any(Function),
+    );
   });
 
   it('answers 401 with a WWW-Authenticate challenge when the operator is gone', async () => {
-    requireMcpAuth.mockImplementation(
-      (_auth: unknown, cb: (r: unknown, c: unknown) => Promise<Response>) => (request: unknown) =>
-        cb(request, { sub: 'user-1', scope: 'mcp:read' }),
+    createMcpProtectedRequestHandler.mockImplementation(
+      (_options: unknown, cb: (r: unknown, c: unknown) => Promise<Response>) =>
+        (request: unknown) => cb(request, { sub: 'user-1', scope: 'mcp:read' }),
     );
     const res = makeRes();
     await makeController(null).handle(req, res as never);
@@ -89,8 +117,25 @@ describe('McpController', () => {
     );
   });
 
+  it('verifies gateway tokens against the gateway issuer and audience', async () => {
+    createMcpProtectedRequestHandler.mockReturnValue(async () => new Response('OK'));
+    const res = makeRes();
+    await makeController('tenant-1').handle(
+      { ...req, headers: { host: 'gateway.manifest.build' } } as Request,
+      res as never,
+    );
+    expect(createMcpProtectedRequestHandler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        issuer: 'https://gateway.manifest.build/api/auth',
+        audience: 'https://gateway.manifest.build/api/v1/mcp',
+        jwksUrl: 'https://gateway.manifest.build/api/auth/jwks',
+      }),
+      expect.any(Function),
+    );
+  });
+
   it('answers a thrown verify with a JSON-RPC 500', async () => {
-    requireMcpAuth.mockReturnValue(async () => {
+    createMcpProtectedRequestHandler.mockReturnValue(async () => {
       throw new Error('boom');
     });
     const res = makeRes();
@@ -104,7 +149,7 @@ describe('McpController', () => {
   });
 
   it('answers a non-Error throw with a generic JSON-RPC 500', async () => {
-    requireMcpAuth.mockReturnValue(async () => {
+    createMcpProtectedRequestHandler.mockReturnValue(async () => {
       throw 'nope';
     });
     const res = makeRes();
@@ -133,7 +178,7 @@ describe('McpController', () => {
         id: null,
         error: { code: -32000, message: 'Method not allowed' },
       });
-      expect(requireMcpAuth).not.toHaveBeenCalled();
+      expect(createMcpProtectedRequestHandler).not.toHaveBeenCalled();
     },
   );
 });

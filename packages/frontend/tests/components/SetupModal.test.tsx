@@ -133,10 +133,10 @@ describe("SetupModal", () => {
     expect(step!.getAttribute("data-key")).toBe("mnfst_full_key");
   });
 
-  it("builds the base URL from the cloud origin", () => {
+  it("uses the app baseUrl on gateway.manifest.build", () => {
     const origLocation = window.location;
     Object.defineProperty(window, "location", {
-      value: { ...origLocation, hostname: "app.manifest.build", origin: "https://app.manifest.build" },
+      value: { ...origLocation, hostname: "gateway.manifest.build", origin: "https://gateway.manifest.build" },
       writable: true,
       configurable: true,
     });

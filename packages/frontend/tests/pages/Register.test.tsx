@@ -263,7 +263,7 @@ describe('Register', () => {
     expect(mockSignInSocial).toHaveBeenCalledWith({
       provider: 'github',
       callbackURL: '/discovery?next=%2Fwelcome&signup=1',
-      errorCallbackURL: '/login?error=oauth_failed',
+      errorCallbackURL: '/login?oauth=failed',
     });
   });
 

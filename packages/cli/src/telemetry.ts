@@ -51,7 +51,9 @@ export function telemetryTarget(io: CliIo, flagUrl?: string): TelemetryTarget {
   }
   try {
     const origin = normalizeOrigin(flagUrl ?? io.env['MANIFEST_URL'] ?? activeHost ?? DEFAULT_URL);
-    return origin === normalizeOrigin(DEFAULT_URL) ? 'cloud' : 'self-hosted';
+    return origin === normalizeOrigin(DEFAULT_URL) || origin === 'https://gateway.manifest.build'
+      ? 'cloud'
+      : 'self-hosted';
   } catch {
     return 'self-hosted';
   }

@@ -478,6 +478,128 @@ describe('auth.instance', () => {
     });
   });
 
+  describe('multi-host baseURL resolution', () => {
+    beforeEach(() => {
+      process.env['NODE_ENV'] = 'production';
+      process.env['BETTER_AUTH_SECRET'] = 'a]3kF9!xLm2@pQzR7^wYu4&vN6*cE0hT';
+      delete process.env['BETTER_AUTH_ALLOWED_HOSTS'];
+    });
+
+    it('stays a static origin for a single-host install', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://manifest.example.com';
+      delete process.env['CORS_ORIGIN'];
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL).toBe('https://manifest.example.com');
+    });
+
+    it('keeps both Cloud hosts usable when app is canonical', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://app.manifest.build';
+      process.env['CORS_ORIGIN'] = 'https://app.manifest.build';
+      const mod = loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL).toEqual({
+        allowedHosts: expect.arrayContaining(['app.manifest.build', 'gateway.manifest.build']),
+        fallback: 'https://app.manifest.build',
+        protocol: 'https',
+      });
+      expect(config.trustedOrigins).toEqual(
+        expect.arrayContaining(['https://app.manifest.build', 'https://gateway.manifest.build']),
+      );
+      expect(mod.mcpResources).toEqual([
+        'https://app.manifest.build/api/v1/mcp',
+        'https://gateway.manifest.build/api/v1/mcp',
+      ]);
+      expect(mod.mcpResourceForHost('gateway.manifest.build')).toBe(
+        'https://gateway.manifest.build/api/v1/mcp',
+      );
+      expect(mod.mcpResourceForHost('gateway.manifest.build:443')).toBe(
+        'https://gateway.manifest.build/api/v1/mcp',
+      );
+      expect(mod.mcpResourceForHost('gateway.manifest.build:444')).toBe(
+        'https://app.manifest.build/api/v1/mcp',
+      );
+      expect(mod.authIssuerForHost('gateway.manifest.build')).toBe(
+        'https://gateway.manifest.build/api/auth',
+      );
+      expect(mod.mcpResourceForHost('unknown.example')).toBe(
+        'https://app.manifest.build/api/v1/mcp',
+      );
+    });
+
+    it('resolves per request when the dashboard origin differs from the API origin', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      process.env['CORS_ORIGIN'] = 'https://app.manifest.build';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL).toEqual({
+        allowedHosts: expect.arrayContaining(['gateway.manifest.build', 'app.manifest.build']),
+        fallback: 'https://gateway.manifest.build',
+        protocol: 'https',
+      });
+      expect(config.baseURL.allowedHosts).toHaveLength(2);
+    });
+
+    it('adds extra hosts from BETTER_AUTH_ALLOWED_HOSTS, including wildcards', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      delete process.env['CORS_ORIGIN'];
+      process.env['BETTER_AUTH_ALLOWED_HOSTS'] =
+        'dashboard.manifest.build, *.preview.manifest.build';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect([...config.baseURL.allowedHosts].sort()).toEqual([
+        '*.preview.manifest.build',
+        'app.manifest.build',
+        'dashboard.manifest.build',
+        'gateway.manifest.build',
+      ]);
+    });
+
+    it('ignores malformed allowed-host entries', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      process.env['CORS_ORIGIN'] = 'https://app.manifest.build';
+      process.env['BETTER_AUTH_ALLOWED_HOSTS'] = ',   ,not a url';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect([...config.baseURL.allowedHosts].sort()).toEqual([
+        'app.manifest.build',
+        'gateway.manifest.build',
+      ]);
+    });
+
+    it('uses http when the canonical origin is http', () => {
+      process.env['BETTER_AUTH_URL'] = 'http://manifest.internal';
+      process.env['CORS_ORIGIN'] = 'http://dashboard.internal';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL.protocol).toBe('http');
+    });
+
+    it('keeps the static origin in development', () => {
+      process.env['NODE_ENV'] = 'development';
+      process.env['BETTER_AUTH_URL'] = 'http://localhost:3001';
+      process.env['CORS_ORIGIN'] = 'http://localhost:3000';
+      loadModule();
+
+      const config = mockBetterAuth.mock.calls[0][0];
+      expect(config.baseURL).toBe('http://localhost:3001');
+    });
+
+    it('exports the same base URL passed to betterAuth', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://gateway.manifest.build';
+      process.env['CORS_ORIGIN'] = 'https://app.manifest.build';
+      const mod = loadModule();
+
+      expect(mod.authBaseURL).toEqual(mockBetterAuth.mock.calls[0][0].baseURL);
+    });
+  });
+
   describe('plugins', () => {
     beforeEach(() => {
       mockStripePlugin.mockClear();
@@ -497,6 +619,9 @@ describe('auth.instance', () => {
         expect.arrayContaining(['mcp:read', 'mcp:write', 'offline_access']),
       );
       expect(config.resources[0].identifier).toBe('https://manifest.example.com/api/v1/mcp');
+      expect(config.clientRegistrationDefaultResources).toEqual([
+        'https://manifest.example.com/api/v1/mcp',
+      ]);
       expect(config.allowUnauthenticatedClientRegistration).toBe(false);
       expect(config.allowDynamicClientRegistration).toBe(true);
       expect(config.clientRegistrationRequirePKCE).toBe(true);
@@ -507,6 +632,25 @@ describe('auth.instance', () => {
       expect(config.resources[0].allowedScopes).toEqual(
         expect.arrayContaining(['mcp:read', 'mcp:write', 'offline_access']),
       );
+    });
+
+    it('registers both Cloud MCP resources for new OAuth clients', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://app.manifest.build';
+      loadModule();
+
+      const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
+      const config = mcp.mock.calls[0][0];
+      expect(config.resource).toBe('https://app.manifest.build/api/v1/mcp');
+      expect(
+        config.resources.map((resource: { identifier: string }) => resource.identifier),
+      ).toEqual([
+        'https://app.manifest.build/api/v1/mcp',
+        'https://gateway.manifest.build/api/v1/mcp',
+      ]);
+      expect(config.clientRegistrationDefaultResources).toEqual([
+        'https://app.manifest.build/api/v1/mcp',
+        'https://gateway.manifest.build/api/v1/mcp',
+      ]);
     });
 
     it('registers the MCP/OAuth plugins but not stripe when billing is disabled', () => {

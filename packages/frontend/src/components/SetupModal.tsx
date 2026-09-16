@@ -1,5 +1,6 @@
 import { createResource, Show, type Component } from 'solid-js';
 import { getAgentKey } from '../services/api.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import { platformIcon } from 'manifest-shared';
 import ErrorState from './ErrorState.jsx';
 import SetupStepAddProvider from './SetupStepAddProvider.jsx';
@@ -20,7 +21,7 @@ const SetupModal: Component<{
   );
 
   const baseUrl = () => {
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const handleGoToRouting = () => {

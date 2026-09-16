@@ -245,7 +245,7 @@ test('executes Responses API calls with parsed streaming output', async () => {
 	]);
 });
 
-test('sends requests to the gateway API when no base URL was saved', async () => {
+test('sends requests to the app API when no base URL was saved', async () => {
 	const requests = [];
 	const context = executionContext(
 		{ operation: 'listModels' },

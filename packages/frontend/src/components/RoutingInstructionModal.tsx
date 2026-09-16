@@ -3,6 +3,7 @@ import CopyButton from './CopyButton.jsx';
 import ModelSelectDropdown from './ModelSelectDropdown.jsx';
 import SetupStepAddProvider from './SetupStepAddProvider.jsx';
 import { getAgentKey } from '../services/api.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import { agentPlatform, agentCategory } from '../services/agent-platform-store.js';
 import { platformIcon } from 'manifest-shared';
 
@@ -26,7 +27,7 @@ const RoutingInstructionModal: Component<Props> = (props) => {
   );
 
   const baseUrl = () => {
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const disableCmd = () =>

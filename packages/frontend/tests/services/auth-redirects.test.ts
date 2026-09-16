@@ -49,14 +49,14 @@ describe('auth redirect helpers', () => {
   it('builds social callback URLs for pro intent', () => {
     expect(buildSocialAuthUrls({ plan: 'pro' })).toEqual({
       callbackURL: '/upgrade',
-      errorCallbackURL: '/login?plan=pro&error=oauth_failed',
+      errorCallbackURL: '/login?plan=pro&oauth=failed',
     });
   });
 
   it('preserves safe redirects in social error callbacks', () => {
     expect(buildSocialAuthUrls({ redirect: '/upgrade?reason=requests' })).toEqual({
       callbackURL: '/upgrade?reason=requests',
-      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&error=oauth_failed',
+      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&oauth=failed',
     });
   });
 });

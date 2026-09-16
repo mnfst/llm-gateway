@@ -7,9 +7,15 @@ vi.mock('@solidjs/meta', () => ({
 }));
 
 import McpServer, { clientSetups } from '../../src/pages/integrations/McpServer';
-import { mcpEndpoint, installOrigin } from '../../src/services/install-endpoints';
+import { mcpEndpoint, installOrigin, setupOrigin } from '../../src/services/install-endpoints';
 
 describe('install-endpoints', () => {
+  it('uses app for new Cloud setup on either Cloud host', () => {
+    expect(setupOrigin('https://app.manifest.build')).toBe('https://app.manifest.build');
+    expect(setupOrigin('https://gateway.manifest.build')).toBe('https://app.manifest.build');
+    expect(setupOrigin('https://manifest.example.com')).toBe('https://manifest.example.com');
+  });
+
   it('derives the origin from the browser', () => {
     expect(installOrigin()).toBe(window.location.origin);
   });
