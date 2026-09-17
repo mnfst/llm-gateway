@@ -1,5 +1,13 @@
 # manifest
 
+## 6.25.3
+
+### Patch Changes
+
+- c494805: Fix the per-harness Overview and Requests pages being slow on workspaces with a lot of traffic. The filter that hides Playground traffic re-read the agents table once per row, which on a busy harness meant tens of thousands of sequential scans. It now reads it once per query. Measured on production, the timeseries behind the Overview went from 24.7s to 0.3s and the requests chart from 26.2s to 0.7s, with identical results.
+- 5f4c69c: Lead with Allow on the remote MCP consent screen and move Deny below it as a secondary button.
+- 0f5ba81: Name gateway models correctly: OpenCode Go models that the underlying vendor's catalog does not list (e.g. `deepseek-v4.1-flash`) now read their name and capabilities from the gateway's own models.dev catalog instead of falling back to the raw model id, the Requests log resolves gateway ids through the pricing catalogue so it matches the routing page, the model picker hides an OpenCode Go id only when a published one already stands for the same model, and a promotional OpenCode Go quota row is parsed instead of skipped.
+
 ## 6.25.2
 
 ### Patch Changes
