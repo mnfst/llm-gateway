@@ -91,6 +91,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPlaceholder: 'sk-ant-...',
   },
   {
+    id: 'atria',
+    displayName: 'Atria',
+    aliases: [],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#5B6CFF',
+    keyPrefix: 'atr_',
+    minKeyLength: 20,
+    keyPlaceholder: 'atr_...',
+  },
+  {
     id: 'bedrock',
     displayName: 'AWS Bedrock',
     aliases: ['aws-bedrock', 'aws bedrock', 'amazon-bedrock', 'amazon bedrock'],

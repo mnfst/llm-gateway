@@ -240,6 +240,25 @@ describe('validateApiKey', () => {
     });
     expect(validateApiKey(huggingface, `hf_${'a'.repeat(20)}`)).toEqual({ valid: true });
   });
+
+  it('validates Atria API keys', () => {
+    const atria = getProvider('atria')!;
+    expect(atria.name).toBe('Atria');
+    expect(atria.models).toEqual([{ label: 'Atria Dawn Preview', value: 'Atria-Dawn-Preview' }]);
+    expect(validateApiKey(atria, '')).toEqual({
+      valid: false,
+      error: 'API key is required',
+    });
+    expect(validateApiKey(atria, 'sk_wrong_prefix_but_long_enough')).toEqual({
+      valid: false,
+      error: 'Atria keys start with "atr_"',
+    });
+    expect(validateApiKey(atria, 'atr_short')).toEqual({
+      valid: false,
+      error: 'Key is too short (minimum 20 characters)',
+    });
+    expect(validateApiKey(atria, `atr_${'a'.repeat(20)}`)).toEqual({ valid: true });
+  });
 });
 
 /* ── validateSubscriptionKey ────────────────────── */
@@ -1086,6 +1105,7 @@ describe('EMAIL_PROVIDER_API_KEY_URLS', () => {
 describe('getRoutingProviderApiKeyUrl', () => {
   it('returns a URL for a known provider', () => {
     expect(getRoutingProviderApiKeyUrl('openai')).toBe('https://platform.openai.com/api-keys');
+    expect(getRoutingProviderApiKeyUrl('atria')).toBe('https://api.atria-asi.ai/docs');
   });
 
   it('returns the ClinePass API-key settings URL', () => {

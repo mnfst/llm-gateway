@@ -22,6 +22,11 @@ export const PROVIDER_CATALOG: readonly ProviderCatalogEntry[] = [
     authTypes: ['api_key', 'subscription'],
   },
   {
+    id: 'atria',
+    displayName: 'Atria',
+    authTypes: ['api_key'],
+  },
+  {
     id: 'bedrock',
     displayName: 'AWS Bedrock',
     aliases: ['aws-bedrock', 'aws bedrock', 'amazon-bedrock', 'amazon bedrock'],

@@ -245,6 +245,16 @@ describe('SHARED_PROVIDER_BY_ID', () => {
     expect(bedrock!.keyPlaceholder).toBe('ABSK...');
   });
 
+  it('atria exposes API-key metadata without OpenRouter attribution', () => {
+    const atria = SHARED_PROVIDER_BY_ID.get('atria');
+    expect(atria).toBeDefined();
+    expect(atria!.displayName).toBe('Atria');
+    expect(atria!.openRouterPrefixes).toEqual([]);
+    expect(atria!.keyPrefix).toBe('atr_');
+    expect(atria!.minKeyLength).toBe(20);
+    expect(atria!.keyPlaceholder).toBe('atr_...');
+  });
+
   it('xiaomi exposes the MiMo API-key provider metadata', () => {
     const xiaomi = SHARED_PROVIDER_BY_ID.get('xiaomi');
     expect(xiaomi).toBeDefined();

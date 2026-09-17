@@ -45,6 +45,7 @@ describe('ProviderModelFetcherService', () => {
       'zai',
       'zai-subscription',
       'anthropic',
+      'atria',
       'gemini',
       'openrouter',
       'gemini-free',
@@ -270,6 +271,35 @@ describe('ProviderModelFetcherService', () => {
       inputPricePerToken: null,
       outputPricePerToken: null,
     });
+  });
+
+  it('should fetch Atria Dawn Preview from the Atria OpenAI-compatible models endpoint', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 'Atria-Dawn-Preview' }, { id: 'unverified-atria-model' }],
+      }),
+    });
+
+    const result = await service.fetch('atria', 'atr_test_key');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.atria-asi.ai/v1/models',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer atr_test_key' },
+      }),
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 'Atria-Dawn-Preview',
+        displayName: 'Atria-Dawn-Preview',
+        provider: 'atria',
+        contextWindow: 262144,
+        capabilityCode: true,
+        inputPricePerToken: null,
+        outputPricePerToken: null,
+      }),
+    ]);
   });
 
   it('should fetch Pioneer models from the OpenAI-compatible models endpoint', async () => {

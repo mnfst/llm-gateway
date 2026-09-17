@@ -67,6 +67,7 @@ describe('resolveEndpointKey', () => {
   it('resolves known providers directly', () => {
     expect(resolveEndpointKey('openai')).toBe('openai');
     expect(resolveEndpointKey('anthropic')).toBe('anthropic');
+    expect(resolveEndpointKey('atria')).toBe('atria');
     expect(resolveEndpointKey('bedrock')).toBe('bedrock');
     expect(resolveEndpointKey('cerebras')).toBe('cerebras');
     expect(resolveEndpointKey('pioneer')).toBe('pioneer');
@@ -774,6 +775,17 @@ describe('PROVIDER_ENDPOINTS', () => {
     });
   });
 
+  it('atria uses the Atria OpenAI-compatible chat endpoint', () => {
+    const ep = PROVIDER_ENDPOINTS['atria'];
+    expect(ep.baseUrl).toBe('https://api.atria-asi.ai');
+    expect(ep.format).toBe('openai');
+    expect(ep.buildPath('Atria-Dawn-Preview')).toBe('/v1/chat/completions');
+    expect(ep.buildHeaders('atr_test')).toEqual({
+      Authorization: 'Bearer atr_test',
+      'Content-Type': 'application/json',
+    });
+  });
+
   it('qwen-subscription uses the Token Plan OpenAI-compatible chat endpoint', () => {
     const ep = PROVIDER_ENDPOINTS['qwen-subscription'];
     expect(ep.baseUrl).toBe('https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode');
@@ -819,6 +831,7 @@ describe('PROVIDER_ENDPOINTS', () => {
   it('marks OpenAI-compatible streaming endpoints that support usage chunks', () => {
     const endpointKeys = [
       'openai',
+      'atria',
       'byteplus',
       'cerebras',
       'cline-pass',

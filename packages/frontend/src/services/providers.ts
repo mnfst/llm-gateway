@@ -162,6 +162,11 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subscriptionAuthMode: 'popup_paste',
     models: [],
   },
+  atria: {
+    initial: 'At',
+    subtitle: 'Atria Dawn Preview',
+    models: [{ label: 'Atria Dawn Preview', value: 'Atria-Dawn-Preview' }],
+  },
   vertex: {
     initial: 'GV',
     subtitle: 'Gemini via Google Cloud Vertex AI',
@@ -505,6 +510,7 @@ export function buildProviderDef(shared: SharedProviderEntry): ProviderDef {
 const PROVIDER_ORDER = [
   'qwen',
   'anthropic',
+  'atria',
   'bedrock',
   'byteplus',
   'cerebras',

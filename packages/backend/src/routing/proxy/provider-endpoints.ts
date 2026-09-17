@@ -143,6 +143,7 @@ const KILO_GATEWAY_BASE = 'https://api.kilo.ai/api/gateway';
 const NOUS_PORTAL_BASE = 'https://inference-api.nousresearch.com';
 const NVIDIA_NIM_BASE = 'https://integrate.api.nvidia.com';
 const FIREWORKS_INFERENCE_BASE = 'https://api.fireworks.ai/inference';
+const ATRIA_BASE = 'https://api.atria-asi.ai';
 const HUGGING_FACE_INFERENCE_BASE = 'https://router.huggingface.co';
 const PIONEER_BASE = 'https://api.pioneer.ai';
 const META_BASE = 'https://api.meta.ai';
@@ -195,6 +196,13 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     buildHeaders: anthropicHeaders,
     buildPath: () => '/v1/messages',
     format: 'anthropic',
+  },
+  atria: {
+    baseUrl: ATRIA_BASE,
+    buildHeaders: openaiHeaders,
+    buildPath: openaiPath,
+    format: 'openai',
+    ...openaiStreamUsage,
   },
   bedrock: {
     baseUrl: getBedrockMantleBaseUrl(),

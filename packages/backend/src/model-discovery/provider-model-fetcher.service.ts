@@ -55,6 +55,7 @@ const FIREWORKS_MODELS_URL = 'https://api.fireworks.ai/v1/accounts/fireworks/mod
 const HUGGING_FACE_MODELS_URL = 'https://router.huggingface.co/v1/models';
 const FIREWORKS_MODELS_PAGE_SIZE = 200;
 const FIREWORKS_MODELS_MAX_PAGES = 20;
+const ATRIA_CONTEXT_WINDOW = 262144;
 const NOUS_PORTAL_MODELS_URL = 'https://inference-api.nousresearch.com/v1/models';
 const OPENCODE_GO_MODELS_URL = 'https://opencode.ai/zen/go/v1/models';
 const PIONEER_MODELS_URL = 'https://api.pioneer.ai/v1/models';
@@ -370,6 +371,15 @@ const parseMeta = createModelParser<OpenAIModelEntry>({
   capabilityCode: true,
   inputModalities: ['text', 'image', 'audio', 'video'],
   outputModalities: ['text'],
+});
+
+const parseAtria = createModelParser<OpenAIModelEntry>({
+  arrayKey: 'data',
+  filter: (entry) => entry.id === 'Atria-Dawn-Preview',
+  getId: (entry) => entry.id,
+  getDisplayName: (_entry, id) => id,
+  contextWindow: ATRIA_CONTEXT_WINDOW,
+  capabilityCode: true,
 });
 
 /* ── OpenAI-specific structural filters (not non-chat) ── */
@@ -1037,6 +1047,11 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
       return headers;
     },
     parse: parseAnthropic,
+  },
+  atria: {
+    endpoint: 'https://api.atria-asi.ai/v1/models',
+    buildHeaders: bearerHeaders,
+    parse: parseAtria,
   },
   bedrock: {
     endpoint: `${getBedrockMantleBaseUrl()}/v1/models`,
