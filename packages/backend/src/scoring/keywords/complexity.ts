@@ -345,8 +345,6 @@ export const COMPLEXITY_KEYWORDS: Record<string, string[]> = {
     'p-value',
     'confidence interval',
     'regression',
-    'hipaa',
-    'gdpr',
     'sec filing',
     'tort',
     'liability',

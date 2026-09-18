@@ -195,10 +195,47 @@ describe('weightFor', () => {
       ['webpage', 2],
       ['website', 1.5],
       ['web page', 1.5],
+      // private_docs anchors
+      ['hipaa', 3],
+      ['pii', 3],
+      ['medical record', 3],
+      ['attorney-client privilege', 3],
     ];
 
     it.each(anchorSamples)('weightFor(%j) === %s', (keyword, expectedWeight) => {
       expect(weightFor(keyword)).toBe(expectedWeight);
+    });
+  });
+
+  /**
+   * Bare single-word tokens that collide with coding / science vocabulary
+   * (math.phi, the SoX audio library, biopython MSA, "network dynamic
+   * affinity", a React soc2 badge, "this document is confidential") must NOT
+   * be decisive on their own. They are demoted below the 1.0 activation
+   * threshold so a single occurrence cannot flip routing to private_docs; the
+   * unambiguous privacy acronyms (hipaa, pii, gdpr, ccpa, pdpa) stay strong.
+   * See the review finding on private-docs.ts:32.
+   */
+  describe('collisioning bare tokens are sub-threshold', () => {
+    const SUB_THRESHOLD = [
+      'phi',
+      'sox',
+      'msa',
+      'nda',
+      'soc2',
+      'confidential',
+      'diagnosis',
+      'prescription',
+      'testimony',
+    ];
+    it.each(SUB_THRESHOLD)('%j weighs less than the private_docs threshold (1.0)', (kw) => {
+      expect(weightFor(kw)).toBeLessThan(1.0);
+    });
+
+    it('unambiguous privacy acronyms stay strong (weight 3)', () => {
+      for (const kw of ['hipaa', 'pii', 'gdpr', 'ccpa', 'pdpa']) {
+        expect(weightFor(kw)).toBe(3);
+      }
     });
   });
 });
@@ -217,6 +254,7 @@ describe('ACTIVATION_THRESHOLDS', () => {
     expect(ACTIVATION_THRESHOLDS.email_management).toBe(1);
     expect(ACTIVATION_THRESHOLDS.calendar_management).toBe(1);
     expect(ACTIVATION_THRESHOLDS.trading).toBe(1);
+    expect(ACTIVATION_THRESHOLDS.private_docs).toBe(1);
   });
 
   it('web_browsing threshold is the highest of all categories', () => {
@@ -247,6 +285,7 @@ describe('ACTIVATION_THRESHOLDS', () => {
       'email_management',
       'calendar_management',
       'trading',
+      'private_docs',
     ];
     for (const key of expected) {
       expect(ACTIVATION_THRESHOLDS).toHaveProperty(key);

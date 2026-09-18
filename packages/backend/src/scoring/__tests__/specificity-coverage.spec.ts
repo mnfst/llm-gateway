@@ -862,6 +862,74 @@ const CALENDAR_MANAGEMENT_PROMPTS = [
   'plan family visit logistics',
 ];
 
+// ── PRIVATE DOCS ──
+const PRIVATE_DOCS_PROMPTS = [
+  'summarize this HIPAA-covered medical document',
+  'read the patient record and redact phi before sharing',
+  'review this confidential contract and flag the termination clause',
+  'summarize this privileged attorney-client document',
+  'analyze the financial statements in this secure conversation',
+  'extract the diagnosis from this clinical note',
+  'anonymize this dataset of patient medical records',
+  'privatemode confidential compute for this healthcare data',
+  'summarize this non-disclosure agreement file',
+  'redact pii from this customer record before processing',
+  'analyze this medical claim for coding errors',
+  'summarize this tax return document securely',
+  'read my background check document and summarize it',
+  'de-identify the patient data in this file',
+  'summarize this legal brief from the law firm',
+  'review this employment agreement for termination clauses',
+  'read the settlement agreement and summarize key terms',
+  'analyze this audit trail for compliance issues',
+  'summarize this insurance claim including medical records',
+  'redact the patient name and phi from this clinical document',
+  'read this confidential financial report',
+  'summarize this GDPR-compliant client data file',
+  'review this SOC 2 report and summarize findings',
+  'analyze this healthcare dataset for HIPAA violations',
+  'summarize this W-2 tax document',
+  'read my payroll records and summarize the deductions',
+  'redact the diagnosis from this medical history file',
+  'analyze this credit report and summarize the score factors',
+  'summarize this performance review document',
+  'review this disciplinary action file from HR',
+  'read the termination letter and summarize the severance terms',
+  'analyze this background check for red flags',
+  'summarize this security clearance document',
+  'read this compliance document and summarize the requirements',
+  'analyze this regulatory filing for Material changes',
+  'summarize this patient file from the hospital',
+  'privatemode review this confidential patient data',
+  'summarize this end-to-end encrypted document',
+  'read this attorney work product document',
+  'analyze this settlement agreement and summarize damages',
+  'summarize this confidential computing analysis of health records',
+  'read the deposition transcript and identify key quotes',
+  'analyze this discovery document set for privileged content',
+
+  // ── Personal financial / privacy document pairs (2026-08) ──
+  // Private → route to private_docs
+  'summarize my Roth IRA statement',
+  'review this 529 plan statement',
+  'extract income from my 1099',
+  'check the withholding on my W-2',
+  'explain the results in my lab report',
+  'review my bloodwork results',
+  'summarize my HSA statement',
+  'redact my SSN from this tax return',
+  'analyze my credit report for discrepancies',
+  'read my mortgage statement and summarize the escrow',
+  'review my brokerage account statement',
+  'summarize my bank statement for this month',
+  'check the contributions on my 401k statement',
+  'review my FSA statement and unused balance',
+  'summarize my employment agreement termination clause',
+  'redact my medical history from this clinical report',
+  'analyze my insurance claim payout',
+  'summarize my investment portfolio statement',
+];
+
 // ── TRADING ──
 const TRADING_PROMPTS = [
   'what is the current price of bitcoin',
@@ -985,6 +1053,7 @@ describe('specificity detection coverage', () => {
     { name: 'email_management', prompts: EMAIL_MANAGEMENT_PROMPTS, minAccuracy: 0.8 },
     { name: 'calendar_management', prompts: CALENDAR_MANAGEMENT_PROMPTS, minAccuracy: 0.8 },
     { name: 'trading', prompts: TRADING_PROMPTS, minAccuracy: 0.65 },
+    { name: 'private_docs', prompts: PRIVATE_DOCS_PROMPTS, minAccuracy: 0.85 },
   ];
 
   for (const { name, prompts, minAccuracy } of categories) {

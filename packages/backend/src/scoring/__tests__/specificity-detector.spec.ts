@@ -22,6 +22,10 @@ describe('detectSpecificity', () => {
         category: 'data_analysis',
         confidence: 1.0,
       });
+      expect(detectSpecificity([], undefined, 'private_docs')).toEqual({
+        category: 'private_docs',
+        confidence: 1.0,
+      });
     });
 
     it('should fall through to auto-detection when header is invalid', () => {

@@ -92,6 +92,12 @@ export const DEFAULT_CONFIG: ScorerConfig = {
       keywords: DEFAULT_KEYWORDS.calendarManagement,
     },
     { name: 'trading', weight: 0, direction: 'up', keywords: DEFAULT_KEYWORDS.trading },
+    {
+      name: 'privateDocs',
+      weight: 0,
+      direction: 'up',
+      keywords: DEFAULT_KEYWORDS.privateDocs,
+    },
     { name: 'tokenCount', weight: 0.05, direction: 'up' },
     { name: 'nestedListDepth', weight: 0.03, direction: 'up' },
     { name: 'conditionalLogic', weight: 0.03, direction: 'up' },
