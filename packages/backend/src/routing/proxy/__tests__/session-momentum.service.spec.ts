@@ -1,4 +1,8 @@
-import { SessionMomentumService } from '../session-momentum.service';
+import {
+  SESSION_MOMENTUM_MAX_KEY_LENGTH,
+  SESSION_MOMENTUM_MAX_SESSIONS,
+  SessionMomentumService,
+} from '../session-momentum.service';
 
 describe('SessionMomentumService', () => {
   let service: SessionMomentumService;
@@ -119,6 +123,35 @@ describe('SessionMomentumService', () => {
     service.recordTier('b', 'complex');
     expect(service.getRecentTiers('a')).toEqual(['simple']);
     expect(service.getRecentTiers('b')).toEqual(['complex']);
+  });
+
+  it('caps the total session count and evicts the least recently used entry', () => {
+    service.recordTier('oldest', 'simple');
+    service.recordTier('recent', 'complex');
+    service.getRecentTiers('oldest');
+
+    for (let i = 2; i < SESSION_MOMENTUM_MAX_SESSIONS; i++) {
+      service.recordTier(`session-${i}`, 'standard');
+    }
+    service.recordTier('overflow', 'reasoning');
+
+    const sessions = (service as unknown as { sessions: Map<string, unknown> }).sessions;
+    expect(sessions.size).toBe(SESSION_MOMENTUM_MAX_SESSIONS);
+    expect(service.getRecentTiers('recent')).toBeUndefined();
+    expect(service.getRecentTiers('oldest')).toEqual(['simple']);
+    expect(service.getRecentTiers('overflow')).toEqual(['reasoning']);
+  });
+
+  it('does not retain oversized session keys', () => {
+    const oversizedKey = 'x'.repeat(SESSION_MOMENTUM_MAX_KEY_LENGTH + 1);
+
+    service.recordTier(oversizedKey, 'simple');
+    service.recordCategory(oversizedKey, 'coding');
+
+    expect(service.getRecentTiers(oversizedKey)).toBeUndefined();
+    expect(service.getRecentCategories(oversizedKey)).toBeUndefined();
+    const sessions = (service as unknown as { sessions: Map<string, unknown> }).sessions;
+    expect(sessions.size).toBe(0);
   });
 
   describe('specificity categories', () => {
