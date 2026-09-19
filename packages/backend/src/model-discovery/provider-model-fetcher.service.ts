@@ -14,7 +14,10 @@ import {
   COPILOT_PLUGIN_VERSION,
   buildClaudeCodeSubscriptionHeaders,
 } from '../common/constants/subscription-clients';
-import { normalizeMinimaxSubscriptionBaseUrl } from '../routing/provider-base-url';
+import {
+  normalizeMinimaxSubscriptionBaseUrl,
+  normalizeProviderBaseUrl,
+} from '../routing/provider-base-url';
 import { getQwenCompatibleBaseUrl, normalizeQwenCompatibleBaseUrl } from '../routing/qwen-region';
 import { getBedrockMantleBaseUrl, normalizeBedrockMantleBaseUrl } from '../routing/bedrock-region';
 import {
@@ -22,6 +25,7 @@ import {
   normalizeXiaomiTokenPlanBaseUrl,
 } from '../routing/xiaomi-region';
 import { getZaiCodingPlanBaseUrl, normalizeZaiCodingPlanBaseUrl } from '../routing/zai-region';
+import { MINIMAX_BASE_URLS } from '../routing/oauth/minimax/minimax-oauth-helpers';
 import { OpencodeGoCatalogService } from './opencode-go-catalog.service';
 import {
   buildKiroHeaders,
@@ -976,7 +980,7 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     parse: parseOpenAI,
   },
   minimax: {
-    endpoint: 'https://api.minimaxi.chat/v1/models',
+    endpoint: `${MINIMAX_BASE_URLS.global}/v1/models`,
     buildHeaders: bearerHeaders,
     parse: parseOpenAI,
   },
@@ -1150,7 +1154,12 @@ export class ProviderModelFetcherService {
     }
 
     let url = typeof config.endpoint === 'function' ? config.endpoint(apiKey) : config.endpoint;
-    if (endpointOverride && configKey === 'minimax-subscription') {
+    if (endpointOverride && configKey === 'minimax') {
+      const minimaxBaseUrl = normalizeProviderBaseUrl(endpointOverride);
+      if (minimaxBaseUrl === MINIMAX_BASE_URLS.global || minimaxBaseUrl === MINIMAX_BASE_URLS.cn) {
+        url = `${minimaxBaseUrl}/v1/models`;
+      }
+    } else if (endpointOverride && configKey === 'minimax-subscription') {
       const minimaxBaseUrl = normalizeMinimaxSubscriptionBaseUrl(endpointOverride);
       if (minimaxBaseUrl) {
         url = `${minimaxBaseUrl}/models?limit=100`;

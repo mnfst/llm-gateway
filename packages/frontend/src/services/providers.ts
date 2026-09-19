@@ -321,6 +321,10 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   minimax: {
     initial: 'Mm',
     subtitle: 'MiniMax M3, M2.7, M2.5',
+    apiKeyEndpointRegions: [
+      { value: 'global', label: 'Global' },
+      { value: 'cn', label: 'China' },
+    ],
     supportsSubscription: true,
     subscriptionLabel: 'MiniMax Coding Plan',
     subscriptionAuthMode: 'device_code',
