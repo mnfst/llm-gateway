@@ -85,7 +85,7 @@ Open [http://localhost:2099](http://localhost:2099) and sign up — the first ac
 
 > Every deployment path now uses durable request-recording storage. Railway, AWS, GCP, and Fly.io provision it natively; Render, Coolify, Easypanel, Docker, and Apple Containers mount persistent storage. DigitalOcean, Heroku, and Koyeb collect external S3-compatible settings during setup. Volume-backed templates are single-instance; use S3-compatible storage before scaling horizontally.
 
-Full deployment guides: [Railway](https://manifest.build/docs/deploy/railway), [Render](https://manifest.build/docs/deploy/render), [DigitalOcean](https://manifest.build/docs/deploy/digitalocean), [AWS](https://manifest.build/docs/deploy/aws), [GCP](https://manifest.build/docs/deploy/gcp), [Fly.io](https://manifest.build/docs/deploy/fly), [Coolify](https://manifest.build/docs/deploy/coolify), [Easypanel](https://manifest.build/docs/deploy/easypanel), [Heroku](https://manifest.build/docs/deploy/heroku), [Koyeb](https://manifest.build/docs/deploy/koyeb), and [Apple Containers](deploy/apple-containers/TUTORIAL.md).
+Full deployment guides: [Railway](https://docs.manifest.build/deploy/railway), [Render](https://docs.manifest.build/deploy/render), [DigitalOcean](https://docs.manifest.build/deploy/digitalocean), [AWS](https://docs.manifest.build/deploy/aws), [GCP](https://docs.manifest.build/deploy/gcp), [Fly.io](https://docs.manifest.build/deploy/fly), [Coolify](https://docs.manifest.build/deploy/coolify), [Easypanel](https://docs.manifest.build/deploy/easypanel), [Heroku](https://docs.manifest.build/deploy/heroku), [Koyeb](https://docs.manifest.build/deploy/koyeb), and [Apple Containers](deploy/apple-containers/TUTORIAL.md).
 
 > The old npm-based self-hosting path is no longer supported. Use the Docker image or one of the deployment guides above.
 
@@ -135,7 +135,7 @@ Provider catalogs are discovered dynamically when credentials are connected. The
 
 ## Quick links
 
-- [Docs](https://manifest.build/docs)
+- [Docs](https://docs.manifest.build)
 - [n8n community node](integrations/n8n-nodes-manifest) — `n8n-nodes-manifest` on npm
 - [Discord](https://discord.com/invite/FepAked3W7)
 - [Discussions](https://github.com/mnfst/llm-gateway/discussions)

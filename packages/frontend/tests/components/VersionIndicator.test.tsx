@@ -19,7 +19,7 @@ function info(overrides: Partial<VersionInfo> = {}): VersionInfo {
     releases_behind: 0,
     release_url: `https://manifest.build/changelog/#v${__MANIFEST_VERSION__.replace(/\./g, '-')}`,
     github_release_url: null,
-    upgrade_docs_url: 'https://manifest.build/docs/self-hosted#upgrading',
+    upgrade_docs_url: 'https://docs.manifest.build/self-hosted#upgrading',
     upgrade_command: 'docker compose pull && docker compose up -d',
     check_enabled: true,
     checked_at: '2026-09-04T09:00:00.000Z',

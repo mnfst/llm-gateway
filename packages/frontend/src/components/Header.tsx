@@ -30,7 +30,7 @@ const STAR_DISMISSED_KEY = 'github-star-dismissed';
 const STAR_CACHE_KEY = 'github-star-count';
 const STAR_CACHE_TS_KEY = 'github-star-ts';
 const STAR_CACHE_TTL = 3600000; // 1 hour
-const DOCS_BASE_URL = 'https://manifest.build/docs';
+const DOCS_BASE_URL = 'https://docs.manifest.build';
 
 interface HeaderProps {
   showMobileNavToggle?: boolean;

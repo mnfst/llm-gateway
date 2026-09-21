@@ -3,7 +3,7 @@
   "description": "Deploy Manifest on Google Cloud Run with Cloud SQL and durable Cloud Storage request recordings.",
   "logo": "https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg",
   "duration": 15,
-  "documentationLink": "https://manifest.build/docs",
+  "documentationLink": "https://docs.manifest.build",
   "variables": [
     {
       "name": "project_id",

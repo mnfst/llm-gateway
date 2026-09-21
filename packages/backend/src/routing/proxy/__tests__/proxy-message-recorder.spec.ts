@@ -1146,7 +1146,7 @@ describe('ProxyMessageRecorder', () => {
           errorBody: JSON.stringify({
             error: {
               message:
-                '[🦚 Manifest M100] No anthropic API key yet. Add one here: https://x/routing See https://manifest.build/docs/errors/M100',
+                '[🦚 Manifest M100] No anthropic API key yet. Add one here: https://x/routing See https://docs.manifest.build/errors/M100',
             },
           }),
           fallbackIndex: 0,
@@ -1177,7 +1177,7 @@ describe('ProxyMessageRecorder', () => {
           errorBody: JSON.stringify({
             error: {
               message:
-                '[🦚 Manifest M102] anthropic subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/docs/errors/M102',
+                '[🦚 Manifest M102] anthropic subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://docs.manifest.build/errors/M102',
             },
           }),
           fallbackIndex: 0,
@@ -1433,7 +1433,7 @@ describe('ProxyMessageRecorder', () => {
       const body = JSON.stringify({
         error: {
           message:
-            '[🦚 Manifest M102] openai subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/docs/errors/M102',
+            '[🦚 Manifest M102] openai subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://docs.manifest.build/errors/M102',
         },
       });
       await recorder.recordPrimaryFailure(

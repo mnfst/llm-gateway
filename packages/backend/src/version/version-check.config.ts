@@ -9,7 +9,7 @@ import { readManifestVersion, UNKNOWN_VERSION } from '../telemetry/telemetry.con
  */
 export const RELEASES_PAGE_SIZE = 100;
 export const RELEASES_URL = `https://api.github.com/repos/mnfst/llm-gateway/releases?per_page=${RELEASES_PAGE_SIZE}`;
-export const UPGRADE_DOCS_URL = 'https://manifest.build/docs/self-hosted#upgrading';
+export const UPGRADE_DOCS_URL = 'https://docs.manifest.build/self-hosted#upgrading';
 export const UPGRADE_COMMAND = 'docker compose pull && docker compose up -d';
 
 export interface VersionCheckConfig {

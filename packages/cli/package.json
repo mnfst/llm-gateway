@@ -3,7 +3,7 @@
   "version": "6.24.0",
   "description": "Manifest gateway management CLI (mnfst) — configure agents, providers, and routing from the terminal",
   "license": "MIT",
-  "homepage": "https://manifest.build/docs/cli",
+  "homepage": "https://docs.manifest.build/cli",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mnfst/llm-gateway.git",

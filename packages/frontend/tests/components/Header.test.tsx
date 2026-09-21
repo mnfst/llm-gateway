@@ -341,43 +341,43 @@ describe('Header - docs link', () => {
   it('links agent routing pages to routing docs', () => {
     mockPathname = '/harnesses/my-agent/routing';
     const { container } = render(() => <Header />);
-    expect(docsHref(container)).toBe('https://manifest.build/docs/routing');
+    expect(docsHref(container)).toBe('https://docs.manifest.build/routing');
   });
 
   it('links the current Limits route to limits docs', () => {
     mockPathname = '/harnesses/my-agent/guardrails';
     const { container } = render(() => <Header />);
-    expect(docsHref(container)).toBe('https://manifest.build/docs/set-limits');
+    expect(docsHref(container)).toBe('https://docs.manifest.build/set-limits');
   });
 
   it('keeps the legacy Limits route mapped to limits docs', () => {
     mockPathname = '/harnesses/my-agent/limits';
     const { container } = render(() => <Header />);
-    expect(docsHref(container)).toBe('https://manifest.build/docs/set-limits');
+    expect(docsHref(container)).toBe('https://docs.manifest.build/set-limits');
   });
 
   it('links provider pages to matching provider docs', () => {
     mockPathname = '/providers/subscriptions';
     const subscriptions = render(() => <Header />);
     expect(docsHref(subscriptions.container)).toBe(
-      'https://manifest.build/docs/providers/subscription-based-providers',
+      'https://docs.manifest.build/providers/subscription-based-providers',
     );
 
     mockPathname = '/providers/byok';
     const byok = render(() => <Header />);
     expect(docsHref(byok.container)).toBe(
-      'https://manifest.build/docs/providers/api-key-providers',
+      'https://docs.manifest.build/providers/api-key-providers',
     );
 
     mockPathname = '/providers/local';
     const local = render(() => <Header />);
-    expect(docsHref(local.container)).toBe('https://manifest.build/docs/providers/local-models');
+    expect(docsHref(local.container)).toBe('https://docs.manifest.build/providers/local-models');
   });
 
   it('falls back to introduction docs for unmapped pages', () => {
     mockPathname = '/messages';
     const { container } = render(() => <Header />);
-    expect(docsHref(container)).toBe('https://manifest.build/docs/introduction');
+    expect(docsHref(container)).toBe('https://docs.manifest.build/introduction');
   });
 });
 

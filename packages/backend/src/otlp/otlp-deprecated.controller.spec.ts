@@ -16,7 +16,7 @@ describe('OtlpDeprecatedController', () => {
       message:
         'OTLP telemetry endpoints have been removed. ' +
         'Use the routing proxy at /v1/chat/completions instead. ' +
-        'See https://manifest.build/docs/migration for details.',
+        'See https://docs.manifest.build/migration for details.',
       type: 'gone',
       status: 410,
     },
@@ -35,7 +35,7 @@ describe('OtlpDeprecatedController', () => {
 
     it('includes the migration docs URL', () => {
       const result = controller.traces();
-      expect(result.error.message).toContain('https://manifest.build/docs/migration');
+      expect(result.error.message).toContain('https://docs.manifest.build/migration');
     });
   });
 

@@ -92,7 +92,7 @@ export class AgentMessage {
   /**
    * The documented Manifest error code behind this row ('M100', 'M300', …),
    * NULL for provider/transport failures and successes. Lets the dashboard deep
-   * link to https://manifest.build/docs/errors/<code>. The catalogue lives in
+   * link to https://docs.manifest.build/errors/<code>. The catalogue lives in
    * common/errors/error-codes.ts.
    */
   @Column('varchar', { length: 8, nullable: true })

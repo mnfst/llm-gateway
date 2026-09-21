@@ -178,7 +178,7 @@ describe('MessageDetails', () => {
     });
 
     const codeLink = container.querySelector('.msg-detail__error-code');
-    expect(codeLink?.getAttribute('href')).toBe('https://manifest.build/docs/errors/M100');
+    expect(codeLink?.getAttribute('href')).toBe('https://docs.manifest.build/errors/M100');
     expect(codeLink?.getAttribute('target')).toBe('_blank');
     expect(container.textContent).toContain('No anthropic API key yet');
   });

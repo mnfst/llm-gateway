@@ -67,7 +67,7 @@ WORKDIR /app
 LABEL org.opencontainers.image.title="Manifest" \
       org.opencontainers.image.description="Open-source AI model router. Plug your agents into any provider and send each query to the right model." \
       org.opencontainers.image.url="https://manifest.build" \
-      org.opencontainers.image.documentation="https://manifest.build/docs" \
+      org.opencontainers.image.documentation="https://docs.manifest.build" \
       org.opencontainers.image.source="https://github.com/mnfst/llm-gateway" \
       org.opencontainers.image.vendor="MNFST Inc." \
       org.opencontainers.image.licenses="MIT" \

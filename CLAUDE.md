@@ -546,7 +546,7 @@ This rule exists because the Overview and Messages pages previously drifted and 
 
 ## Manifest's own errors (`M###`)
 
-Every failure Manifest itself produces — as opposed to one a provider returned — carries a documented code from `MANIFEST_ERRORS` in `packages/backend/src/common/errors/error-codes.ts`, published at `https://manifest.build/docs/errors/<code>`.
+Every failure Manifest itself produces — as opposed to one a provider returned — carries a documented code from `MANIFEST_ERRORS` in `packages/backend/src/common/errors/error-codes.ts`, published at `https://docs.manifest.build/errors/<code>`.
 
 **Raise them with `ManifestError`** (`common/errors/manifest-error.ts`), never a bare `HttpException`. The type is what lets `proxy.controller.ts` tell "Manifest refused this request" from "the provider returned a 4xx". Before it existed, a malformed body (M300) and a Manifest bug (M500) were both recorded as _provider_ errors and counted against `provider_error_rate`.
 
@@ -639,7 +639,7 @@ send one aggregate usage report per 24h to `TELEMETRY_ENDPOINT` (default
   `MANIFEST_TELEMETRY_DISABLED=1` opt-out.
 - Runtime: `platform` (`process.platform`), `arch` (`process.arch`)
 
-User-facing spec: https://manifest.build/docs/self-hosted#telemetry
+User-facing spec: https://docs.manifest.build/self-hosted#telemetry
 
 **Explicitly never sent**: tenant/user IDs, emails, API keys, prompts,
 message contents, model names, custom provider URLs, OAuth client IDs,

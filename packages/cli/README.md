@@ -76,4 +76,4 @@ Set `MANIFEST_TELEMETRY_DISABLED=1` to opt out. Telemetry files are stored besid
 
 ## Documentation
 
-See the [CLI documentation](https://manifest.build/docs/cli/) for more examples and the [GitHub repository](https://github.com/mnfst/llm-gateway) for source and issues.
+See the [CLI documentation](https://docs.manifest.build/cli/) for more examples and the [GitHub repository](https://github.com/mnfst/llm-gateway) for source and issues.

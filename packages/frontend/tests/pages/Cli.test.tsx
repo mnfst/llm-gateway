@@ -82,7 +82,7 @@ describe('CLI page', () => {
 
   it('links to the command reference', () => {
     const { container } = render(() => <Cli />);
-    const link = container.querySelector('a[href="https://manifest.build/docs/cli/"]');
+    const link = container.querySelector('a[href="https://docs.manifest.build/cli/"]');
     expect(link).not.toBeNull();
     expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
   });

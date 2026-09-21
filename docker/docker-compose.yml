@@ -153,7 +153,7 @@ services:
       - SENTRY_RELEASE=${SENTRY_RELEASE:-}
       # Anonymous usage telemetry (opt-out). Set MANIFEST_TELEMETRY_DISABLED=1
       # to disable, or point TELEMETRY_ENDPOINT at your own collector. See
-      # https://manifest.build/docs/self-hosted#telemetry for the payload shape.
+      # https://docs.manifest.build/self-hosted#telemetry for the payload shape.
       - MANIFEST_TELEMETRY_DISABLED=${MANIFEST_TELEMETRY_DISABLED:-0}
       - TELEMETRY_ENDPOINT=${TELEMETRY_ENDPOINT:-}
       # Update check (opt-out). Once a day the dashboard asks GitHub for the

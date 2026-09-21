@@ -1384,7 +1384,7 @@ const Welcome: Component = () => {
                           <Show when={errorDocCode()}>
                             <a
                               class="welcome__text-link"
-                              href={`https://manifest.build/docs/errors/${errorDocCode()}`}
+                              href={`https://docs.manifest.build/errors/${errorDocCode()}`}
                               target="_blank"
                               rel="noreferrer"
                             >

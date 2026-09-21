@@ -144,7 +144,7 @@ describe('MCP server page', () => {
   it('explains the read-only scope and links to the tool list', async () => {
     const { container } = await renderReady();
     expect(container.textContent).toContain('never sees the write');
-    const link = container.querySelector('a[href="https://manifest.build/docs/integrations/mcp/"]');
+    const link = container.querySelector('a[href="https://docs.manifest.build/integrations/mcp/"]');
     expect(link).not.toBeNull();
     expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
   });

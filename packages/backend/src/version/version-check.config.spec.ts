@@ -128,7 +128,7 @@ describe('release URLs', () => {
   });
 
   it('exposes the documented upgrade instructions', () => {
-    expect(UPGRADE_DOCS_URL).toBe('https://manifest.build/docs/self-hosted#upgrading');
+    expect(UPGRADE_DOCS_URL).toBe('https://docs.manifest.build/self-hosted#upgrading');
     expect(UPGRADE_COMMAND).toBe('docker compose pull && docker compose up -d');
   });
 });
