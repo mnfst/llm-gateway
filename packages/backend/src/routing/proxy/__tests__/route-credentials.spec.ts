@@ -223,6 +223,45 @@ describe('route-credentials', () => {
       });
     });
 
+    // The selected row is authoritative for refresh persistence too: a rejected
+    // pin must not receive the healthy sibling's rotated token.
+    it('persists a refresh against the selected row, not the rejected pin', async () => {
+      const blob = JSON.stringify({ t: 'access', r: 'refresh', e: Date.now() + 3_600_000 });
+      providerKeyService.selectProviderKey.mockResolvedValue({
+        apiKey: blob,
+        id: 'up-personal',
+        region: null,
+        label: 'Personal',
+        priority: 1,
+      });
+      (oauth.openaiOauth.unwrapToken as jest.Mock).mockResolvedValue('fresh-access');
+      providerKeyService.getProviderApiKey.mockResolvedValue(blob);
+
+      const result = await resolveRouteCredentials(
+        { providerKeyService, oauth },
+        {
+          agentId: 'a1',
+          tenantId: 't1',
+          provider: 'openai',
+          authType: 'subscription',
+          providerKeyLabel: 'Work',
+        },
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        tenantProviderId: 'up-personal',
+        keyLabel: 'Personal',
+      });
+      expect(providerKeyService.getProviderApiKey).toHaveBeenCalledWith(
+        't1',
+        'openai',
+        'subscription',
+        'Personal',
+        'a1',
+      );
+    });
+
     it('reports the selected row label when no pin was supplied', async () => {
       providerKeyService.selectProviderKey.mockResolvedValue({
         apiKey: 'sk-live',

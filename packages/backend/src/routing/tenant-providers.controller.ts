@@ -1,10 +1,12 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Inject, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TenantCtx, TenantContext } from '../common/decorators/tenant-context.decorator';
 import { TenantProvider } from '../entities/tenant-provider.entity';
 import { ModelPricingCacheService } from '../model-prices/model-pricing-cache.service';
 import { CustomProviderService } from './custom-provider/custom-provider.service';
+import { CredentialHealthService } from './routing-core/credential-health.service';
+import type { CredentialAuthFailure } from './routing-core/credential-health.service';
 import { filterProvidersForDeployment } from '../common/utils/provider-availability';
 
 /**
@@ -26,6 +28,9 @@ export class TenantProvidersController {
     private readonly providerRepo: Repository<TenantProvider>,
     private readonly pricingCache: ModelPricingCacheService,
     private readonly customProviderService: CustomProviderService,
+    @Optional()
+    @Inject(CredentialHealthService)
+    private readonly credentialHealth: CredentialHealthService | null = null,
   ) {}
 
   /**
@@ -55,10 +60,32 @@ export class TenantProvidersController {
           models_fetched_at: string | null;
           cached_model_count: number;
           is_active: boolean;
+          /** Upstream rejected this connection's credential; it needs re-auth. */
+          requires_reauth: boolean;
+          last_auth_failure: CredentialAuthFailure | null;
         }>;
         total_models: number;
       }
     >();
+
+    const buildConnection = (p: TenantProvider) => {
+      const health = this.credentialHealth?.getSnapshot(p.id) ?? {
+        requires_reauth: false,
+        last_auth_failure: null,
+      };
+      return {
+        id: p.id,
+        label: p.label,
+        key_prefix: p.key_prefix,
+        priority: p.priority,
+        connected_at: p.connected_at,
+        models_fetched_at: p.models_fetched_at,
+        cached_model_count: Array.isArray(p.cached_models) ? p.cached_models.length : 0,
+        is_active: p.is_active,
+        requires_reauth: health.requires_reauth,
+        last_auth_failure: health.last_auth_failure,
+      };
+    };
 
     for (const p of providers) {
       const key = `${p.provider}::${p.auth_type}`;
@@ -66,33 +93,13 @@ export class TenantProvidersController {
       const modelCount = Array.isArray(p.cached_models) ? p.cached_models.length : 0;
 
       if (existing) {
-        existing.connections.push({
-          id: p.id,
-          label: p.label,
-          key_prefix: p.key_prefix,
-          priority: p.priority,
-          connected_at: p.connected_at,
-          models_fetched_at: p.models_fetched_at,
-          cached_model_count: modelCount,
-          is_active: p.is_active,
-        });
+        existing.connections.push(buildConnection(p));
         existing.total_models = Math.max(existing.total_models, modelCount);
       } else {
         grouped.set(key, {
           provider: p.provider,
           auth_type: p.auth_type,
-          connections: [
-            {
-              id: p.id,
-              label: p.label,
-              key_prefix: p.key_prefix,
-              priority: p.priority,
-              connected_at: p.connected_at,
-              models_fetched_at: p.models_fetched_at,
-              cached_model_count: modelCount,
-              is_active: p.is_active,
-            },
-          ],
+          connections: [buildConnection(p)],
           total_models: modelCount,
         });
       }

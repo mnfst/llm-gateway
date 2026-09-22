@@ -10,7 +10,13 @@
 import { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import request from 'supertest';
-import { createTestApp, TEST_AGENT_ID, TEST_OTLP_KEY, TEST_TENANT_ID, TEST_USER_ID } from './helpers';
+import {
+  createTestApp,
+  TEST_AGENT_ID,
+  TEST_OTLP_KEY,
+  TEST_TENANT_ID,
+  TEST_USER_ID,
+} from './helpers';
 import { encrypt, getEncryptionSecret } from '../src/common/utils/crypto.util';
 import { ModelPricingCacheService } from '../src/model-prices/model-pricing-cache.service';
 import { PricingSyncService } from '../src/database/pricing-sync.service';
@@ -20,6 +26,7 @@ let app: INestApplication;
 let originalFetch: typeof global.fetch;
 const calls: { url: string; status: number }[] = [];
 let primaryStatus = 503;
+let fallbackStatus = 200;
 
 const PRIMARY_MODEL = 'claude-sonnet-4';
 const FALLBACK_MODEL = 'gpt-4o-mini';
@@ -161,7 +168,13 @@ beforeAll(async () => {
     // SSE Responses-API. Return a minimal SSE payload with usage so the
     // recorder can compute cost (or zero it, with the fix).
     if (FALLBACK_HOSTS.has(hostname)) {
-      calls.push({ url, status: 200 });
+      calls.push({ url, status: fallbackStatus });
+      if (fallbackStatus !== 200) {
+        return new Response(JSON.stringify({ error: { message: 'unauthorized' } }), {
+          status: fallbackStatus,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
       const sse = [
         `event: response.created`,
         `data: ${JSON.stringify({ type: 'response.created', response: { id: 'mock-1', model: FALLBACK_MODEL } })}`,
@@ -205,6 +218,7 @@ afterAll(async () => {
 describe('Proxy fallback success — auth_type/cost_usd attribution (#1173)', () => {
   beforeEach(() => {
     primaryStatus = 503;
+    fallbackStatus = 200;
     calls.length = 0;
   });
 
@@ -285,5 +299,79 @@ describe('Proxy fallback success — auth_type/cost_usd attribution (#1173)', ()
     expect(res.headers['x-manifest-fallback-from']).toBe(PRIMARY_MODEL);
     expect(res.headers['x-manifest-fallback-index']).toBe('0');
     expect(calls.map((c) => c.status)).toEqual([401, 200]);
+  });
+});
+
+/**
+ * End-to-end reproduction for #2883 — a subscription credential rejected with
+ * 401 must be cooled down, not re-tried on every request before falling back.
+ */
+describe('Proxy fallback — rejected subscription credential cooldown (#2883)', () => {
+  const chatGptCalls = () =>
+    calls.filter((c) => {
+      try {
+        return new URL(c.url).hostname === 'chatgpt.com';
+      } catch {
+        return false;
+      }
+    }).length;
+
+  beforeEach(async () => {
+    // Primary api_key also 401s so the request reaches the subscription
+    // fallback and the whole chain fails deterministically.
+    primaryStatus = 401;
+    fallbackStatus = 401;
+    calls.length = 0;
+    const ds = app.get(DataSource);
+    await ds.query(`DELETE FROM agent_messages WHERE agent_id = $1`, [TEST_AGENT_ID]);
+    app.get(RoutingCacheService).invalidateAgent(TEST_AGENT_ID);
+  });
+
+  it('marks the connection requires_reauth and skips the upstream call next time', async () => {
+    const ds = app.get(DataSource);
+    const first = await request(app.getHttpServer())
+      .post('/v1/chat/completions')
+      .set('Authorization', `Bearer ${TEST_OTLP_KEY}`)
+      .send({ messages: [{ role: 'user', content: 'hello' }] });
+
+    expect(first.status).toBe(401);
+    // The subscription fallback was tried once and rejected.
+    expect(chatGptCalls()).toBe(1);
+
+    const second = await request(app.getHttpServer())
+      .post('/v1/chat/completions')
+      .set('Authorization', `Bearer ${TEST_OTLP_KEY}`)
+      .send({ messages: [{ role: 'user', content: 'hello' }] });
+
+    expect(second.status).toBe(401);
+    // The dead credential is skipped locally: no second chatgpt.com call.
+    expect(chatGptCalls()).toBe(1);
+
+    // The skipped hop is recorded with a clear reauth reason.
+    type FallbackRow = { error_message: string | null; routing_reason: string | null };
+    const deadline = Date.now() + 10000;
+    let skipped: FallbackRow | undefined;
+    do {
+      const rows: FallbackRow[] = await ds.query(
+        `SELECT error_message, routing_reason FROM agent_messages
+          WHERE agent_id = $1 AND provider = 'openai' ORDER BY timestamp DESC`,
+        [TEST_AGENT_ID],
+      );
+      skipped = rows.find((row) => row.error_message?.includes('re-authentication'));
+      if (!skipped) await new Promise((r) => setTimeout(r, 100));
+    } while (!skipped && Date.now() < deadline);
+    expect(skipped?.routing_reason).toBe('provider_cooldown');
+
+    const providers = await request(app.getHttpServer())
+      .get('/api/v1/providers')
+      .set('x-api-key', 'test');
+    const subscription = providers.body.providers.find(
+      (p: { auth_type: string }) => p.auth_type === 'subscription',
+    );
+    const connection = subscription.connections.find(
+      (c: { id: string }) => c.id === 'up-openai-sub',
+    );
+    expect(connection.requires_reauth).toBe(true);
+    expect(connection.last_auth_failure).toMatchObject({ statusCode: 401 });
   });
 });

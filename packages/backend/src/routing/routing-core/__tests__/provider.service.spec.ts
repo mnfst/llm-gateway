@@ -1,5 +1,6 @@
 import { MAX_KEYS_PER_PROVIDER, type ModelRoute } from 'manifest-shared';
 import { ProviderService } from '../provider.service';
+import { CredentialHealthService } from '../credential-health.service';
 import { TenantProvider } from '../../../entities/tenant-provider.entity';
 import { TierAssignment } from '../../../entities/tier-assignment.entity';
 import { SpecificityAssignment } from '../../../entities/specificity-assignment.entity';
@@ -525,6 +526,71 @@ describe('ProviderService — route-only cleanup paths', () => {
       const inserted = providerRepo.insert.mock.calls[0][0] as TenantProvider;
       expect(inserted.region).toBe('us-east-1');
       expect(inserted.key_prefix).toBe('ABSKTWFu');
+    });
+  });
+
+  describe('upsertProvider — credential health', () => {
+    const originalSecret = process.env['BETTER_AUTH_SECRET'];
+    beforeAll(() => {
+      process.env['BETTER_AUTH_SECRET'] = 'a'.repeat(48);
+    });
+    afterAll(() => {
+      if (originalSecret === undefined) delete process.env['BETTER_AUTH_SECRET'];
+      else process.env['BETTER_AUTH_SECRET'] = originalSecret;
+    });
+
+    const makeSvcWithHealth = (health: CredentialHealthService) =>
+      new ProviderService(
+        providerRepo as unknown as Repository<TenantProvider>,
+        tierRepo as unknown as Repository<TierAssignment>,
+        specRepo as unknown as Repository<SpecificityAssignment>,
+        makeRepo() as unknown as Repository<Agent>,
+        headerTierRepo as unknown as Repository<HeaderTier>,
+        pricingCache as unknown as ModelPricingCacheService,
+        routingCache as unknown as RoutingCacheService,
+        undefined,
+        health,
+      );
+
+    const existingRow = {
+      id: 'p1',
+      tenant_id: 'tenant-1',
+      provider: 'openai',
+      auth_type: 'api_key',
+      label: 'Default',
+      priority: 0,
+      api_key_encrypted: 'enc-old',
+      key_prefix: 'sk-old',
+      region: null,
+      is_active: true,
+    };
+
+    it('clears the tracked failure when the legacy Default row is reconnected', async () => {
+      const health = new CredentialHealthService();
+      health.markRejected('p1', 'sk-old', { statusCode: 401, reason: 'api_key_rejected' });
+      providerRepo.findOne.mockResolvedValue({ ...existingRow });
+
+      await makeSvcWithHealth(health).upsertProvider('agent-1', 'tenant-1', 'openai', 'sk-new');
+
+      expect(health.getSnapshot('p1').requires_reauth).toBe(false);
+    });
+
+    it('clears the tracked failure when a labeled row is reconnected', async () => {
+      const health = new CredentialHealthService();
+      health.markRejected('p1', 'sk-old', { statusCode: 401, reason: 'api_key_rejected' });
+      providerRepo.find.mockResolvedValue([{ ...existingRow, label: 'Work' }]);
+
+      await makeSvcWithHealth(health).upsertProvider(
+        'agent-1',
+        'tenant-1',
+        'openai',
+        'sk-new',
+        'api_key',
+        undefined,
+        'Work',
+      );
+
+      expect(health.getSnapshot('p1').requires_reauth).toBe(false);
     });
   });
 

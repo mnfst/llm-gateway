@@ -14,6 +14,7 @@ import { ModelDiscoveryModule } from '../../model-discovery/model-discovery.modu
 import { ProviderService } from './provider.service';
 import { TierService } from './tier.service';
 import { ProviderKeyService } from './provider-key.service';
+import { CredentialHealthService } from './credential-health.service';
 import { RoutingCacheService } from './routing-cache.service';
 import { RoutingInvalidationService } from './routing-invalidation.service';
 import { ResolveAgentService } from './resolve-agent.service';
@@ -42,6 +43,7 @@ import { ProviderParamSpecService } from './provider-param-spec.service';
     ProviderService,
     TierService,
     ProviderKeyService,
+    CredentialHealthService,
     RoutingCacheService,
     RoutingInvalidationService,
     ResolveAgentService,
@@ -55,6 +57,7 @@ import { ProviderParamSpecService } from './provider-param-spec.service';
     ProviderService,
     TierService,
     ProviderKeyService,
+    CredentialHealthService,
     RoutingCacheService,
     RoutingInvalidationService,
     ResolveAgentService,

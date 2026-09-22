@@ -1,4 +1,5 @@
 import { TenantProvidersController } from './tenant-providers.controller';
+import { CredentialHealthService } from './routing-core/credential-health.service';
 import type { TenantContext } from '../common/decorators/tenant-context.decorator';
 import type { TenantProvider } from '../entities/tenant-provider.entity';
 
@@ -89,6 +90,33 @@ describe('TenantProvidersController', () => {
     expect(result.providers[0]).not.toHaveProperty('consumption_cost');
     expect(result.providers[0]).not.toHaveProperty('last_used_at');
     expect(result.providers[0]).not.toHaveProperty('sparkline_7d');
+  });
+
+  it('surfaces a rejected subscription credential as requires_reauth', async () => {
+    const providerRepo = {
+      find: jest
+        .fn()
+        .mockResolvedValue([{ ...makeProvider('p1', 'Work'), auth_type: 'subscription' }]),
+    };
+    const health = new CredentialHealthService();
+    health.markRejected('p1', 'encrypted-same-key', {
+      statusCode: 401,
+      reason: 'subscription_token_rejected',
+      keyLabel: 'Work',
+      provider: 'openai',
+    });
+    const controller = new TenantProvidersController(
+      providerRepo as never,
+      { getAll: jest.fn().mockReturnValue([]) } as never,
+      { list: jest.fn().mockResolvedValue([]) } as never,
+      health,
+    );
+
+    const result = await controller.listProviders(ctx);
+    const connection = result.providers[0].connections[0];
+
+    expect(connection).toMatchObject({ id: 'p1', requires_reauth: true });
+    expect(connection.last_auth_failure).toMatchObject({ statusCode: 401, keyLabel: 'Work' });
   });
 
   it('returns empty providers when tenant has none', async () => {

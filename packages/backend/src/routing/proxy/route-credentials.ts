@@ -215,7 +215,7 @@ export async function resolveRouteCredentials(
 ): Promise<ResolvedRouteCredentials> {
   const { providerKeyService, oauth } = deps;
   const { agentId, tenantId, provider, authType } = args;
-  let providerKeyLabel = args.providerKeyLabel;
+  const requestedKeyLabel = args.providerKeyLabel;
 
   // Single key selection per hop: apiKey, tenant_provider_id, region, and
   // label all come from this one row so they can never diverge.
@@ -223,7 +223,7 @@ export async function resolveRouteCredentials(
     tenantId,
     provider,
     authType,
-    providerKeyLabel,
+    requestedKeyLabel,
     agentId,
   );
   if (!key || key.apiKey === null) {
@@ -234,11 +234,11 @@ export async function resolveRouteCredentials(
   // NULL for synthetic Ollama — no persisted row to stamp (FK).
   const tenantProviderId = key.id === SYNTHETIC_OLLAMA_PROVIDER_ID ? null : key.id;
 
-  // Unpinned subscription: pin to the selected row so OAuth refresh updates
-  // the same connection getProviderApiKey / unwrap used.
-  if (!providerKeyLabel && authType === 'subscription') {
-    providerKeyLabel = key.label;
-  }
+  // The selected row is authoritative for the label. Selection may substitute
+  // a healthy sibling for a rejected pin (or the default when a pin matches
+  // nothing), and OAuth refresh persistence must target the row the credential
+  // actually came from, not the stale pin.
+  const providerKeyLabel = key.label;
 
   const unwrapped = await resolveApiKey(
     provider,

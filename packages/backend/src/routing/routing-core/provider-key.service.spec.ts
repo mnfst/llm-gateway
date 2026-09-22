@@ -1,4 +1,5 @@
 import { ProviderKeyService, SYNTHETIC_OLLAMA_PROVIDER_ID } from './provider-key.service';
+import { CredentialHealthService } from './credential-health.service';
 import type { CachedProviderKey } from './routing-cache.service';
 import type { Repository } from 'typeorm';
 import { encrypt } from '../../common/utils/crypto.util';
@@ -175,6 +176,166 @@ describe('ProviderKeyService — selection projections', () => {
         .mockResolvedValue([key({ id: 'up-default' }), key({ id: 'up-2', label: 'Two' })]);
       const sel = await svc.selectProviderKey('u', 'openai', 'api_key');
       expect(sel?.id).toBe('up-default');
+    });
+
+    // A credential an upstream rejected must be skipped so the next request does
+    // not keep hammering the dead connection before falling back (issue #2883).
+    describe('rejected-credential skipping', () => {
+      const withHealth = () => {
+        const health = new CredentialHealthService();
+        svc = new ProviderKeyService(
+          {} as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          {} as never,
+          null,
+          health,
+        );
+        return health;
+      };
+
+      it('prefers a healthy sibling over a rejected default key', async () => {
+        const health = withHealth();
+        jest
+          .spyOn(svc, 'getProviderKeys')
+          .mockResolvedValue([
+            key({ id: 'up-dead', label: 'Dead', apiKey: 'sk-dead' }),
+            key({ id: 'up-live', label: 'Live', apiKey: 'sk-live' }),
+          ]);
+        health.markRejected('up-dead', 'sk-dead', {
+          statusCode: 401,
+          reason: 'api_key_rejected',
+        });
+
+        expect((await svc.selectProviderKey('u', 'openai', 'api_key'))?.id).toBe('up-live');
+      });
+
+      it('substitutes a healthy key when the pinned key is rejected', async () => {
+        const health = withHealth();
+        jest
+          .spyOn(svc, 'getProviderKeys')
+          .mockResolvedValue([
+            key({ id: 'up-dead', label: 'Work', apiKey: 'sk-dead' }),
+            key({ id: 'up-live', label: 'Personal', apiKey: 'sk-live' }),
+          ]);
+        health.markRejected('up-dead', 'sk-dead', {
+          statusCode: 401,
+          reason: 'subscription_token_rejected',
+        });
+        const warn = jest
+          .spyOn(svc['logger'], 'warn')
+          .mockImplementation(() => undefined as unknown as void);
+
+        expect((await svc.selectProviderKey('u', 'openai', 'subscription', 'Work'))?.id).toBe(
+          'up-live',
+        );
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-authenticated'));
+      });
+
+      it('warns with "any" auth type when the request omits it', async () => {
+        const health = withHealth();
+        jest
+          .spyOn(svc, 'getProviderKeys')
+          .mockResolvedValue([
+            key({ id: 'up-dead', label: 'Work', apiKey: 'sk-dead' }),
+            key({ id: 'up-live', label: 'Personal', apiKey: 'sk-live' }),
+          ]);
+        health.markRejected('up-dead', 'sk-dead', { statusCode: 401, reason: 'api_key_rejected' });
+        const warn = jest
+          .spyOn(svc['logger'], 'warn')
+          .mockImplementation(() => undefined as unknown as void);
+
+        expect((await svc.selectProviderKey('u', 'openai', undefined, 'Work'))?.id).toBe('up-live');
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('authType=any'));
+      });
+
+      it('throttles the skipped warning within the window and warns again after it', async () => {
+        const health = withHealth();
+        jest
+          .spyOn(svc, 'getProviderKeys')
+          .mockResolvedValue([
+            key({ id: 'up-dead', label: 'Work', apiKey: 'sk-dead' }),
+            key({ id: 'up-live', label: 'Personal', apiKey: 'sk-live' }),
+          ]);
+        health.markRejected('up-dead', 'sk-dead', {
+          statusCode: 401,
+          reason: 'api_key_rejected',
+          at: 1,
+        });
+        const warn = jest
+          .spyOn(svc['logger'], 'warn')
+          .mockImplementation(() => undefined as unknown as void);
+        const now = jest
+          .spyOn(Date, 'now')
+          .mockReturnValueOnce(1_000)
+          .mockReturnValueOnce(2_000)
+          .mockReturnValueOnce(90_000);
+
+        await svc.selectProviderKey('u', 'openai', 'api_key', 'Work');
+        await svc.selectProviderKey('u', 'openai', 'api_key', 'Work');
+        await svc.selectProviderKey('u', 'openai', 'api_key', 'Work');
+
+        // Warned on the first and third call; the middle call is throttled.
+        expect(warn).toHaveBeenCalledTimes(2);
+        now.mockRestore();
+      });
+
+      it('still returns the rejected key when every key is rejected', async () => {
+        const health = withHealth();
+        jest
+          .spyOn(svc, 'getProviderKeys')
+          .mockResolvedValue([key({ id: 'up-dead', label: 'Dead', apiKey: 'sk-dead' })]);
+        health.markRejected('up-dead', 'sk-dead', {
+          statusCode: 401,
+          reason: 'subscription_token_rejected',
+        });
+
+        // The proxy short-circuits this with a reauth error; reporting
+        // "no provider key" here would hide that a connection exists.
+        expect((await svc.selectProviderKey('u', 'openai', 'subscription'))?.id).toBe('up-dead');
+      });
+
+      it('resumes using a connection once its credential is rotated (re-auth)', async () => {
+        const health = withHealth();
+        const oldBlob = JSON.stringify({ t: 'a', r: 'refresh-old', e: 1 });
+        const newBlob = JSON.stringify({ t: 'a2', r: 'refresh-new', e: 1 });
+        jest
+          .spyOn(svc, 'getProviderKeys')
+          .mockResolvedValue([key({ id: 'up-work', label: 'Work', apiKey: oldBlob })]);
+        health.markRejected('up-work', oldBlob, {
+          statusCode: 401,
+          reason: 'subscription_token_rejected',
+        });
+
+        // Re-auth rewrote up-work's stored credential.
+        jest
+          .spyOn(svc, 'getProviderKeys')
+          .mockResolvedValue([key({ id: 'up-work', label: 'Work', apiKey: newBlob })]);
+
+        expect((await svc.selectProviderKey('u', 'openai', 'subscription'))?.id).toBe('up-work');
+      });
+
+      it('bounds the skipped-unhealthy warning keys', async () => {
+        const health = withHealth();
+        jest.spyOn(svc['logger'], 'warn').mockImplementation(() => undefined as unknown as void);
+
+        for (let i = 0; i < 257; i++) {
+          jest
+            .spyOn(svc, 'getProviderKeys')
+            .mockResolvedValue([
+              key({ id: `up-${i}`, label: `Dead-${i}`, apiKey: `sk-${i}` }),
+              key({ id: 'up-live', label: 'Live', apiKey: 'sk-live' }),
+            ]);
+          health.markRejected(`up-${i}`, `sk-${i}`, {
+            statusCode: 401,
+            reason: 'api_key_rejected',
+          });
+          await svc.selectProviderKey('u', 'openai', 'api_key', `Dead-${i}`, 'agent-1');
+        }
+
+        expect(svc['stalePinWarnings'].size).toBe(256);
+      });
     });
   });
 
