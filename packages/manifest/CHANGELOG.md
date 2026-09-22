@@ -1,5 +1,21 @@
 # manifest
 
+## 6.25.5
+
+### Patch Changes
+
+- 22c9525: Precompute daily harness usage so the harness list no longer aggregates raw request history after rollout.
+- e78d3a8: Keep daily usage backfill transactions below the database timeout on large histories.
+- ebd6568: Load Overview and Harness Overview usage from daily rollups for long ranges, without blocking the page on raw model and recent-request queries.
+- f87fba4: Fix remote MCP connections stalling in Claude Code. `subscriptions/listen` is served over SSE whatever the response mode says, and buffering that body held back the acknowledgement the client waits for, so every listen attempt hung until the client timed out and the connection handshake stalled behind it. Stream those responses instead, and stop advertising `tools.listChanged`, which a per-request server can never send.
+- 013d285: Brand the dashboard as Manifest LLM Gateway: new logo sized by height, and the sidebar card now links to Manifest at dashboard.manifest.build instead of the closed waiting list.
+
+  The gateway cloud is app.manifest.build again: CLI and n8n defaults, email links, share previews and the OTLP migration message use it instead of gateway.manifest.build.
+
+- c99e02e: Index Autofix Provider Attempts so filtered Requests loads avoid reading unrelated attempts.
+- 0e84ab5: Index recorded provider attempts so the nightly request-recording retention job reads a short index range instead of scanning the whole attempts table.
+- 83e427c: Switch dashboard usage reads to daily rollups automatically after backfill catch-up.
+
 ## 6.25.4
 
 ### Patch Changes
