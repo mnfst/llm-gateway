@@ -1,5 +1,29 @@
 # manifest
 
+## 6.26.0
+
+### Minor Changes
+
+- cff25d5: Read and set model params (reasoning effort, temperature, …) per tier and model from the CLI (`mnfst routing params get|set`) and the MCP server (`manifest_routing_params_get|set`).
+
+### Patch Changes
+
+- ddb7e76: Autofix no longer counts a healed streaming retry as recovered when its stream never delivers data and a fallback serves the request instead.
+- 95e45b0: A provider that sends response headers and then times out or drops the connection mid-body on a non-streaming request now falls back to the next route and is recorded as a provider 503/504, instead of an M500 with no fallback. Manifest errors raised after routing (M500) now keep their tier, specificity and header-tier fields, so tier filters find them.
+- abd760e: Cancel every pending provider attempt when the caller disconnects mid fallback chain, not only the last one.
+- 8c3b4c3: Make harness-scoped Requests filters (status, error origin) fast on a cold cache: the harness index now covers the columns they test, so a large harness no longer reads one row per request in range.
+- 5fbcf53: Refreshing or listing providers through the MCP tools now reports a custom provider's real model count. It always showed 0, which looked like the refresh had wiped the models entered by hand; they were never touched.
+- bc7f9c4: You can now disconnect, rename, or refresh a provider connection when the workspace has no harness. The connection page used to refuse with "Create at least one harness before disconnecting a provider."
+- 11971a7: Fallback routes now get the same stream warm-up as the primary, so a fallback that returns 200 and never streams a byte moves on to the next route.
+- 70dc9c8: Keep chat models without tool calling (e.g. Groq's allam-2-7b) in provider catalogs; discovery now drops only models that cannot take or return text.
+- dbef439: M101 now says a harness has no model to route to and links to picking a default model. It used to say "no providers are set up yet", which was wrong for a new harness whose providers were connected but had no default model selected.
+- 107dfac: Stop overlapping deployments from deadlocking on a concurrent index build: a deployment waiting for the migration lock now polls for it instead of holding a database snapshot while it waits.
+- 298a5a3: Make Requests log filters fast on a cold cache: harness, status, origin, trigger, provider, and model filters no longer scan every request in range one heap page at a time.
+- 7226cec: Remove the public usage stats endpoints (`/api/v1/public/usage`, `/free-models`, `/provider-tokens`, `/agent-tokens`, `/free-providers`). They scanned the whole Provider Attempt table for minutes on every refresh. The public error pages endpoint and `MANIFEST_PUBLIC_STATS` are unchanged.
+- 478b069: Setting a route or fallback now accepts every name Manifest publishes for a model: the id shown in `/v1/models` (including a custom provider's alias), a custom model's bare name next to its provider, or the internal id. Before, a brand-new harness rejected valid custom-provider and OpenRouter models with an unrelated "choose from" list; that hint now lists the named provider's own models.
+- da49b80: A subscription token that a provider rejects with a 401 before its expiry is now actually refreshed and retried. Before, the refresh was skipped because the stored token had not expired yet, so every request failed on the dead token and fell back. A credential that still gets a 401 (refresh rejected, account refused, or a revoked API key) is now skipped for five minutes instead of being retried on every request, and reconnecting or replacing it is picked up at once.
+- 48b5277: Stop offering new Google (Gemini) subscription connections, which Google now refuses, and point users to a Gemini API key instead. Existing Google subscription connections are untouched and stay manageable. OAuth paste forms now show the server's actual error.
+
 ## 6.25.5
 
 ### Patch Changes
