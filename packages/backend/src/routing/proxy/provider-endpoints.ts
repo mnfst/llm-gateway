@@ -225,6 +225,15 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     format: 'openai',
     ...openaiStreamUsage,
   },
+  // Eden AI — EU-based, OpenAI-compatible gateway. Chat completions live at
+  // /v3/chat/completions (not /v1); models use `provider/model` ids.
+  edenai: {
+    baseUrl: 'https://api.edenai.run',
+    buildHeaders: openaiHeaders,
+    buildPath: () => '/v3/chat/completions',
+    format: 'openai',
+    ...openaiStreamUsage,
+  },
   byteplus: {
     baseUrl: BYTEPLUS_CODING_BASE,
     buildHeaders: openaiHeaders,
