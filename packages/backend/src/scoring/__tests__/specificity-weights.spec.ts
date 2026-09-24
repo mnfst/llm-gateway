@@ -1,4 +1,5 @@
 import { ACTIVATION_THRESHOLDS, KEYWORD_WEIGHTS, weightFor } from '../specificity-weights';
+import { PRIVATE_DOCS_KEYWORDS } from '../keywords/private-docs';
 
 describe('weightFor', () => {
   describe('returns correct weight for known keywords', () => {
@@ -195,10 +196,45 @@ describe('weightFor', () => {
       ['webpage', 2],
       ['website', 1.5],
       ['web page', 1.5],
+      // private_docs anchors
+      ['hipaa', 3],
+      ['pii', 3],
+      ['medical record', 3],
+      ['attorney-client privilege', 3],
     ];
 
     it.each(anchorSamples)('weightFor(%j) === %s', (keyword, expectedWeight) => {
       expect(weightFor(keyword)).toBe(expectedWeight);
+    });
+  });
+
+  describe('private_docs collision and anchor weights', () => {
+    const AMBIGUOUS_BARE_TOKENS = [
+      'phi',
+      'sox',
+      'msa',
+      'nda',
+      'soc2',
+      'confidential',
+      'diagnosis',
+      'prescription',
+      'testimony',
+    ];
+
+    it.each(AMBIGUOUS_BARE_TOKENS)('%j is not a private_docs keyword', (keyword) => {
+      expect(PRIVATE_DOCS_KEYWORDS).not.toContain(keyword);
+      expect(KEYWORD_WEIGHTS).not.toHaveProperty(keyword);
+    });
+
+    it('uses a strong contextual anchor for explicit document confidentiality', () => {
+      expect(PRIVATE_DOCS_KEYWORDS).toContain('document is confidential');
+      expect(weightFor('document is confidential')).toBe(3);
+    });
+
+    it('unambiguous privacy acronyms stay strong (weight 3)', () => {
+      for (const kw of ['hipaa', 'pii', 'gdpr', 'ccpa', 'pdpa']) {
+        expect(weightFor(kw)).toBe(3);
+      }
     });
   });
 });
@@ -217,6 +253,7 @@ describe('ACTIVATION_THRESHOLDS', () => {
     expect(ACTIVATION_THRESHOLDS.email_management).toBe(1);
     expect(ACTIVATION_THRESHOLDS.calendar_management).toBe(1);
     expect(ACTIVATION_THRESHOLDS.trading).toBe(1);
+    expect(ACTIVATION_THRESHOLDS.private_docs).toBe(1);
   });
 
   it('web_browsing threshold is the highest of all categories', () => {
@@ -247,6 +284,7 @@ describe('ACTIVATION_THRESHOLDS', () => {
       'email_management',
       'calendar_management',
       'trading',
+      'private_docs',
     ];
     for (const key of expected) {
       expect(ACTIVATION_THRESHOLDS).toHaveProperty(key);

@@ -135,6 +135,18 @@ const SPECIFICITY_ICONS: Record<string, () => JSX.Element> = {
       <path d="M9 5V3c0-.55-.45-1-1-1s-1 .45-1 1v2c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2v2c0 .55.45 1 1 1s1-.45 1-1v-2c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2M7 17V7h2v10zM17 7V5c0-.55-.45-1-1-1s-1 .45-1 1v2c-1.1 0-2 .9-2 2v6c0 1.1.9 2 2 2v2c0 .55.45 1 1 1s1-.45 1-1v-2c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2m-2 8V9h2v6z" />
     </svg>
   ),
+  private_docs: () => (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      fill="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path d="M6 2c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6H6zm7 7V3.5L18.5 9H13z" />
+      <path d="M12 11c1.1 0 2 .9 2 2v1h.5c.28 0 .5.22.5.5v3c0 .28-.22.5-.5.5h-5c-.28 0-.5-.22-.5-.5v-3c0-.28.22-.5.5-.5h.5v-1c0-1.1.9-2 2-2zm0 1c-.55 0-1 .45-1 1v1h2v-1c0-.55-.45-1-1-1z" />
+    </svg>
+  ),
 };
 
 export interface RoutingSpecificitySectionProps {
