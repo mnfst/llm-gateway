@@ -1331,10 +1331,18 @@ const ConnectionDetail: Component = () => {
 
                           {/* Actions */}
                           <div style="display: flex; justify-content: space-between; align-items: center; padding-top: 16px; border-top: 1px solid hsl(var(--border));">
-                            <button class="btn btn--danger btn--sm" onClick={handleDisconnect}>
-                              Disconnect
+                            <button
+                              class="btn btn--danger btn--sm"
+                              onClick={handleDisconnect}
+                              disabled={deletingConnection()}
+                            >
+                              {deletingConnection() ? 'Disconnecting...' : 'Disconnect'}
                             </button>
-                            <button class="btn btn--outline btn--sm" onClick={closeManageModal}>
+                            <button
+                              class="btn btn--outline btn--sm"
+                              onClick={closeManageModal}
+                              disabled={deletingConnection()}
+                            >
                               Done
                             </button>
                           </div>

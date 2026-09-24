@@ -1586,6 +1586,29 @@ describe('ConnectionDetail (analytics)', () => {
     expect(routerState.navigate).toHaveBeenCalledWith('/providers/usage-based');
   });
 
+  it('disables the Disconnect and Done buttons and shows progress while in flight', async () => {
+    let resolveDisconnect!: (value: unknown) => void;
+    apiMocks.disconnectProvider.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveDisconnect = resolve;
+      }),
+    );
+    render(() => <ConnectionDetail />);
+    await openManageModal();
+
+    const disconnectBtn = screen.getByText('Disconnect') as HTMLButtonElement;
+    fireEvent.click(disconnectBtn);
+
+    const inFlightBtn = (await waitFor(() =>
+      screen.getByText('Disconnecting...'),
+    )) as HTMLButtonElement;
+    expect(inFlightBtn.disabled).toBe(true);
+    expect((screen.getByText('Done') as HTMLButtonElement).disabled).toBe(true);
+
+    resolveDisconnect({ notifications: [] });
+    await waitFor(() => expect(routerState.navigate).toHaveBeenCalledWith('/providers/usage-based'));
+  });
+
   it('shows an error toast when disconnecting fails', async () => {
     apiMocks.disconnectConnection.mockRejectedValueOnce(new Error('disconnect boom'));
     render(() => <ConnectionDetail />);
