@@ -11,27 +11,38 @@ interface EmailProviderSectionProps {
   onRemove: () => void;
 }
 
+// No margin on the wrapper: .provider-card carries its own bottom gap, and the
+// unboxed setup/skeleton branches bring theirs, so spacing matches cloud's card.
 const EmailProviderSection: Component<EmailProviderSectionProps> = (props) => (
-  <div style="margin-bottom: var(--gap-lg);">
+  <div>
     <Show
       when={!props.loading}
       fallback={
         <Show
           when={!!props.emailProvider}
           fallback={
-            <div class="panel">
+            <div style="margin-bottom: var(--gap-lg);">
               <div class="skeleton skeleton--text" style="width: 180px; height: 16px;" />
               <div
                 class="skeleton skeleton--text"
-                style="width: 280px; height: 13px; margin-top: 6px;"
+                style="width: 280px; height: 13px; margin: 8px 0 var(--gap-lg);"
               />
-              <div style="display: flex; gap: var(--gap-md); margin-top: var(--gap-lg);">
+              <div class="provider-setup-grid">
                 <For each={[1, 2, 3]}>
                   {() => (
-                    <div
-                      class="skeleton skeleton--rect"
-                      style="flex: 1; height: 64px; border-radius: var(--radius);"
-                    />
+                    <div style="display: flex; align-items: center; gap: 12px; padding: 16px 20px; border: 1px solid hsl(var(--border)); border-radius: var(--radius);">
+                      <div
+                        class="skeleton skeleton--rect"
+                        style="width: 32px; height: 32px; border-radius: 6px; flex-shrink: 0;"
+                      />
+                      <div>
+                        <div class="skeleton skeleton--text" style="width: 64px; height: 13px;" />
+                        <div
+                          class="skeleton skeleton--text"
+                          style="width: 88px; height: 11px; margin-top: 4px;"
+                        />
+                      </div>
+                    </div>
                   )}
                 </For>
               </div>
@@ -49,13 +60,13 @@ const EmailProviderSection: Component<EmailProviderSectionProps> = (props) => (
             <div class="provider-card__body">
               <div
                 class="skeleton skeleton--rect"
-                style="width: 32px; height: 32px; border-radius: calc(var(--radius) - 2px); flex-shrink: 0;"
+                style="width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;"
               />
               <div>
                 <div class="skeleton skeleton--text" style="width: 80px; height: 14px;" />
                 <div
                   class="skeleton skeleton--text"
-                  style="width: 160px; height: 12px; margin-top: 6px;"
+                  style="width: 160px; height: 12px; margin-top: 2px;"
                 />
               </div>
             </div>
@@ -65,7 +76,11 @@ const EmailProviderSection: Component<EmailProviderSectionProps> = (props) => (
     >
       <Show
         when={props.emailProvider}
-        fallback={<EmailProviderSetup onConfigured={props.onConfigured} />}
+        fallback={
+          <div style="margin-bottom: var(--gap-lg);">
+            <EmailProviderSetup onConfigured={props.onConfigured} />
+          </div>
+        }
       >
         <ProviderBanner
           config={props.emailProvider!}
