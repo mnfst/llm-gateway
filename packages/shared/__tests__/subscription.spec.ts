@@ -244,7 +244,7 @@ describe('getSubscriptionProviderConfig', () => {
 
   it('publishes the curated xai subscription models', () => {
     const config = getSubscriptionProviderConfig('xai');
-    expect(config?.knownModels).toEqual(['grok-4.6', 'grok-4.5']);
+    expect(config?.knownModels).toEqual(['grok-4.7', 'grok-4.6', 'grok-4.5']);
   });
 
   it('returns config for gemini', () => {
@@ -439,7 +439,7 @@ describe('getSubscriptionKnownModels', () => {
 
   it('returns known models for xai', () => {
     const models = getSubscriptionKnownModels('xai');
-    expect(models).toEqual(['grok-4.6', 'grok-4.5']);
+    expect(models).toEqual(['grok-4.7', 'grok-4.6', 'grok-4.5']);
   });
 
   it('returns null for unsupported providers', () => {
