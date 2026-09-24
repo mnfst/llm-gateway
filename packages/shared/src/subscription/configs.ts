@@ -229,6 +229,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     knownModels: Object.freeze([
       'glm-5.3',
       'glm-5.3-flash',
+      'glm-5.3-flashx',
       'glm-5.2',
       'glm-5.1',
       'glm-5-turbo',
