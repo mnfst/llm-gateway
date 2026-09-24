@@ -173,6 +173,7 @@ describe('resolveEndpointKey', () => {
     expect(known).toContain('gemini-free');
     expect(known).toContain('nous');
     expect(known).toContain('openrouter');
+    expect(known).toContain('requesty');
     expect(known).toContain('nvidia');
     expect(known).toContain('ollama');
     expect(known).toContain('ollama-cloud');
@@ -587,6 +588,20 @@ describe('PROVIDER_ENDPOINTS', () => {
   it('openrouter buildPath returns /api/v1/chat/completions', () => {
     const path = PROVIDER_ENDPOINTS['openrouter'].buildPath('openai/gpt-4o');
     expect(path).toBe('/api/v1/chat/completions');
+  });
+
+  it('requesty uses the OpenAI-compatible router endpoint with branded headers', () => {
+    const ep = PROVIDER_ENDPOINTS['requesty'];
+    expect(ep.baseUrl).toBe('https://router.requesty.ai');
+    expect(ep.format).toBe('openai');
+    expect(ep.buildPath('openai/gpt-4o-mini')).toBe('/v1/chat/completions');
+    expect(ep.streamUsageReporting).toBe('openai_stream_options');
+    expect(ep.buildHeaders('sk-requesty-test')).toEqual({
+      Authorization: 'Bearer sk-requesty-test',
+      'Content-Type': 'application/json',
+      'HTTP-Referer': 'https://manifest.build',
+      'X-Title': 'Manifest',
+    });
   });
 
   it('openai-subscription uses chatgpt.com backend base URL', () => {

@@ -553,6 +553,24 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
         </svg>
       );
 
+    /* ── Requesty ─────────────────────────────────── */
+    case 'requesty':
+      return (
+        <svg
+          style={s}
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <rect width="24" height="24" rx="5" fill="#6e56cf" />
+          <path
+            d="M6.5 18V6h5.6c2.4 0 3.9 1.4 3.9 3.6 0 1.6-.8 2.8-2.2 3.3l2.7 5.1h-2.7l-2.4-4.7H8.8V18H6.5Zm2.3-6.5h3c1.1 0 1.8-.6 1.8-1.7s-.7-1.7-1.8-1.7h-3v3.4Z"
+            fill="#ffffff"
+          />
+        </svg>
+      );
+
     /* ── Ollama ───────────────────────────────────── */
     case 'ollama':
     case 'ollama-cloud':

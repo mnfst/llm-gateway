@@ -469,6 +469,11 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subtitle: 'Auto-route to 300+ models',
     models: [],
   },
+  requesty: {
+    initial: 'Rq',
+    subtitle: 'Unified router for 500+ models across providers',
+    models: [],
+  },
   xai: {
     initial: 'X',
     subtitle: 'Grok 4.5, Grok 4.3, Grok Build',
@@ -546,6 +551,7 @@ const PROVIDER_ORDER = [
   'opencode-zen',
   'openrouter',
   'pioneer',
+  'requesty',
   'xai',
   'xiaomi',
   'zai',
