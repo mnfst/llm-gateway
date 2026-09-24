@@ -574,7 +574,7 @@ const Routing: Component = () => {
                 >
                   <div>
                     <span class="routing-section__subtitle">
-                      Pick one model and up to 5 fallbacks as your default routing.
+                      Pick one model and up to 100 fallbacks as your default routing.
                     </span>
                   </div>
                   <Show when={(headerTiers() ?? []).length > 0}>

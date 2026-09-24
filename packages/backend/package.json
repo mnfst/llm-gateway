@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "rm -f tsconfig.build.tsbuildinfo && nest build",
+    "build": "node -e \"require('fs').rmSync('tsconfig.build.tsbuildinfo',{force:true})\" && nest build",
     "start": "node dist/main",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main",

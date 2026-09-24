@@ -99,7 +99,7 @@ describe('RoutingDefaultTierSection', () => {
   it('renders the standalone section title and Default subtitle when complexity is off', () => {
     render(() => <RoutingDefaultTierSection {...makeProps()} />);
     expect(screen.getByText('Default routing')).toBeDefined();
-    expect(screen.getByText(/Pick one model and up to 5 fallbacks/)).toBeDefined();
+    expect(screen.getByText(/Pick one model and up to 100 fallbacks/)).toBeDefined();
   });
 
   it('renders only the Default tier card when complexity is off', () => {
@@ -154,7 +154,7 @@ describe('RoutingDefaultTierSection', () => {
     ));
     expect(screen.queryByText('Route by complexity')).toBeNull();
     // The single default model card + its subtitle still render.
-    expect(screen.getByText(/Pick one model and up to 5 fallbacks/)).toBeDefined();
+    expect(screen.getByText(/Pick one model and up to 100 fallbacks/)).toBeDefined();
     expect(screen.getByTestId('tier-card-default')).toBeDefined();
   });
 
@@ -187,7 +187,7 @@ describe('RoutingDefaultTierSection', () => {
   it('does not render the section title in embedded mode', () => {
     render(() => <RoutingDefaultTierSection {...makeProps({ embedded: true })} />);
     expect(screen.queryByText('Default routing')).toBeNull();
-    expect(screen.getByText(/Pick one model and up to 5 fallbacks/)).toBeDefined();
+    expect(screen.getByText(/Pick one model and up to 100 fallbacks/)).toBeDefined();
   });
 
   it('forwards onDropdownOpen calls from a tier card up to the parent', () => {

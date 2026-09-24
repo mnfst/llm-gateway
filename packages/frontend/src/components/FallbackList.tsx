@@ -1,4 +1,5 @@
 import { createSignal, For, Show, type Component } from 'solid-js';
+import { MAX_FALLBACKS } from 'manifest-shared';
 import {
   clearFallbacks,
   setFallbacks,
@@ -583,7 +584,7 @@ const FallbackList: Component<FallbackListProps> = (props) => {
           </div>
         }
       >
-        <Show when={props.fallbacks.length < 5}>
+        <Show when={props.fallbacks.length < MAX_FALLBACKS}>
           <button
             class="btn btn--outline btn--sm fallback-list__add"
             onClick={props.onAddFallback}
