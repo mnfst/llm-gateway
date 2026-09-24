@@ -1,0 +1,30 @@
+/**
+ * PT-BR keywords for calendar/scheduling specificity detection.
+ */
+export const CALENDAR_MANAGEMENT_KEYWORDS_PT_BR: string[] = [
+  'agendar',
+  'marcar reunião',
+  'reunião',
+  'agenda',
+  'compromisso',
+  'horário disponível',
+  'disponibilidade',
+  'remarcar',
+  'recorrente',
+  'sincronização de agenda',
+  'google agenda',
+  'google calendar',
+  'bloquear tempo',
+  'reservar horário',
+  'encontrar um horário',
+  'adicionar ao calendário',
+  'sync semanal',
+  'standup',
+  'retrospectiva',
+  'planejamento de sprint',
+  'fuso horário',
+  'lembrete',
+  'convite',
+  'evento',
+  'disponível às',
+];

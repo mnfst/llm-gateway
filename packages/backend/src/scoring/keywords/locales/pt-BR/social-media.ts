@@ -1,0 +1,30 @@
+/**
+ * PT-BR keywords for social media specificity detection.
+ */
+export const SOCIAL_MEDIA_KEYWORDS_PT_BR: string[] = [
+  'tweet',
+  'publicar',
+  'postar',
+  'legenda',
+  'hashtag',
+  'instagram',
+  'tiktok',
+  'linkedin',
+  'facebook',
+  'twitter',
+  'redes sociais',
+  'seguidores',
+  'viral',
+  'thread',
+  'carrossel',
+  'stories',
+  'reels',
+  'engajamento',
+  'alcance',
+  'impressões',
+  'escreva um post',
+  'rascunhe um post',
+  'copy para redes',
+  'conteúdo para instagram',
+  'calendário editorial',
+];

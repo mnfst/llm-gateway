@@ -1,0 +1,31 @@
+/**
+ * PT-BR keywords for trading/finance specificity detection.
+ */
+export const TRADING_KEYWORDS_PT_BR: string[] = [
+  'comprar',
+  'vender',
+  'negociar',
+  'ação',
+  'ações',
+  'cripto',
+  'bitcoin',
+  'ethereum',
+  'forex',
+  'portfólio',
+  'ticker',
+  'altista',
+  'baixista',
+  'stop loss',
+  'rsi',
+  'macd',
+  'rompimento',
+  'hedge',
+  'mercado financeiro',
+  'bolsa de valores',
+  'ibovespa',
+  'fundo de investimento',
+  'tesouro direto',
+  'dividendos',
+  'rendimento',
+  'carteira de investimentos',
+];
