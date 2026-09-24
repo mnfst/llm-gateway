@@ -2140,6 +2140,27 @@ describe('ModelDiscoveryService', () => {
       );
     });
 
+    it('routes MiniMax CN API-key discovery to the CN OpenAI endpoint', async () => {
+      mockDecrypt.mockReturnValue('sk-minimax-api-key');
+      fetcher.fetch.mockResolvedValue([]);
+
+      await service.discoverModels(
+        makeProvider({
+          provider: 'minimax',
+          auth_type: 'api_key',
+          api_key_encrypted: 'encrypted',
+          region: 'cn',
+        }),
+      );
+
+      expect(fetcher.fetch).toHaveBeenCalledWith(
+        'minimax',
+        'sk-minimax-api-key',
+        'api_key',
+        'https://api.minimaxi.com/v1',
+      );
+    });
+
     it('routes Z.ai CN subscription discovery to the China Coding Plan host', async () => {
       mockDecrypt.mockReturnValue('zai-sub-key');
       fetcher.fetch.mockResolvedValue([]);

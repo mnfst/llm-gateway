@@ -750,17 +750,36 @@ describe('ProviderController', () => {
       ).rejects.toThrow('AWS Bedrock region must be a valid AWS region code');
     });
 
-    it('should reject region when MiniMax is connected with api_key auth', async () => {
-      await expect(
-        controller.upsertProvider(mockCtx, mockAgentName, {
+    it('should accept region=cn for MiniMax API-key auth', async () => {
+      mockProviderService.upsertProvider.mockResolvedValue({
+        provider: {
+          id: 'p1',
           provider: 'minimax',
-          apiKey: 'sk-test',
-          authType: 'api_key',
+          is_active: true,
+          auth_type: 'api_key',
           region: 'cn',
-        }),
-      ).rejects.toThrow(
-        'region is only supported for Alibaba/Qwen providers, AWS Bedrock, MiniMax subscriptions, Xiaomi MiMo Token Plan, and Z.ai subscriptions',
+        },
+        isNew: true,
+      });
+
+      const result = await controller.upsertProvider(mockCtx, mockAgentName, {
+        provider: 'minimax',
+        apiKey: 'sk-test',
+        authType: 'api_key',
+        region: 'cn',
+      });
+
+      expect(mockProviderService.upsertProvider).toHaveBeenCalledWith(
+        TEST_AGENT_ID,
+        'tenant-1',
+        'minimax',
+        'sk-test',
+        'api_key',
+        'cn',
+        undefined,
+        'user-1',
       );
+      expect(result.region).toBe('cn');
     });
   });
 

@@ -3560,9 +3560,17 @@ describe('ProviderModelFetcherService', () => {
 
     await service.fetch('minimax', 'api-key', 'api_key');
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining('api.minimaxi.chat'),
-      expect.anything(),
-    );
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
+  });
+
+  it('should use the endpoint override for MiniMax CN API-key discovery', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch('minimax', 'api-key', 'api_key', 'https://api.minimaxi.com/v1');
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimaxi.com/v1/models', expect.anything());
   });
 });
