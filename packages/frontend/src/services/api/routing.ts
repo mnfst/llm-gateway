@@ -563,12 +563,15 @@ export async function probeCustomProvider(
   apiKey?: string,
   api_kind?: CustomProviderApiKind,
   provider_name?: string,
+  // Edit-mode: forwarding the id lets the backend probe with the stored
+  // key (the form never has plaintext). See ProbeCustomProviderDto.
+  provider_id?: string,
 ) {
   const res = await fetch(`${BASE_URL}${routingPath(agentName, 'custom-providers/probe')}`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ base_url, apiKey, api_kind, provider_name }),
+    body: JSON.stringify({ base_url, apiKey, api_kind, provider_name, provider_id }),
   });
   if (!res.ok) {
     const message = await parseErrorMessage(res);

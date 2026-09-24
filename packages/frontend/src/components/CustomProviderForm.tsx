@@ -105,12 +105,18 @@ const CustomProviderForm: Component<Props> = (props) => {
     setProbeBusy(true);
     setProbeError(null);
     try {
+      // Edit mode: forward provider_id so the backend can probe with the
+      // stored key (the form never sees plaintext). A user-typed key still
+      // wins so freshly entered keys can be verified before saving.
+      const typedKey = apiKey().trim() || undefined;
+      const probeId = !typedKey && isEdit() ? props.initialData?.id : undefined;
       const { models } = await probeCustomProvider(
         props.agentName,
         url,
-        apiKey().trim() || undefined,
+        typedKey,
         apiKind(),
         name().trim() || undefined,
+        probeId,
       );
       if (models.length === 0) {
         setProbeError('Server returned no models');

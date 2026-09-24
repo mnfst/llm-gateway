@@ -57,10 +57,20 @@ export class CustomProviderController {
   ) {
     // Resolve for authz — the tenant must own the agent before the server
     // probes anything on its behalf.
-    await this.resolveAgentService.resolve(ctx.tenantId, agentName);
+    const agent = await this.resolveAgentService.resolve(ctx.tenantId, agentName);
+    // Edit-mode fallback: the form has no plaintext key when re-opened
+    // (list() only exposes has_api_key:bool), so it forwards provider_id
+    // and we decrypt the stored key here. Tenant-scoped, so a forged id
+    // from another tenant simply misses and degrades to an unauth probe.
+    // A user-typed apiKey always wins so new keys can be verified pre-save.
+    const apiKey =
+      body.apiKey ??
+      (body.provider_id
+        ? await this.customProviderService.loadStoredApiKey(agent.tenant_id, body.provider_id)
+        : undefined);
     const models = await this.customProviderService.probeModels(
       body.base_url,
-      body.apiKey,
+      apiKey,
       body.api_kind,
       body.provider_name,
     );

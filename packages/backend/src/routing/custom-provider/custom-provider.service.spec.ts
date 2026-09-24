@@ -53,11 +53,13 @@ function makeDeps(overrides: {
   const removeProvider = jest.fn().mockResolvedValue(undefined);
   const retagAuthType = jest.fn().mockResolvedValue(undefined);
   const recalculateTiersForTenant = jest.fn().mockResolvedValue(undefined);
+  const getProviders = jest.fn().mockResolvedValue([]);
   const providerService = {
     upsertProvider,
     removeProvider,
     retagAuthType,
     recalculateTiersForTenant,
+    getProviders,
   } as unknown as ProviderService;
 
   const getCustomProviders = jest.fn().mockReturnValue(overrides.cached ?? null);
@@ -96,6 +98,7 @@ function makeDeps(overrides: {
     removeProvider,
     retagAuthType,
     recalculateTiersForTenant,
+    getProviders,
     getCustomProviders,
     setCustomProviders,
     invalidateTenant,
@@ -1310,6 +1313,72 @@ describe('CustomProviderService', () => {
       } finally {
         global.setTimeout = realSetTimeout;
       }
+    });
+
+    // Edit-page bug repro: opening an existing API-key custom provider and
+    // clicking "Fetch models" without re-typing the key sent an unauth'd
+    // probe (the form never has the plaintext key — list() only returns
+    // has_api_key:bool). Server then 401'd from the upstream. Fix: the
+    // controller now decrypts the stored key via loadStoredApiKey() when
+    // the caller forwards a provider_id, before calling probeModels().
+    describe('loadStoredApiKey', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { encrypt, getEncryptionSecret } = require('../../common/utils/crypto.util');
+
+      const ORIGINAL_ENV = process.env['MANIFEST_ENCRYPTION_KEY'];
+      beforeAll(() => {
+        process.env['MANIFEST_ENCRYPTION_KEY'] = 'test-encryption-secret-min-32-chars-long-padding';
+      });
+      afterAll(() => {
+        if (ORIGINAL_ENV === undefined) {
+          delete process.env['MANIFEST_ENCRYPTION_KEY'];
+        } else {
+          process.env['MANIFEST_ENCRYPTION_KEY'] = ORIGINAL_ENV;
+        }
+      });
+
+      it('decrypts the stored key for the matching tenant + provider', async () => {
+        const stored = 'sk-stored-secret-value';
+        const enc = encrypt(stored, getEncryptionSecret());
+        const { svc, getProviders } = makeDeps({});
+        getProviders.mockResolvedValueOnce([
+          { provider: 'custom:cp-edit-id', api_key_encrypted: enc },
+        ]);
+
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id')).resolves.toBe(stored);
+        expect(getProviders).toHaveBeenCalledWith('tenant-1');
+      });
+
+      it('returns undefined when the provider row has no ciphertext (unauth local server)', async () => {
+        const { svc, getProviders } = makeDeps({});
+        getProviders.mockResolvedValueOnce([
+          { provider: 'custom:cp-local', api_key_encrypted: null },
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-local')).resolves.toBeUndefined();
+      });
+
+      it('returns undefined when no row exists for the given provider_id', async () => {
+        const { svc, getProviders } = makeDeps({});
+        getProviders.mockResolvedValueOnce([]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'missing')).resolves.toBeUndefined();
+      });
+
+      it('cross-tenant safety: a provider_id from another tenant resolves to undefined', async () => {
+        // The lookup only sees rows for the resolved tenantId, so a forged
+        // provider_id can never surface another tenant's encrypted key.
+        const { svc, getProviders } = makeDeps({});
+        getProviders.mockResolvedValueOnce([]); // tenant-attacker owns nothing
+        await expect(svc.loadStoredApiKey('tenant-attacker', 'cp-victim')).resolves.toBeUndefined();
+        expect(getProviders).toHaveBeenCalledWith('tenant-attacker');
+      });
+
+      it('swallows decrypt errors (corrupt ciphertext) and returns undefined', async () => {
+        const { svc, getProviders } = makeDeps({});
+        getProviders.mockResolvedValueOnce([
+          { provider: 'custom:cp-broken', api_key_encrypted: 'not-a-valid-ciphertext' },
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-broken')).resolves.toBeUndefined();
+      });
     });
   });
 });

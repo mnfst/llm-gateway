@@ -497,6 +497,7 @@ describe("CustomProviderForm — Fetch models probe", () => {
         undefined,
         "openai",
         undefined,
+        undefined,
       );
       const inputs = screen.getAllByPlaceholderText("Model name") as HTMLInputElement[];
       expect(inputs).toHaveLength(2);
@@ -554,6 +555,7 @@ describe("CustomProviderForm — Fetch models probe", () => {
         undefined,
         "openai",
         "Kilo Gateway",
+        undefined,
       );
       expect(
         (screen.getByLabelText("Model 1 input price per million tokens") as HTMLInputElement).value,
@@ -1153,6 +1155,105 @@ describe("CustomProviderForm — edit mode", () => {
     const modelInput = screen.getByLabelText("Model 1 name") as HTMLInputElement;
     expect(modelInput.value).toBe("llama-3.1-70b");
   });
+
+  // ── Edit-mode "Fetch models" hint ──
+  // Bug: in edit mode the form never has the plaintext API key (list() only
+  // exposes has_api_key:bool), so the old probe call sent no key and any
+  // server requiring auth returned 401. The fix is to forward the provider
+  // id so the backend can decrypt the stored key and probe with it. These
+  // three tests pin down the three branches: no editingKey → id hint only,
+  // editingKey with typed key → new key wins, editingKey but field empty →
+  // still send id (the typed-then-cleared edge).
+  it("passes id (not apiKey) to probe when editing without clicking Change", async () => {
+    mockProbeCustomProvider.mockResolvedValue({
+      models: [{ model_name: "llama-3.1-8b" }],
+    });
+
+    render(() => (
+      <CustomProviderForm
+        agentName="test-agent"
+        onCreated={onCreated}
+        onBack={onBack}
+        initialData={initialData}
+      />
+    ));
+
+    fireEvent.click(screen.getByText("Fetch models"));
+
+    await waitFor(() => {
+      expect(mockProbeCustomProvider).toHaveBeenCalledWith(
+        "test-agent",
+        initialData.base_url,
+        undefined, // no plaintext key available — backend falls back to stored
+        "openai",
+        initialData.name, // provider_name still forwarded for enrichment
+        initialData.id, // edit-mode hint
+      );
+    });
+  });
+
+  it("uses the typed apiKey (not id) when the user clicked Change and entered a new key", async () => {
+    mockProbeCustomProvider.mockResolvedValue({
+      models: [{ model_name: "llama-3.1-8b" }],
+    });
+
+    render(() => (
+      <CustomProviderForm
+        agentName="test-agent"
+        onCreated={onCreated}
+        onBack={onBack}
+        initialData={initialData}
+      />
+    ));
+
+    fireEvent.click(screen.getByText("Change"));
+    fireEvent.input(screen.getByPlaceholderText("sk-..."), {
+      target: { value: "sk-new-typed" },
+    });
+    fireEvent.click(screen.getByText("Fetch models"));
+
+    await waitFor(() => {
+      expect(mockProbeCustomProvider).toHaveBeenCalledWith(
+        "test-agent",
+        initialData.base_url,
+        "sk-new-typed", // user-typed key takes precedence
+        "openai",
+        initialData.name,
+        undefined, // no id hint — we have an explicit key
+      );
+    });
+  });
+
+  it("still sends id when editingKey is open but the user left the field empty", async () => {
+    mockProbeCustomProvider.mockResolvedValue({
+      models: [{ model_name: "llama-3.1-8b" }],
+    });
+
+    render(() => (
+      <CustomProviderForm
+        agentName="test-agent"
+        onCreated={onCreated}
+        onBack={onBack}
+        initialData={initialData}
+      />
+    ));
+
+    fireEvent.click(screen.getByText("Change"));
+    // Field opens but stays empty — user changed their mind. The probe
+    // should still hit /models with the stored key, not unauthenticated.
+    fireEvent.click(screen.getByText("Fetch models"));
+
+    await waitFor(() => {
+      expect(mockProbeCustomProvider).toHaveBeenCalledWith(
+        "test-agent",
+        initialData.base_url,
+        undefined,
+        "openai",
+        initialData.name,
+        initialData.id,
+      );
+    });
+  });
 });
 
 describe("CustomProviderForm — probe edge cases and model-row interactions", () => {
@@ -1368,6 +1469,7 @@ describe("CustomProviderForm — API format selector", () => {
         "https://api.anthropic.com",
         undefined,
         "anthropic",
+        undefined,
         undefined,
       );
     });

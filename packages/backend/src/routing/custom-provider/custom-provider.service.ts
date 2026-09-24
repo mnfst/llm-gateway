@@ -28,6 +28,7 @@ import { RoutingCacheService } from '../routing-core/routing-cache.service';
 import { CreateCustomProviderDto, UpdateCustomProviderDto } from '../dto/custom-provider.dto';
 import { validatePublicUrl } from '../../common/utils/url-validation';
 import { isSelfHosted } from '../../common/utils/detect-self-hosted';
+import { decrypt, getEncryptionSecret } from '../../common/utils/crypto.util';
 import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
 import { ModelsDevSyncService } from '../../database/models-dev-sync.service';
 import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
@@ -563,6 +564,30 @@ export class CustomProviderService {
       throw new BadRequestException(classifyProbeError({ url, error: err as Error }).message);
     } finally {
       clearTimeout(timeout);
+    }
+  }
+
+  /**
+   * Look up the encrypted API key for an existing custom provider row and
+   * decrypt it for server-side use. Returns undefined on any miss (no row,
+   * null ciphertext, or corrupt blob) so callers fall back to an
+   * unauthenticated request — the upstream response then drives error
+   * classification. Tenant-scoped to prevent cross-tenant key exfiltration
+   * via a forged providerId.
+   *
+   * Used by the probe controller: the edit form never has the plaintext key
+   * (list() only exposes `has_api_key:bool`), so when the user hasn't
+   * re-typed one we decrypt the stored key for a single in-flight probe.
+   */
+  async loadStoredApiKey(tenantId: string, providerId: string): Promise<string | undefined> {
+    const provKey = CustomProviderService.providerKey(providerId);
+    const tenantProviders = await this.providerService.getProviders(tenantId);
+    const row = tenantProviders.find((p) => p.provider === provKey);
+    if (!row?.api_key_encrypted) return undefined;
+    try {
+      return decrypt(row.api_key_encrypted, getEncryptionSecret());
+    } catch {
+      return undefined;
     }
   }
 
