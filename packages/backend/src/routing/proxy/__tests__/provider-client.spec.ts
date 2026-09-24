@@ -1349,6 +1349,86 @@ describe('ProviderClient', () => {
       expect(resolveChatBody).not.toHaveBeenCalled();
     });
 
+    it('drops Anthropic provider-defined tools when forwarding Messages to a chat-completions provider (issue #2754)', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const anthropicBody = {
+        model: 'MiniMax-M2',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: 'find cats' }],
+        tools: [
+          { type: 'web_search_20250305', name: 'web_search' },
+          { type: 'bash_20250124', name: 'bash' },
+          {
+            name: 'lookup',
+            input_schema: { type: 'object', properties: { q: { type: 'string' } } },
+          },
+        ],
+        tool_choice: { type: 'tool', name: 'web_search' },
+      };
+      // What the routing layer derives from `anthropicBody` before forwarding.
+      const chatBody = {
+        model: 'MiniMax-M2',
+        messages: [{ role: 'user', content: 'find cats' }],
+        tools: [
+          { type: 'function', function: { name: 'web_search' } },
+          { type: 'function', function: { name: 'bash' } },
+          { type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } },
+        ],
+        tool_choice: { type: 'function', function: { name: 'web_search' } },
+      };
+
+      await client.forward({
+        provider: 'minimax',
+        apiKey: 'sk-test',
+        model: 'MiniMax-M2',
+        body: anthropicBody,
+        resolveChatBody: jest.fn().mockResolvedValue(chatBody),
+        stream: false,
+        apiMode: 'messages',
+      });
+
+      const sent = JSON.parse(mockFetch.mock.calls[0][1].body);
+      // Only the client tool the provider can actually run survives.
+      expect(sent.tools).toEqual([
+        { type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } },
+      ]);
+      // tool_choice pinned to a dropped tool is relaxed to auto.
+      expect(sent.tool_choice).toBe('auto');
+    });
+
+    it('omits the tools array entirely when every Anthropic tool is provider-executed', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const anthropicBody = {
+        model: 'MiniMax-M2',
+        max_tokens: 1024,
+        messages: [{ role: 'user', content: 'find cats' }],
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        tool_choice: { type: 'any' },
+      };
+      const chatBody = {
+        model: 'MiniMax-M2',
+        messages: [{ role: 'user', content: 'find cats' }],
+        tools: [{ type: 'function', function: { name: 'web_search' } }],
+        tool_choice: 'required',
+      };
+
+      await client.forward({
+        provider: 'minimax',
+        apiKey: 'sk-test',
+        model: 'MiniMax-M2',
+        body: anthropicBody,
+        resolveChatBody: jest.fn().mockResolvedValue(chatBody),
+        stream: false,
+        apiMode: 'messages',
+      });
+
+      const sent = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sent).not.toHaveProperty('tools');
+      expect(sent.tool_choice).toBe('auto');
+    });
+
     it('still uses toAnthropicRequest for chat_completions inbound forwarded to an Anthropic upstream', async () => {
       mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 
