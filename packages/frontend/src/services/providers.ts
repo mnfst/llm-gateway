@@ -174,6 +174,11 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subtitle: 'Gemini via Google Cloud Vertex AI',
     models: [],
   },
+  atlascloud: {
+    initial: 'AC',
+    subtitle: 'DeepSeek, Qwen, GLM, Kimi, MiniMax and more',
+    models: [],
+  },
   bedrock: {
     initial: 'AWS',
     subtitle: 'Claude, GPT, Kimi, MiniMax, Nova via Amazon Bedrock',
@@ -516,6 +521,7 @@ export function buildProviderDef(shared: SharedProviderEntry): ProviderDef {
 const PROVIDER_ORDER = [
   'qwen',
   'anthropic',
+  'atlascloud',
   'bedrock',
   'byteplus',
   'cerebras',

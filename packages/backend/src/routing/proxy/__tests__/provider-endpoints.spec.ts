@@ -155,6 +155,7 @@ describe('resolveEndpointKey', () => {
   it('exposes expected set of known providers', () => {
     const known = Object.keys(PROVIDER_ENDPOINTS);
     expect(known).toContain('openai');
+    expect(known).toContain('atlascloud');
     expect(known).toContain('anthropic');
     expect(known).toContain('bedrock');
     expect(known).toContain('cerebras');
@@ -252,6 +253,19 @@ describe('resolveBedrockEndpointKey', () => {
 });
 
 describe('PROVIDER_ENDPOINTS', () => {
+  it('routes Atlas Cloud through its OpenAI-compatible endpoint', () => {
+    const endpoint = PROVIDER_ENDPOINTS['atlascloud'];
+
+    expect(endpoint.baseUrl).toBe('https://api.atlascloud.ai');
+    expect(endpoint.format).toBe('openai');
+    expect(endpoint.streamUsageReporting).toBe('openai_stream_options');
+    expect(endpoint.buildPath('deepseek-ai/deepseek-v4-pro')).toBe('/v1/chat/completions');
+    expect(endpoint.buildHeaders('apikey-test')).toEqual({
+      Authorization: 'Bearer apikey-test',
+      'Content-Type': 'application/json',
+    });
+  });
+
   it.each([
     'openai.gpt-5',
     'openai.gpt-5.1',
