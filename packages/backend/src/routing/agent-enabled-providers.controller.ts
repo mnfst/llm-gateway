@@ -9,7 +9,7 @@ import {
   Put,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Repository } from 'typeorm';
 import { TenantCtx, TenantContext } from '../common/decorators/tenant-context.decorator';
 import { AgentEnabledProvider } from '../entities/agent-enabled-provider.entity';
 import { Agent } from '../entities/agent.entity';
@@ -42,8 +42,15 @@ export class AgentEnabledProvidersController {
     if (!tenantId) return null;
     // Exclude the reserved Playground agent — its enabled providers are the global
     // pool and must not be togglable/removable through this per-agent endpoint.
+    // Exclude soft-deleted agents too: a new agent can reuse a deleted one's name,
+    // and without this filter both rows match and findOne may return the dead one.
     return this.agentRepo.findOne({
-      where: { name: decodeURIComponent(agentName), tenant_id: tenantId, is_playground: false },
+      where: {
+        name: decodeURIComponent(agentName),
+        tenant_id: tenantId,
+        is_playground: false,
+        deleted_at: IsNull(),
+      },
     });
   }
 
