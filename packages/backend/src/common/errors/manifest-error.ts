@@ -58,6 +58,7 @@ export const MANIFEST_CODE_TO_REASON: Record<RecordableManifestCode, ManifestBlo
     M300: 'manifest_invalid_request',
     M302: 'model_not_available',
     M303: 'local_provider_unavailable',
+    M304: 'manifest_invalid_request',
     M500: 'manifest_internal_error',
   };
 

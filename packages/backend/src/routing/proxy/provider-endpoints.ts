@@ -68,8 +68,6 @@ export interface ProviderEndpoint {
   forwardResponsesStream?: boolean;
   /** Map Chat Completions token caps to `max_output_tokens`. */
   acceptsMaxOutputTokens?: boolean;
-  /** Models (bare id) that reject `max_tokens` and only accept `max_completion_tokens`. */
-  maxCompletionTokensModels?: RegExp;
 }
 
 const openaiStreamUsage = { streamUsageReporting: 'openai_stream_options' as const };
@@ -246,8 +244,6 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     buildHeaders: openaiHeaders,
     buildPath: () => '/openai/v1/chat/completions',
     format: 'openai',
-    // GPT CRIS profiles answer 400 "Unsupported parameter: 'max_tokens'".
-    maxCompletionTokensModels: /(?:^|\.)openai\.gpt-/i,
     ...openaiStreamUsage,
   },
   'bedrock-runtime-responses': {

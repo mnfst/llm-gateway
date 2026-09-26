@@ -100,6 +100,7 @@ import {
   CredentialRejectionCooldown,
   type RejectedCredentialRef,
 } from './credential-rejection-cooldown';
+import { assertBedrockRuntimeApiSupported } from './bedrock-runtime-api-guard';
 
 // Fallback cooldown applied when an upstream 429 carries no usable Retry-After.
 // Kept short (15s) on purpose: many providers rate-limit on brief RPM/burst
@@ -588,6 +589,7 @@ export class ProxyFallbackService {
   }
 
   async tryForwardToProvider(opts: ForwardProviderOptions): Promise<ForwardResult> {
+    assertBedrockRuntimeApiSupported(opts.provider, opts.model, opts.apiMode ?? 'chat_completions');
     const cooldown = this.getActiveRateLimitCooldown(opts);
     if (cooldown) {
       return this.buildRateLimitCooldownForward(opts, cooldown);

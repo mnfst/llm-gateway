@@ -182,11 +182,6 @@ describe('resolveForwardEndpoint', () => {
     expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-runtime.us-west-2.amazonaws.com');
     expect(out.customEndpoint?.format).toBe('openai');
     expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/openai/v1/chat/completions');
-    // The region override keeps the Runtime max_completion_tokens rule.
-    expect(out.customEndpoint?.maxCompletionTokensModels?.test('us.openai.gpt-6-sol')).toBe(true);
-    expect(out.customEndpoint?.maxCompletionTokensModels?.test('global.moonshotai.kimi-k3')).toBe(
-      false,
-    );
   });
 
   it('routes a CRIS profile to Bedrock Runtime Responses when the request is Responses', () => {

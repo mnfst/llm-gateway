@@ -73,6 +73,7 @@ import {
 import { AutofixService } from '../autofix/autofix.service';
 import type { AutofixRecord } from '../autofix/autofix.types';
 import { recordingResponseFromText } from './attempt-recording-capture';
+import { assertBedrockRuntimeApiSupported } from './bedrock-runtime-api-guard';
 
 type ResolvedRouting = Awaited<ReturnType<ResolveService['resolve']>> & {
   explicit_model_override?: boolean;
@@ -310,13 +311,14 @@ export class ProxyService {
     }
 
     const route = resolved.route;
+    const primaryModel = normalizeProviderModel(route.provider, route.model);
+    assertBedrockRuntimeApiSupported(route.provider, primaryModel, apiMode);
     const credentials = await this.resolveCredentials(agentId, tenantId, {
       provider: route.provider,
       auth_type: route.authType,
       provider_key_label: route.keyLabel ?? undefined,
     });
 
-    const primaryModel = normalizeProviderModel(route.provider, route.model);
     this.logger.log(
       `Proxy: tier=${resolved.tier} model=${primaryModel} provider=${route.provider} auth_type=${route.authType} confidence=${resolved.confidence}`,
     );

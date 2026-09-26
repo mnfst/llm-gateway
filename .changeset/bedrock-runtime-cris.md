@@ -2,4 +2,4 @@
 'manifest': patch
 ---
 
-Route active, system-defined Bedrock geographic inference profiles (`global.`, `us.`, `eu.`, and `apac.`) to Bedrock Runtime without model-family allowlists, preserving native Chat Completions or Responses selected by the client. Also list those profiles in model discovery.
+Route verified Bedrock geographic inference profiles to Runtime with a safe native-API capability catalog, reject unsupported Chat/Responses combinations locally, preserve valid profiles during control-plane failures, and inherit missing CRIS pricing from the Bedrock base-model entry.

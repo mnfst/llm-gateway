@@ -2,7 +2,6 @@ import {
   createReasoningContentStreamTransformer,
   sanitizeOpenAiBody,
 } from '../provider-client-converters';
-import { PROVIDER_ENDPOINTS } from '../provider-endpoints';
 
 describe('provider-client-converters', () => {
   describe('sanitizeOpenAiBody', () => {
@@ -1002,9 +1001,7 @@ describe('provider-client-converters', () => {
 
     /* ── Bedrock Runtime: GPT CRIS profiles only accept max_completion_tokens ── */
 
-    const runtimeOptions = {
-      maxCompletionTokensModels: PROVIDER_ENDPOINTS['bedrock-runtime'].maxCompletionTokensModels,
-    };
+    const runtimeGptOptions = { useMaxCompletionTokens: true };
 
     // Region overrides forward through the `custom` key; the rule travels with the endpoint.
     it.each([
@@ -1015,7 +1012,7 @@ describe('provider-client-converters', () => {
         { messages: [], max_tokens: 300 },
         endpointKey,
         model,
-        runtimeOptions,
+        runtimeGptOptions,
       );
 
       expect(result).toHaveProperty('max_completion_tokens', 300);
@@ -1027,7 +1024,7 @@ describe('provider-client-converters', () => {
         { messages: [], max_completion_tokens: 300 },
         'custom',
         'us.openai.gpt-6-luna',
-        runtimeOptions,
+        runtimeGptOptions,
       );
 
       expect(result).toHaveProperty('max_completion_tokens', 300);
@@ -1039,7 +1036,6 @@ describe('provider-client-converters', () => {
         { messages: [], max_tokens: 300 },
         'custom',
         'global.moonshotai.kimi-k3',
-        runtimeOptions,
       );
 
       expect(result).toHaveProperty('max_tokens', 300);
@@ -1051,7 +1047,6 @@ describe('provider-client-converters', () => {
         { messages: [], max_tokens: 300 },
         'custom',
         'openai.gpt-6-sol',
-        { maxCompletionTokensModels: PROVIDER_ENDPOINTS.bedrock.maxCompletionTokensModels },
       );
 
       expect(result).toHaveProperty('max_tokens', 300);

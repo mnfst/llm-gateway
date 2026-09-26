@@ -697,6 +697,41 @@ describe('ProviderClient', () => {
       expect(result.isGoogle).toBe(false);
     });
 
+    it('uses the safe catalog token parameter for Bedrock Runtime GPT profiles', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'us.openai.gpt-6-sol',
+        body: { ...body, max_tokens: 1024 },
+        stream: false,
+      });
+
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions',
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.max_completion_tokens).toBe(1024);
+      expect(sentBody.max_tokens).toBeUndefined();
+    });
+
+    it('keeps max_tokens for Bedrock Runtime Kimi profiles', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'global.moonshotai.kimi-k3',
+        body: { ...body, max_tokens: 1024 },
+        stream: false,
+      });
+
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.max_tokens).toBe(1024);
+      expect(sentBody.max_completion_tokens).toBeUndefined();
+    });
+
     it.each([
       'openai.gpt-5.4',
       'openai.gpt-5.5',

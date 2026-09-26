@@ -47,6 +47,8 @@ import { qualifyChatGptResponse } from './chatgpt-response-qualifier';
 import { isProviderAvailableForDeployment } from '../../common/utils/provider-availability';
 import { ManifestError } from '../../common/errors/manifest-error';
 import { MANAGED_FREE_PROVIDER_BY_ID } from '../../common/constants/managed-free-providers';
+import { isBedrockProvider, isBedrockRuntimeModel } from '../bedrock-region';
+import { getBedrockRuntimeCapabilities } from '../bedrock-runtime-capabilities';
 
 export interface ForwardResult {
   response: Response;
@@ -879,7 +881,10 @@ export class ProviderClient {
 
     // OpenAI-compatible path (default)
     const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model, {
-      maxCompletionTokensModels: endpoint.maxCompletionTokensModels,
+      useMaxCompletionTokens:
+        isBedrockProvider(ctx.provider) &&
+        isBedrockRuntimeModel(ctx.model) &&
+        getBedrockRuntimeCapabilities(ctx.model)?.chatTokenParameter === 'max_completion_tokens',
     });
     if (stream && endpoint.streamUsageReporting === 'openai_stream_options') {
       const existing =

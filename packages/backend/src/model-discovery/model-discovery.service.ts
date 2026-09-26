@@ -23,6 +23,7 @@ import {
 import { parseOAuthTokenBlob } from '../routing/oauth/core';
 import { getQwenCompatibleBaseUrl, isQwenResolvedEndpoint } from '../routing/qwen-region';
 import {
+  getBedrockInferenceProfileBaseModelId,
   getBedrockMantleBaseUrl,
   isBedrockProvider,
   isBedrockRegion,
@@ -220,12 +221,28 @@ export class ModelDiscoveryService {
     const useCuratedSubscriptionModels =
       provider.auth_type === 'subscription' && (!apiKey || lowerProvider === 'anthropic');
 
-    const fetchProviderModels = () =>
-      options.forceRefresh
-        ? this.fetcher.fetch(provider.provider, apiKey, provider.auth_type, endpointOverride, {
-            forceRefresh: true,
-          })
+    const fetchProviderModels = () => {
+      const previousModels =
+        lowerProvider === 'bedrock' && Array.isArray(provider.cached_models)
+          ? provider.cached_models
+          : undefined;
+      const fetchOptions =
+        options.forceRefresh || previousModels
+          ? {
+              ...(options.forceRefresh ? { forceRefresh: true } : {}),
+              ...(previousModels ? { previousModels } : {}),
+            }
+          : undefined;
+      return fetchOptions
+        ? this.fetcher.fetch(
+            provider.provider,
+            apiKey,
+            provider.auth_type,
+            endpointOverride,
+            fetchOptions,
+          )
         : this.fetcher.fetch(provider.provider, apiKey, provider.auth_type, endpointOverride);
+    };
 
     const buildModelsDevModels = () => {
       const models = buildModelsDevFallback(this.modelsDevSync, provider.provider, {
@@ -727,6 +744,9 @@ export class ModelDiscoveryService {
         : model;
     const pricingProvider = isBedrock ? providerId : metadataProvider;
     const pricingModel = isBedrock ? model.id : metadataModel;
+    const bedrockProfileBaseModel = isBedrock
+      ? getBedrockInferenceProfileBaseModelId(model.id)
+      : null;
     const known = lookupKnownPrice(pricingModel) ?? lookupKnownPrice(model.id);
     if (known) {
       return this.computeScore(
@@ -745,10 +765,18 @@ export class ModelDiscoveryService {
     // come from a Bedrock/AWS entry keyed by the AWS model ID; underlying
     // vendor metadata may still provide the display name/capabilities.
     if (this.modelsDevSync) {
-      const mdEntry =
+      const exactEntry =
         pricingProvider === metadataProvider && pricingModel === metadataModel
           ? metadataEntry
           : this.modelsDevSync.lookupModel(pricingProvider, pricingModel);
+      // CRIS profile pricing is normally identical to its underlying Bedrock
+      // model. Prefer an exact profile entry when present, then fall back only
+      // within the Bedrock catalog — never to the vendor/OpenRouter price.
+      const mdEntry =
+        exactEntry ??
+        (bedrockProfileBaseModel
+          ? this.modelsDevSync.lookupModel('bedrock', bedrockProfileBaseModel)
+          : null);
       if (mdEntry && mdEntry.inputPricePerToken !== null) {
         const capabilityEntry = metadataEntry ?? mdEntry;
         return this.computeScore({

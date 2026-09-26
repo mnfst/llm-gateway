@@ -229,6 +229,22 @@ describe('ProxyFallbackService', () => {
       expect(result.response.ok).toBe(true);
     });
 
+    it('rejects an unsupported Bedrock fallback API before starting provider transport', async () => {
+      await expect(
+        service.tryForwardToProvider({
+          provider: 'bedrock',
+          apiKey: 'ABSK-test',
+          model: 'us.moonshotai.kimi-k2.5',
+          body: { input: 'Hello' },
+          stream: false,
+          sessionKey: 'sess-1',
+          apiMode: 'responses',
+        }),
+      ).rejects.toMatchObject({ code: 'M304', status: 400 });
+
+      expect(providerClient.forward).not.toHaveBeenCalled();
+    });
+
     it('passes Anthropic thinking lookup with route-specific replay context', async () => {
       providerClient.forward.mockResolvedValue({
         response: new Response('{}', { status: 200 }),

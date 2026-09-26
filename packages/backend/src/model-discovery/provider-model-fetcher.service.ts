@@ -21,9 +21,15 @@ import {
   bedrockRegionFromMantleBaseUrl,
   getBedrockControlPlaneBaseUrl,
   getBedrockMantleBaseUrl,
+  getBedrockInferenceProfileBaseModelId,
   isBedrockRuntimeModel,
   normalizeBedrockMantleBaseUrl,
 } from '../routing/bedrock-region';
+import {
+  bedrockRuntimeOpenAiEndpoints,
+  getBedrockRuntimeCapabilities,
+  isBedrockRuntimeOpenAiCompatible,
+} from '../routing/bedrock-runtime-capabilities';
 
 const BEDROCK_PROFILE_MAX_PAGES = 10;
 
@@ -32,9 +38,23 @@ interface BedrockInferenceProfilesResponse {
     inferenceProfileId?: unknown;
     type?: unknown;
     status?: unknown;
+    models?: Array<{ modelArn?: unknown }>;
   }>;
   nextToken?: unknown;
 }
+
+interface BedrockRuntimeProfileFetchResult {
+  models: DiscoveredModel[];
+  ok: boolean;
+}
+
+function bedrockFoundationModelIdFromArn(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const marker = '/foundation-model/';
+  const index = value.indexOf(marker);
+  return index >= 0 ? value.slice(index + marker.length) || null : null;
+}
+
 import {
   getXiaomiTokenPlanBaseUrl,
   normalizeXiaomiTokenPlanBaseUrl,
@@ -1096,6 +1116,8 @@ const OPENCODE_GO_CONTEXT_WINDOW = 200000;
 
 export interface ProviderModelFetchOptions {
   forceRefresh?: boolean;
+  /** Last safe cache, used only when one Bedrock discovery source fails. */
+  previousModels?: readonly DiscoveredModel[];
 }
 
 @Injectable()
@@ -1203,10 +1225,26 @@ export class ProviderModelFetcherService {
       // CRIS profiles served by Bedrock Runtime come from the control plane.
       // Each source fails independently.
       const region = bedrockRegionFromMantleBaseUrl(url);
-      const [mantleModels, runtimeModels] = await Promise.all([
+      const [mantleModels, runtimeResult] = await Promise.all([
         this.fetchModelList(url, headers, config, apiKey, providerId, configKey),
         this.fetchBedrockRuntimeProfiles(apiKey, region, providerId),
       ]);
+      const runtimeModels = runtimeResult.ok
+        ? runtimeResult.models
+        : (options?.previousModels ?? [])
+            .filter(
+              (model) =>
+                isBedrockRuntimeModel(model.id) && isBedrockRuntimeOpenAiCompatible(model.id),
+            )
+            .map((model) => ({
+              ...model,
+              supportedEndpoints: bedrockRuntimeOpenAiEndpoints(model.id),
+            }));
+      if (!runtimeResult.ok && runtimeModels.length > 0) {
+        this.logger.warn(
+          `Bedrock inference-profile discovery failed; preserved ${runtimeModels.length} safe cached profiles`,
+        );
+      }
       const seen = new Set(mantleModels.map((m) => m.id));
       return [...mantleModels, ...runtimeModels.filter((m) => !seen.has(m.id))];
     }
@@ -1258,11 +1296,13 @@ export class ProviderModelFetcherService {
     apiKey: string,
     region: string | null,
     providerId: string,
-  ): Promise<DiscoveredModel[]> {
+  ): Promise<BedrockRuntimeProfileFetchResult> {
     const baseUrl = `${getBedrockControlPlaneBaseUrl(region)}/inference-profiles`;
-    const ids = new Set<string>();
+    const approved = new Map<string, string[]>();
     let nextToken: string | undefined;
     let pages = 0;
+    let unknownProfiles = 0;
+    let nonOpenAiProfiles = 0;
 
     try {
       do {
@@ -1278,19 +1318,38 @@ export class ProviderModelFetcherService {
 
         if (!res.ok) {
           this.logger.warn(`Provider ${providerId} returned ${res.status} from ${baseUrl}`);
-          break;
+          return { models: [], ok: false };
         }
 
         const body = (await res.json()) as BedrockInferenceProfilesResponse;
         for (const profile of body.inferenceProfileSummaries ?? []) {
           const id = profile.inferenceProfileId;
           if (
-            typeof id === 'string' &&
-            profile.type === 'SYSTEM_DEFINED' &&
-            profile.status === 'ACTIVE' &&
-            isBedrockRuntimeModel(id)
+            typeof id !== 'string' ||
+            profile.type !== 'SYSTEM_DEFINED' ||
+            profile.status !== 'ACTIVE' ||
+            !isBedrockRuntimeModel(id)
           ) {
-            ids.add(id);
+            continue;
+          }
+
+          const modelIds = [
+            ...(profile.models ?? [])
+              .map((model) => bedrockFoundationModelIdFromArn(model.modelArn))
+              .filter((modelId): modelId is string => modelId !== null),
+            getBedrockInferenceProfileBaseModelId(id),
+          ].filter((modelId): modelId is string => modelId !== null);
+          const capabilities = modelIds
+            .map((modelId) => getBedrockRuntimeCapabilities(modelId))
+            .find((entry) => entry !== null);
+          const endpoints = capabilities ? bedrockRuntimeOpenAiEndpoints(capabilities.modelId) : [];
+
+          if (endpoints.length > 0) {
+            approved.set(id, endpoints);
+          } else if (capabilities) {
+            nonOpenAiProfiles++;
+          } else {
+            unknownProfiles++;
           }
         }
         const token = typeof body.nextToken === 'string' ? body.nextToken : undefined;
@@ -1300,9 +1359,22 @@ export class ProviderModelFetcherService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Failed to fetch Bedrock inference profiles: ${message}`);
+      return { models: [], ok: false };
     }
 
-    return parseOpenAI({ data: [...ids].map((id) => ({ id })) }, providerId);
+    if (unknownProfiles > 0 || nonOpenAiProfiles > 0) {
+      this.logger.log(
+        `Bedrock Runtime safe catalog omitted ${unknownProfiles} unknown and ${nonOpenAiProfiles} non-OpenAI-compatible profiles`,
+      );
+    }
+    const models = parseOpenAI(
+      { data: [...approved.keys()].map((id) => ({ id })) },
+      providerId,
+    ).map((model) => ({
+      ...model,
+      supportedEndpoints: approved.get(model.id),
+    }));
+    return { models, ok: true };
   }
 
   private async fetchFireworksModels(

@@ -54,13 +54,22 @@ export function getBedrockMantleBaseUrl(region?: string | null): string {
  * APAC. API compatibility is optimistic: the caller's API mode is preserved
  * and Bedrock returns the authoritative unsupported-API error when necessary.
  */
-const BEDROCK_RUNTIME_CRIS_RE = /^(?:global|us|eu|apac)\.[a-z0-9][a-z0-9:._-]*$/i;
+const BEDROCK_RUNTIME_CRIS_RE = /^(?:global|us|eu|apac)\.(?<baseModelId>[a-z0-9][a-z0-9:._-]*)$/i;
+
+function bareBedrockModelId(model: string): string {
+  const slash = model.indexOf('/');
+  return slash > 0 ? model.substring(slash + 1) : model;
+}
+
+/** Return the underlying Bedrock model ID for a geographic inference profile. */
+export function getBedrockInferenceProfileBaseModelId(model: string): string | null {
+  const match = BEDROCK_RUNTIME_CRIS_RE.exec(bareBedrockModelId(model));
+  return match?.groups?.['baseModelId'] ?? null;
+}
 
 /** True when the model is a CRIS profile that must be sent to Bedrock Runtime. */
 export function isBedrockRuntimeModel(model: string): boolean {
-  const slash = model.indexOf('/');
-  const bare = slash > 0 ? model.substring(slash + 1) : model;
-  return BEDROCK_RUNTIME_CRIS_RE.test(bare);
+  return getBedrockInferenceProfileBaseModelId(model) !== null;
 }
 
 /**

@@ -147,8 +147,8 @@ const OPENAI_MAX_COMPLETION_TOKENS_RE = /^(o\d|gpt-5)/i;
 const OPENAI_MAX_COMPLETION_TOKENS_ENDPOINTS = new Set(['openai', 'copilot']);
 
 export interface SanitizeOpenAiBodyOptions {
-  /** Endpoint-declared models that only accept `max_completion_tokens`. */
-  maxCompletionTokensModels?: RegExp;
+  /** The selected endpoint/model only accepts `max_completion_tokens`. */
+  useMaxCompletionTokens?: boolean;
 }
 
 function usesOpenAiMaxCompletionTokens(
@@ -156,7 +156,7 @@ function usesOpenAiMaxCompletionTokens(
   bareModel: string,
   options?: SanitizeOpenAiBodyOptions,
 ): boolean {
-  if (options?.maxCompletionTokensModels?.test(bareModel)) return true;
+  if (options?.useMaxCompletionTokens) return true;
   return (
     OPENAI_MAX_COMPLETION_TOKENS_ENDPOINTS.has(endpointKey) &&
     OPENAI_MAX_COMPLETION_TOKENS_RE.test(bareModel)

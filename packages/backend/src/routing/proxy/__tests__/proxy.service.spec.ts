@@ -385,6 +385,50 @@ describe('ProxyService — orchestration', () => {
     });
   });
 
+  describe('Bedrock Runtime API capability validation', () => {
+    const resolveToBedrock = (model: string) =>
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('bedrock', 'api_key', model),
+        fallback_routes: null,
+        confidence: 1,
+        score: 5,
+        reason: 'scored',
+      });
+
+    it('rejects Responses locally for a Chat-only profile before resolving credentials', async () => {
+      resolveToBedrock('us.moonshotai.kimi-k2.5');
+
+      await expect(
+        svc.proxyRequest(
+          baseOpts({
+            apiMode: 'responses',
+            body: { model: 'auto', input: 'hi' },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'M304', status: 400 });
+      expect(providerKeyService.selectProviderKey).not.toHaveBeenCalled();
+      expect(fallbackService.tryForwardToProvider).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['chat_completions', 'us.moonshotai.kimi-k2-thinking'],
+      ['chat_completions', 'global.vendor.future-model:1'],
+      ['messages', 'global.openai.gpt-6-sol'],
+    ] as const)('rejects unsupported %s for %s with M304', async (apiMode, model) => {
+      resolveToBedrock(model);
+      const body =
+        apiMode === 'chat_completions'
+          ? { messages: [{ role: 'user', content: 'hi' }] }
+          : { messages: [{ role: 'user', content: 'hi' }] };
+
+      await expect(svc.proxyRequest(baseOpts({ apiMode, body }))).rejects.toMatchObject({
+        code: 'M304',
+        status: 400,
+      });
+    });
+  });
+
   describe('autofix integration', () => {
     const routableResolve = () =>
       resolveService.resolve.mockResolvedValue({

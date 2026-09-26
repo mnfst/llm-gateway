@@ -1,5 +1,6 @@
 import { ProviderModelFetcherService, PROVIDER_CONFIGS } from './provider-model-fetcher.service';
 import { CODEX_CLI_VERSION } from '../common/constants/subscription-clients';
+import type { DiscoveredModel } from './model-fetcher';
 
 describe('ProviderModelFetcherService', () => {
   let service: ProviderModelFetcherService;
@@ -257,7 +258,7 @@ describe('ProviderModelFetcherService', () => {
           type: 'SYSTEM_DEFINED',
           status: 'ACTIVE',
         },
-        // A different vendor and geography must be accepted optimistically.
+        // Unknown families must be omitted until their Runtime APIs are verified.
         { inferenceProfileId: 'us.anthropic.claude-x', type: 'SYSTEM_DEFINED', status: 'ACTIVE' },
         {
           inferenceProfileId: 'eu.vendor.future-model:1',
@@ -266,6 +267,22 @@ describe('ProviderModelFetcherService', () => {
         },
         {
           inferenceProfileId: 'apac.vendor.future-model:1',
+          type: 'SYSTEM_DEFINED',
+          status: 'ACTIVE',
+        },
+        // Chat-only is published; Converse-only is not.
+        {
+          inferenceProfileId: 'us.moonshotai.kimi-k2.5',
+          type: 'SYSTEM_DEFINED',
+          status: 'ACTIVE',
+          models: [
+            {
+              modelArn: 'arn:aws:bedrock:us-east-1::foundation-model/moonshotai.kimi-k2.5',
+            },
+          ],
+        },
+        {
+          inferenceProfileId: 'us.moonshotai.kimi-k2-thinking',
           type: 'SYSTEM_DEFINED',
           status: 'ACTIVE',
         },
@@ -317,12 +334,19 @@ describe('ProviderModelFetcherService', () => {
         'moonshotai.kimi-k3',
         'us.openai.gpt-6-sol',
         'global.moonshotai.kimi-k3',
-        'us.anthropic.claude-x',
-        'eu.vendor.future-model:1',
-        'apac.vendor.future-model:1',
+        'us.moonshotai.kimi-k2.5',
         'global.openai.gpt-6-astra',
       ]);
       expect(result.every((m) => m.provider === 'bedrock')).toBe(true);
+      expect(result.find((m) => m.id === 'us.openai.gpt-6-sol')?.supportedEndpoints).toEqual([
+        '/v1/chat/completions',
+        '/v1/responses',
+      ]);
+      expect(result.find((m) => m.id === 'us.moonshotai.kimi-k2.5')?.supportedEndpoints).toEqual([
+        '/v1/chat/completions',
+      ]);
+      expect(result.some((m) => m.id === 'us.moonshotai.kimi-k2-thinking')).toBe(false);
+      expect(result.some((m) => m.id === 'us.anthropic.claude-x')).toBe(false);
     });
 
     it('keeps CRIS profiles when Mantle fails', async () => {
@@ -345,6 +369,42 @@ describe('ProviderModelFetcherService', () => {
       const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
 
       expect(result.map((m) => m.id)).toEqual(['openai.gpt-6-sol', 'moonshotai.kimi-k3']);
+    });
+
+    it('preserves only safe cached Runtime profiles when the control plane fails', async () => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (url.includes('bedrock-mantle')) return respond(mantleBody);
+        throw new Error('network down');
+      });
+      const cached = (id: string): DiscoveredModel => ({
+        id,
+        displayName: id,
+        provider: 'bedrock',
+        contextWindow: 128000,
+        inputPricePerToken: 0.000001,
+        outputPricePerToken: 0.000002,
+        capabilityReasoning: false,
+        capabilityCode: false,
+        qualityScore: 3,
+      });
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key', undefined, {
+        previousModels: [
+          cached('global.openai.gpt-6-sol'),
+          cached('us.moonshotai.kimi-k2-thinking'),
+          cached('eu.vendor.future-model:1'),
+        ],
+      });
+
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'moonshotai.kimi-k3',
+        'global.openai.gpt-6-sol',
+      ]);
+      expect(result[2]).toMatchObject({
+        inputPricePerToken: 0.000001,
+        supportedEndpoints: ['/v1/chat/completions', '/v1/responses'],
+      });
     });
   });
 
