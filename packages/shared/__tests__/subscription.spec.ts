@@ -228,9 +228,16 @@ describe('getSubscriptionProviderConfig', () => {
     });
   });
 
-  it('does not publish a hardcoded known-models list for opencode-go', () => {
+  it('publishes the curated OpenCode Go subscription models', () => {
     const config = getSubscriptionProviderConfig('opencode-go');
-    expect(config?.knownModels).toBeUndefined();
+    expect(config?.knownModels).toEqual(
+      expect.arrayContaining([
+        'opencode-go/deepseek-flash',
+        'opencode-go/grok-4.7',
+        'opencode-go/gpt-6-luna',
+        'opencode-go/longcat-2.5-preview-free',
+      ]),
+    );
   });
 
   it('returns config for xai', () => {
@@ -420,8 +427,16 @@ describe('getSubscriptionKnownModels', () => {
     expect(models).toContain('glm-4.7');
   });
 
-  it('returns null for opencode-go (dynamic catalog, no hardcoded list)', () => {
-    expect(getSubscriptionKnownModels('opencode-go')).toBeNull();
+  it('returns known models for opencode-go', () => {
+    const models = getSubscriptionKnownModels('opencode-go');
+    expect(models).toEqual(
+      expect.arrayContaining([
+        'opencode-go/deepseek-v4.1-flash',
+        'opencode-go/muse-spark-1.3-contributor',
+        'opencode-go/mimo-v2.6-flash',
+        'opencode-go/mimo-v2.6-pro',
+      ]),
+    );
   });
 
   it('returns known models for gemini', () => {
@@ -477,6 +492,10 @@ describe('getSubscriptionKnownModelsMatch', () => {
 
   it('returns exact for Xiaomi MiMo Token Plan', () => {
     expect(getSubscriptionKnownModelsMatch('xiaomi')).toBe('exact');
+  });
+
+  it('returns exact for OpenCode Go', () => {
+    expect(getSubscriptionKnownModelsMatch('opencode-go')).toBe('exact');
   });
 
   it('returns prefix for Qwen Token Plan (no hardcoded known-model matching)', () => {

@@ -229,6 +229,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     knownModels: Object.freeze([
       'glm-5.3',
       'glm-5.3-flash',
+      'glm-5.3-flashx',
       'glm-5.2',
       'glm-5.1',
       'glm-5-turbo',
@@ -250,8 +251,19 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionLabel: 'OpenCode Go (beta)',
     subscriptionAuthMode: 'token' as const,
     subscriptionKeyPlaceholder: 'Paste your OpenCode API key',
-    // Model list is discovered from OpenCode Go's live /models endpoint; models.dev
-    // and the docs catalog provide metadata, quota cost, and fallback data.
+    knownModels: Object.freeze([
+      'opencode-go/deepseek-flash',
+      'opencode-go/deepseek-v4.1-flash',
+      'opencode-go/grok-4.7',
+      'opencode-go/muse-spark-1.3-contributor',
+      'opencode-go/omen-alpha',
+      'opencode-go/gpt-6-luna',
+      'opencode-go/mimo-v2.6-flash',
+      'opencode-go/mimo-v2.6-pro',
+      'opencode-go/space-bunny-free',
+      'opencode-go/longcat-2.5-preview-free',
+    ]),
+    knownModelsMatch: 'exact' as const,
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 200000,
       supportsPromptCaching: false,
