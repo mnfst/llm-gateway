@@ -15,13 +15,18 @@ import type { Logger } from '@nestjs/common';
 import {
   buildCustomEndpoint,
   buildEndpointOverride,
+  isBedrockRuntimeModel,
   resolveBedrockEndpointKey,
   resolveEndpointKey,
   type ProviderEndpoint,
 } from './provider-endpoints';
 import { CustomProviderService } from '../custom-provider/custom-provider.service';
 import { normalizeMinimaxSubscriptionBaseUrl } from '../provider-base-url';
-import { getBedrockMantleBaseUrl, isBedrockRegion } from '../bedrock-region';
+import {
+  getBedrockMantleBaseUrl,
+  getBedrockRuntimeBaseUrl,
+  isBedrockRegion,
+} from '../bedrock-region';
 import { getVertexBaseUrl, parseVertexDeployment } from '../vertex-deployment';
 import { MINIMAX_BASE_URLS } from '../oauth/minimax/minimax-oauth-helpers';
 import { getQwenCompatibleBaseUrl, isQwenResolvedEndpoint } from '../qwen-region';
@@ -57,6 +62,11 @@ export interface ResolveForwardEndpointParams {
   customProvider?: CustomProviderEndpointConfig | null;
   /** Optional logger for invalid-input warnings (matches proxy behaviour). */
   logger?: Pick<Logger, 'warn'>;
+  /**
+   * Public API the client called (`chat_completions`, `responses`, ...). Only
+   * Bedrock Runtime uses it, to keep each API on its native Runtime path.
+   */
+  apiMode?: string;
 }
 
 export interface ResolvedForwardEndpoint {
@@ -74,7 +84,16 @@ export interface ResolvedForwardEndpoint {
 export function resolveForwardEndpoint(
   params: ResolveForwardEndpointParams,
 ): ResolvedForwardEndpoint {
-  const { provider, authType, model, providerRegion, resourceUrl, customProvider, logger } = params;
+  const {
+    provider,
+    authType,
+    model,
+    providerRegion,
+    resourceUrl,
+    customProvider,
+    logger,
+    apiMode,
+  } = params;
   const lower = provider.toLowerCase();
   let forwardModel = model;
   let customEndpoint: ProviderEndpoint | undefined;
@@ -122,8 +141,10 @@ export function resolveForwardEndpoint(
     }
   } else if (resolveEndpointKey(provider) === 'bedrock' && isBedrockRegion(providerRegion)) {
     customEndpoint = buildEndpointOverride(
-      getBedrockMantleBaseUrl(providerRegion),
-      resolveBedrockEndpointKey(model),
+      isBedrockRuntimeModel(model)
+        ? getBedrockRuntimeBaseUrl(providerRegion)
+        : getBedrockMantleBaseUrl(providerRegion),
+      resolveBedrockEndpointKey(model, apiMode),
     );
   } else if (resolveEndpointKey(provider) === 'vertex' && vertexDeployment) {
     // Connections that carry `project/location` address Vertex the way Google

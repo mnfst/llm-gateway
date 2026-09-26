@@ -171,6 +171,37 @@ describe('resolveForwardEndpoint', () => {
     expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/v1/chat/completions');
   });
 
+  it('routes a CRIS profile to Bedrock Runtime Chat Completions in the selected region', () => {
+    const out = resolveForwardEndpoint({
+      provider: 'bedrock',
+      authType: 'api_key',
+      model: 'global.moonshotai.kimi-k3',
+      providerRegion: 'us-west-2',
+    });
+    expect(out.forwardModel).toBe('global.moonshotai.kimi-k3');
+    expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-runtime.us-west-2.amazonaws.com');
+    expect(out.customEndpoint?.format).toBe('openai');
+    expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/openai/v1/chat/completions');
+    // The region override keeps the Runtime max_completion_tokens rule.
+    expect(out.customEndpoint?.maxCompletionTokensModels?.test('us.openai.gpt-6-sol')).toBe(true);
+    expect(out.customEndpoint?.maxCompletionTokensModels?.test('global.moonshotai.kimi-k3')).toBe(
+      false,
+    );
+  });
+
+  it('routes a CRIS profile to Bedrock Runtime Responses when the request is Responses', () => {
+    const out = resolveForwardEndpoint({
+      provider: 'bedrock',
+      authType: 'api_key',
+      model: 'us.openai.gpt-6-sol',
+      providerRegion: 'us-east-1',
+      apiMode: 'responses',
+    });
+    expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(out.customEndpoint?.format).toBe('chatgpt');
+    expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/openai/v1/responses');
+  });
+
   it('leaves Vertex on the express base URL when no deployment is stored', () => {
     const out = resolveForwardEndpoint({
       provider: 'vertex',
@@ -222,6 +253,19 @@ describe('resolveForwardEndpoint', () => {
     });
 
     expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-mantle.us-west-2.api.aws');
+    expect(out.customEndpoint?.format).toBe('chatgpt');
+    expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/openai/v1/responses');
+  });
+
+  it('keeps the selected Bedrock region for GPT-6 Responses models', () => {
+    const out = resolveForwardEndpoint({
+      provider: 'bedrock',
+      authType: 'api_key',
+      model: 'openai.gpt-6-luna',
+      providerRegion: 'us-east-1',
+    });
+
+    expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-mantle.us-east-1.api.aws');
     expect(out.customEndpoint?.format).toBe('chatgpt');
     expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/openai/v1/responses');
   });

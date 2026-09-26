@@ -703,6 +703,7 @@ describe('ProviderClient', () => {
       'openai.gpt-5.6-sol',
       'openai.gpt-5.6-terra',
       'openai.gpt-5.6-luna',
+      'openai.gpt-6-luna',
     ])('routes Bedrock %s through the namespaced Responses API', async (model) => {
       mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 

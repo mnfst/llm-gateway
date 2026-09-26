@@ -2,6 +2,7 @@ import {
   createReasoningContentStreamTransformer,
   sanitizeOpenAiBody,
 } from '../provider-client-converters';
+import { PROVIDER_ENDPOINTS } from '../provider-endpoints';
 
 describe('provider-client-converters', () => {
   describe('sanitizeOpenAiBody', () => {
@@ -997,6 +998,63 @@ describe('provider-client-converters', () => {
 
       expect(result).toHaveProperty('max_tokens', 2048);
       expect(result).not.toHaveProperty('max_completion_tokens');
+    });
+
+    /* ── Bedrock Runtime: GPT CRIS profiles only accept max_completion_tokens ── */
+
+    const runtimeOptions = {
+      maxCompletionTokensModels: PROVIDER_ENDPOINTS['bedrock-runtime'].maxCompletionTokensModels,
+    };
+
+    // Region overrides forward through the `custom` key; the rule travels with the endpoint.
+    it.each([
+      ['bedrock-runtime', 'us.openai.gpt-6-sol'],
+      ['custom', 'global.openai.gpt-6-astra'],
+    ])('converts max_tokens to max_completion_tokens (%s, %s)', (endpointKey, model) => {
+      const result = sanitizeOpenAiBody(
+        { messages: [], max_tokens: 300 },
+        endpointKey,
+        model,
+        runtimeOptions,
+      );
+
+      expect(result).toHaveProperty('max_completion_tokens', 300);
+      expect(result).not.toHaveProperty('max_tokens');
+    });
+
+    it('keeps max_completion_tokens for Bedrock Runtime GPT profiles', () => {
+      const result = sanitizeOpenAiBody(
+        { messages: [], max_completion_tokens: 300 },
+        'custom',
+        'us.openai.gpt-6-luna',
+        runtimeOptions,
+      );
+
+      expect(result).toHaveProperty('max_completion_tokens', 300);
+      expect(result).not.toHaveProperty('max_tokens');
+    });
+
+    it('keeps max_tokens for Bedrock Runtime Kimi K3', () => {
+      const result = sanitizeOpenAiBody(
+        { messages: [], max_tokens: 300 },
+        'custom',
+        'global.moonshotai.kimi-k3',
+        runtimeOptions,
+      );
+
+      expect(result).toHaveProperty('max_tokens', 300);
+      expect(result).not.toHaveProperty('max_completion_tokens');
+    });
+
+    it('does not rewrite max_tokens for Bedrock Mantle GPT models', () => {
+      const result = sanitizeOpenAiBody(
+        { messages: [], max_tokens: 300 },
+        'custom',
+        'openai.gpt-6-sol',
+        { maxCompletionTokensModels: PROVIDER_ENDPOINTS.bedrock.maxCompletionTokensModels },
+      );
+
+      expect(result).toHaveProperty('max_tokens', 300);
     });
 
     /* ── Copilot: max_tokens → max_completion_tokens (mnfst/llm-gateway#1849) ── */

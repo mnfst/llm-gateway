@@ -555,7 +555,7 @@ export class ProviderClient {
       if (override) resolved = override;
     }
     if (resolved === 'bedrock') {
-      resolved = resolveBedrockEndpointKey(model);
+      resolved = resolveBedrockEndpointKey(model, apiMode);
     }
     if (resolved === 'qwen-subscription') {
       const bareQwenModel = stripVendorPrefix(model);
@@ -878,7 +878,9 @@ export class ProviderClient {
     }
 
     // OpenAI-compatible path (default)
-    const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model);
+    const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model, {
+      maxCompletionTokensModels: endpoint.maxCompletionTokensModels,
+    });
     if (stream && endpoint.streamUsageReporting === 'openai_stream_options') {
       const existing =
         typeof sanitized.stream_options === 'object' && sanitized.stream_options !== null

@@ -17,7 +17,24 @@ import {
 } from '../common/constants/subscription-clients';
 import { normalizeMinimaxSubscriptionBaseUrl } from '../routing/provider-base-url';
 import { getQwenCompatibleBaseUrl, normalizeQwenCompatibleBaseUrl } from '../routing/qwen-region';
-import { getBedrockMantleBaseUrl, normalizeBedrockMantleBaseUrl } from '../routing/bedrock-region';
+import {
+  bedrockRegionFromMantleBaseUrl,
+  getBedrockControlPlaneBaseUrl,
+  getBedrockMantleBaseUrl,
+  isBedrockRuntimeModel,
+  normalizeBedrockMantleBaseUrl,
+} from '../routing/bedrock-region';
+
+const BEDROCK_PROFILE_MAX_PAGES = 10;
+
+interface BedrockInferenceProfilesResponse {
+  inferenceProfileSummaries?: Array<{
+    inferenceProfileId?: unknown;
+    type?: unknown;
+    status?: unknown;
+  }>;
+  nextToken?: unknown;
+}
 import {
   getXiaomiTokenPlanBaseUrl,
   normalizeXiaomiTokenPlanBaseUrl,
@@ -1181,6 +1198,30 @@ export class ProviderModelFetcherService {
 
     const headers = config.buildHeaders(apiKey, authType);
 
+    if (configKey === 'bedrock') {
+      // Mantle `/v1/models` never lists Cross-Region inference profiles, so the
+      // CRIS profiles served by Bedrock Runtime come from the control plane.
+      // Each source fails independently.
+      const region = bedrockRegionFromMantleBaseUrl(url);
+      const [mantleModels, runtimeModels] = await Promise.all([
+        this.fetchModelList(url, headers, config, apiKey, providerId, configKey),
+        this.fetchBedrockRuntimeProfiles(apiKey, region, providerId),
+      ]);
+      const seen = new Set(mantleModels.map((m) => m.id));
+      return [...mantleModels, ...runtimeModels.filter((m) => !seen.has(m.id))];
+    }
+
+    return this.fetchModelList(url, headers, config, apiKey, providerId, configKey);
+  }
+
+  private async fetchModelList(
+    url: string,
+    headers: Record<string, string>,
+    config: FetcherConfig,
+    apiKey: string,
+    providerId: string,
+    configKey: string,
+  ): Promise<DiscoveredModel[]> {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -1205,6 +1246,63 @@ export class ProviderModelFetcherService {
       this.logger.warn(`Failed to fetch models from ${providerId}: ${message}`);
       return [];
     }
+  }
+
+  /**
+   * Lists active system-defined geographic inference profiles routed to Bedrock
+   * Runtime via `ListInferenceProfiles`, authenticated with the same API key.
+   * Model families are accepted optimistically; the requested Runtime API is
+   * authoritative for compatibility.
+   */
+  private async fetchBedrockRuntimeProfiles(
+    apiKey: string,
+    region: string | null,
+    providerId: string,
+  ): Promise<DiscoveredModel[]> {
+    const baseUrl = `${getBedrockControlPlaneBaseUrl(region)}/inference-profiles`;
+    const ids = new Set<string>();
+    let nextToken: string | undefined;
+    let pages = 0;
+
+    try {
+      do {
+        const params = new URLSearchParams({ maxResults: '1000', type: 'SYSTEM_DEFINED' });
+        if (nextToken) params.set('nextToken', nextToken);
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+        const res = await fetch(`${baseUrl}?${params.toString()}`, {
+          headers: bearerHeaders(apiKey),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+
+        if (!res.ok) {
+          this.logger.warn(`Provider ${providerId} returned ${res.status} from ${baseUrl}`);
+          break;
+        }
+
+        const body = (await res.json()) as BedrockInferenceProfilesResponse;
+        for (const profile of body.inferenceProfileSummaries ?? []) {
+          const id = profile.inferenceProfileId;
+          if (
+            typeof id === 'string' &&
+            profile.type === 'SYSTEM_DEFINED' &&
+            profile.status === 'ACTIVE' &&
+            isBedrockRuntimeModel(id)
+          ) {
+            ids.add(id);
+          }
+        }
+        const token = typeof body.nextToken === 'string' ? body.nextToken : undefined;
+        nextToken = token && token !== nextToken ? token : undefined;
+        pages++;
+      } while (nextToken && pages < BEDROCK_PROFILE_MAX_PAGES);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to fetch Bedrock inference profiles: ${message}`);
+    }
+
+    return parseOpenAI({ data: [...ids].map((id) => ({ id })) }, providerId);
   }
 
   private async fetchFireworksModels(

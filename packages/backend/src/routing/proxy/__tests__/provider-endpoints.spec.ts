@@ -232,22 +232,64 @@ describe('resolveEndpointKey', () => {
 });
 
 describe('resolveBedrockEndpointKey', () => {
-  it.each(['openai.gpt-5.6-luna', 'us.openai.gpt-5.6-luna', 'bedrock/openai.gpt-5.6-luna'])(
-    'routes %s through Responses',
+  it.each(['openai.gpt-5.6-luna', 'bedrock/openai.gpt-5.6-luna'])(
+    'routes base model %s through Mantle Responses',
     (model) => {
       expect(resolveBedrockEndpointKey(model)).toBe('bedrock-responses');
     },
   );
 
-  it.each(['anthropic.claude-sonnet-5', 'us.anthropic.claude-sonnet-5'])(
-    'routes %s through Messages',
-    (model) => {
-      expect(resolveBedrockEndpointKey(model)).toBe('bedrock-anthropic');
-    },
-  );
+  it('routes base Anthropic models through Messages', () => {
+    expect(resolveBedrockEndpointKey('anthropic.claude-sonnet-5')).toBe('bedrock-anthropic');
+  });
 
   it('keeps other Bedrock model families on Chat Completions', () => {
     expect(resolveBedrockEndpointKey('mistral.ministral-3-8b-instruct')).toBe('bedrock');
+  });
+
+  it.each([
+    'us.openai.gpt-6-astra',
+    'global.openai.gpt-6-sol',
+    'us.openai.gpt-5.6-luna',
+    'us.openai.gpt-6-luna',
+    'global.moonshotai.kimi-k3',
+    'bedrock/us.moonshotai.kimi-k3',
+    'us.anthropic.claude-sonnet-5',
+    'eu.vendor.future-model:1',
+    'apac.vendor.future-model:1',
+  ])('routes CRIS profile %s optimistically to Bedrock Runtime', (model) => {
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'chat')).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'responses')).toBe('bedrock-runtime-responses');
+  });
+
+  it('does not treat base IDs or unknown scopes as Runtime profiles', () => {
+    expect(resolveBedrockEndpointKey('vendor.future-model')).toBe('bedrock');
+    expect(resolveBedrockEndpointKey('ca.vendor.future-model')).toBe('bedrock');
+    expect(resolveBedrockEndpointKey('global.')).toBe('bedrock');
+  });
+
+  it('keeps non-profile base IDs off Bedrock Runtime', () => {
+    expect(resolveBedrockEndpointKey('openai.gpt-6-sol')).toBe('bedrock-responses');
+    expect(resolveBedrockEndpointKey('moonshotai.kimi-k3')).toBe('bedrock');
+    expect(resolveBedrockEndpointKey('anthropic.claude-sonnet-5')).toBe('bedrock-anthropic');
+  });
+});
+
+describe('Bedrock Runtime endpoints', () => {
+  it('serves native Chat Completions under /openai/v1', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('openai');
+    expect(ep.buildPath('global.moonshotai.kimi-k3')).toBe('/openai/v1/chat/completions');
+    expect(ep.buildHeaders('ABSK-test').Authorization).toBe('Bearer ABSK-test');
+  });
+
+  it('serves native Responses under /openai/v1', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime-responses'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('chatgpt');
+    expect(ep.buildPath('us.openai.gpt-6-sol')).toBe('/openai/v1/responses');
   });
 });
 
@@ -264,11 +306,19 @@ describe('PROVIDER_ENDPOINTS', () => {
     'openai.gpt-5.99-future',
     'us.openai.gpt-5.6-luna',
     'bedrock/openai.gpt-5.6-luna',
+    'openai.gpt-6-sol',
+    'openai.gpt-6-luna',
+    'us.openai.gpt-6-luna',
+    'bedrock/openai.gpt-6-luna',
+    'openai.gpt-7-sol',
+    // The old literal GPT-5 matcher treated GPT-50 as an over-match. Numeric comparison
+    // correctly treats a hypothetical GPT-50 as generation 50, which uses this surface.
+    'openai.gpt-50',
   ])('uses the namespaced Bedrock Responses path for %s', (model) => {
     expect(PROVIDER_ENDPOINTS['bedrock-responses'].buildPath(model)).toBe('/openai/v1/responses');
   });
 
-  it.each(['openai.gpt-oss-120b', 'openai.gpt-50'])(
+  it.each(['openai.gpt-oss-120b', 'openai.gpt-6x', 'openai.o5-mini'])(
     'keeps non-GPT-5 Bedrock model %s on the generic Responses path',
     (model) => {
       expect(PROVIDER_ENDPOINTS['bedrock-responses'].buildPath(model)).toBe('/v1/responses');

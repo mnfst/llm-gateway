@@ -13,7 +13,11 @@ import {
   buildClaudeCodeSubscriptionHeaders,
 } from '../../common/constants/subscription-clients';
 import { normalizeProviderBaseUrl } from '../provider-base-url';
-import { getBedrockMantleBaseUrl } from '../bedrock-region';
+import {
+  getBedrockMantleBaseUrl,
+  getBedrockRuntimeBaseUrl,
+  isBedrockRuntimeModel,
+} from '../bedrock-region';
 import { getQwenCompatibleBaseUrl } from '../qwen-region';
 import { getXiaomiTokenPlanBaseUrl } from '../xiaomi-region';
 import { getZaiCodingPlanBaseUrl } from '../zai-region';
@@ -64,6 +68,8 @@ export interface ProviderEndpoint {
   forwardResponsesStream?: boolean;
   /** Map Chat Completions token caps to `max_output_tokens`. */
   acceptsMaxOutputTokens?: boolean;
+  /** Models (bare id) that reject `max_tokens` and only accept `max_completion_tokens`. */
+  maxCompletionTokensModels?: RegExp;
 }
 
 const openaiStreamUsage = { streamUsageReporting: 'openai_stream_options' as const };
@@ -80,15 +86,39 @@ const pioneerHeaders = (apiKey: string) => ({
 
 const openaiPath = () => '/v1/chat/completions';
 const BEDROCK_OPENAI_MODEL_RE = /(?:^|\.)openai\./i;
-const BEDROCK_GPT_5_MODEL_RE = /(?:^|\.)openai\.gpt-5(?:[.-]|$)/i;
+// Bedrock OpenAI GPT generations 5 and later use the namespaced Responses API. Keep the
+// threshold centralized so the narrow fixes in #2682 and #2701 do not recur (see #2991).
+const BEDROCK_NAMESPACED_RESPONSES_MIN_GENERATION = 5;
+const BEDROCK_OPENAI_GPT_GENERATION_RE = /(?:^|\.)openai\.gpt-(\d+)(?:[.-]|$)/i;
 const BEDROCK_ANTHROPIC_MODEL_RE = /(?:^|\.)anthropic\./i;
 
+const bedrockUsesNamespacedResponses = (model: string): boolean => {
+  const generationMatch = BEDROCK_OPENAI_GPT_GENERATION_RE.exec(stripVendorPrefix(model));
+  if (!generationMatch) return false;
+
+  const generation = Number.parseInt(generationMatch[1], 10);
+  return generation >= BEDROCK_NAMESPACED_RESPONSES_MIN_GENERATION;
+};
+
 const bedrockResponsesPath = (model: string) =>
-  BEDROCK_GPT_5_MODEL_RE.test(stripVendorPrefix(model)) ? '/openai/v1/responses' : '/v1/responses';
+  bedrockUsesNamespacedResponses(model) ? '/openai/v1/responses' : '/v1/responses';
+
+export { isBedrockRuntimeModel };
 
 export function resolveBedrockEndpointKey(
   model: string,
-): 'bedrock' | 'bedrock-responses' | 'bedrock-anthropic' {
+  apiMode?: string,
+):
+  | 'bedrock'
+  | 'bedrock-responses'
+  | 'bedrock-anthropic'
+  | 'bedrock-runtime'
+  | 'bedrock-runtime-responses' {
+  if (isBedrockRuntimeModel(model)) {
+    // Runtime speaks both APIs natively: Responses stays Responses and Chat
+    // Completions stays Chat Completions (no conversion, prompt caching kept).
+    return apiMode === 'responses' ? 'bedrock-runtime-responses' : 'bedrock-runtime';
+  }
   const bareModel = stripVendorPrefix(model);
   if (BEDROCK_OPENAI_MODEL_RE.test(bareModel)) return 'bedrock-responses';
   if (BEDROCK_ANTHROPIC_MODEL_RE.test(bareModel)) return 'bedrock-anthropic';
@@ -207,6 +237,23 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     baseUrl: getBedrockMantleBaseUrl(),
     buildHeaders: openaiHeaders,
     buildPath: bedrockResponsesPath,
+    format: 'chatgpt',
+    forwardResponsesStream: true,
+    acceptsMaxOutputTokens: true,
+  },
+  'bedrock-runtime': {
+    baseUrl: getBedrockRuntimeBaseUrl(),
+    buildHeaders: openaiHeaders,
+    buildPath: () => '/openai/v1/chat/completions',
+    format: 'openai',
+    // GPT CRIS profiles answer 400 "Unsupported parameter: 'max_tokens'".
+    maxCompletionTokensModels: /(?:^|\.)openai\.gpt-/i,
+    ...openaiStreamUsage,
+  },
+  'bedrock-runtime-responses': {
+    baseUrl: getBedrockRuntimeBaseUrl(),
+    buildHeaders: openaiHeaders,
+    buildPath: () => '/openai/v1/responses',
     format: 'chatgpt',
     forwardResponsesStream: true,
     acceptsMaxOutputTokens: true,

@@ -45,6 +45,48 @@ export function getBedrockMantleBaseUrl(region?: string | null): string {
   return `https://bedrock-mantle.${resolved}.api.aws`;
 }
 
+/**
+ * Cross-Region inference profiles served by Bedrock Runtime. The model family
+ * is intentionally unrestricted: ListInferenceProfiles is the authority for
+ * discovery, while this syntax check also supports explicit profile IDs.
+ *
+ * Geographic profile scopes documented by Bedrock are Global, US, EU and
+ * APAC. API compatibility is optimistic: the caller's API mode is preserved
+ * and Bedrock returns the authoritative unsupported-API error when necessary.
+ */
+const BEDROCK_RUNTIME_CRIS_RE = /^(?:global|us|eu|apac)\.[a-z0-9][a-z0-9:._-]*$/i;
+
+/** True when the model is a CRIS profile that must be sent to Bedrock Runtime. */
+export function isBedrockRuntimeModel(model: string): boolean {
+  const slash = model.indexOf('/');
+  const bare = slash > 0 ? model.substring(slash + 1) : model;
+  return BEDROCK_RUNTIME_CRIS_RE.test(bare);
+}
+
+/**
+ * Bedrock Runtime host. Cross-Region inference (CRIS) profiles such as
+ * `global.moonshotai.kimi-k3` are only served here — Mantle answers 404 for
+ * them. The OpenAI-compatible surface lives under `/openai/v1` on this host.
+ */
+export function getBedrockRuntimeBaseUrl(region?: string | null): string {
+  const resolved = isBedrockRegion(region) ? region : DEFAULT_BEDROCK_REGION;
+  return `https://bedrock-runtime.${resolved}.amazonaws.com`;
+}
+
+/** Bedrock control-plane host (`ListInferenceProfiles`), authenticated with the same API key. */
+export function getBedrockControlPlaneBaseUrl(region?: string | null): string {
+  const resolved = isBedrockRegion(region) ? region : DEFAULT_BEDROCK_REGION;
+  return `https://bedrock.${resolved}.amazonaws.com`;
+}
+
+/** Extract the region from a Mantle base URL (`https://bedrock-mantle.<region>.api.aws`). */
+export function bedrockRegionFromMantleBaseUrl(baseUrl: string | null | undefined): string | null {
+  if (!baseUrl) return null;
+  const match = /bedrock-mantle\.([a-z0-9-]+)\.api\.aws/i.exec(baseUrl);
+  const region = match?.[1]?.toLowerCase();
+  return isBedrockRegion(region) ? region : null;
+}
+
 export function normalizeBedrockMantleBaseUrl(baseUrl: string): string | null {
   const normalized = normalizeProviderBaseUrl(baseUrl);
   try {

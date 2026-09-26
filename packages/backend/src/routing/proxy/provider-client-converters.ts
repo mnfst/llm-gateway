@@ -146,7 +146,17 @@ const OPENAI_MAX_COMPLETION_TOKENS_RE = /^(o\d|gpt-5)/i;
  */
 const OPENAI_MAX_COMPLETION_TOKENS_ENDPOINTS = new Set(['openai', 'copilot']);
 
-function usesOpenAiMaxCompletionTokens(endpointKey: string, bareModel: string): boolean {
+export interface SanitizeOpenAiBodyOptions {
+  /** Endpoint-declared models that only accept `max_completion_tokens`. */
+  maxCompletionTokensModels?: RegExp;
+}
+
+function usesOpenAiMaxCompletionTokens(
+  endpointKey: string,
+  bareModel: string,
+  options?: SanitizeOpenAiBodyOptions,
+): boolean {
+  if (options?.maxCompletionTokensModels?.test(bareModel)) return true;
   return (
     OPENAI_MAX_COMPLETION_TOKENS_ENDPOINTS.has(endpointKey) &&
     OPENAI_MAX_COMPLETION_TOKENS_RE.test(bareModel)
@@ -322,12 +332,17 @@ export function sanitizeOpenAiBody(
   body: Record<string, unknown>,
   endpointKey: string,
   model: string,
+  options?: SanitizeOpenAiBodyOptions,
 ): Record<string, unknown> {
   const passthroughTopLevel = PASSTHROUGH_PROVIDERS.has(endpointKey);
 
   // Strip vendor prefix (e.g., "openai/gpt-5" → "gpt-5") before matching.
   const bareForRegex = model.includes('/') ? model.substring(model.indexOf('/') + 1) : model;
-  const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
+  const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(
+    endpointKey,
+    bareForRegex,
+    options,
+  );
   const convertMaxTokens =
     needsMaxCompletionTokens && 'max_tokens' in body && !('max_completion_tokens' in body);
   // NVIDIA Nemotron hosts (reached through the OpenRouter passthrough) reject the

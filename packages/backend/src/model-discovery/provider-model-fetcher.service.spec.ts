@@ -247,6 +247,107 @@ describe('ProviderModelFetcherService', () => {
     expect(result.map((m) => m.id)).toEqual(['mistral.ministral-3-8b-instruct']);
   });
 
+  describe('AWS Bedrock Runtime CRIS profiles', () => {
+    const mantleBody = { data: [{ id: 'openai.gpt-6-sol' }, { id: 'moonshotai.kimi-k3' }] };
+    const profilesPage1 = {
+      inferenceProfileSummaries: [
+        { inferenceProfileId: 'us.openai.gpt-6-sol', type: 'SYSTEM_DEFINED', status: 'ACTIVE' },
+        {
+          inferenceProfileId: 'global.moonshotai.kimi-k3',
+          type: 'SYSTEM_DEFINED',
+          status: 'ACTIVE',
+        },
+        // A different vendor and geography must be accepted optimistically.
+        { inferenceProfileId: 'us.anthropic.claude-x', type: 'SYSTEM_DEFINED', status: 'ACTIVE' },
+        {
+          inferenceProfileId: 'eu.vendor.future-model:1',
+          type: 'SYSTEM_DEFINED',
+          status: 'ACTIVE',
+        },
+        {
+          inferenceProfileId: 'apac.vendor.future-model:1',
+          type: 'SYSTEM_DEFINED',
+          status: 'ACTIVE',
+        },
+        // Inactive profile.
+        { inferenceProfileId: 'us.openai.gpt-6-luna', type: 'SYSTEM_DEFINED', status: 'LEGACY' },
+      ],
+      nextToken: 'page-2',
+    };
+    const profilesPage2 = {
+      inferenceProfileSummaries: [
+        {
+          inferenceProfileId: 'global.openai.gpt-6-astra',
+          type: 'SYSTEM_DEFINED',
+          status: 'ACTIVE',
+        },
+      ],
+    };
+
+    const respond = (body: unknown, ok = true, status = 200) => ({
+      ok,
+      status,
+      json: async () => body,
+    });
+
+    it('merges Mantle models with the CRIS profiles from the control plane', async () => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (url.includes('bedrock-mantle')) return respond(mantleBody);
+        if (url.includes('nextToken=page-2')) return respond(profilesPage2);
+        return respond(profilesPage1);
+      });
+
+      const result = await service.fetch(
+        'bedrock',
+        'ABSK-test',
+        'api_key',
+        'https://bedrock-mantle.us-west-2.api.aws',
+      );
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringMatching(
+          /^https:\/\/bedrock\.us-west-2\.amazonaws\.com\/inference-profiles\?.*maxResults=1000/,
+        ),
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer ABSK-test' }),
+        }),
+      );
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'moonshotai.kimi-k3',
+        'us.openai.gpt-6-sol',
+        'global.moonshotai.kimi-k3',
+        'us.anthropic.claude-x',
+        'eu.vendor.future-model:1',
+        'apac.vendor.future-model:1',
+        'global.openai.gpt-6-astra',
+      ]);
+      expect(result.every((m) => m.provider === 'bedrock')).toBe(true);
+    });
+
+    it('keeps CRIS profiles when Mantle fails', async () => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (url.includes('bedrock-mantle')) return respond({}, false, 500);
+        return respond(profilesPage2);
+      });
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual(['global.openai.gpt-6-astra']);
+    });
+
+    it('keeps Mantle models when the control plane fails', async () => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (url.includes('bedrock-mantle')) return respond(mantleBody);
+        throw new Error('network down');
+      });
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual(['openai.gpt-6-sol', 'moonshotai.kimi-k3']);
+    });
+  });
+
   it('should fetch Cerebras models from the OpenAI-compatible models endpoint', async () => {
     fetchSpy.mockResolvedValue({
       ok: true,
