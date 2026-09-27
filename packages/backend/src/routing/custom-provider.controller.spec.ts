@@ -320,20 +320,24 @@ describe('CustomProviderController', () => {
     it('decrypts the stored key under the resolved tenant when provider_id is sent without apiKey', async () => {
       // Edit-mode: the form has no plaintext key, so it forwards provider_id
       // and the controller looks up the stored key scoped to the resolved
-      // tenant_id — a forged provider_id can't reach another tenant's row.
+      // tenant_id. The submitted base_url + api_kind go along so the service
+      // can refuse to release the key for any other endpoint.
       mockCustomProviderService.loadStoredApiKey.mockResolvedValue('sk-stored');
       await controller.probe(mockCtx, 'test-agent', {
         base_url: 'http://host.docker.internal:8000/v1',
+        api_kind: 'anthropic',
         provider_id: 'cp-edit-id',
       } as never);
       expect(mockCustomProviderService.loadStoredApiKey).toHaveBeenCalledWith(
         'tenant-1',
         'cp-edit-id',
+        'http://host.docker.internal:8000/v1',
+        'anthropic',
       );
       expect(mockCustomProviderService.probeModels).toHaveBeenCalledWith(
         'http://host.docker.internal:8000/v1',
         'sk-stored',
-        undefined,
+        'anthropic',
         undefined,
       );
     });

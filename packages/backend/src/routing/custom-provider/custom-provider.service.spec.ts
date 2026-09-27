@@ -1318,14 +1318,23 @@ describe('CustomProviderService', () => {
     // Edit-page bug repro: opening an existing API-key custom provider and
     // clicking "Fetch models" without re-typing the key sent an unauth'd
     // probe (the form never has the plaintext key — list() only returns
-    // has_api_key:bool). Server then 401'd from the upstream. Fix: the
-    // controller now decrypts the stored key via loadStoredApiKey() when
-    // the caller forwards a provider_id, before calling probeModels().
+    // has_api_key:bool). The controller now asks loadStoredApiKey() for the
+    // stored key, which is only released for the provider's own endpoint.
     describe('loadStoredApiKey', () => {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { encrypt, getEncryptionSecret } = require('../../common/utils/crypto.util');
+      const BASE = 'http://host.docker.internal:8000/v1';
+      const cpRow = (overrides: Partial<CustomProvider> = {}) =>
+        ({
+          id: 'cp-edit-id',
+          tenant_id: 'tenant-1',
+          base_url: BASE,
+          api_kind: 'openai',
+          ...overrides,
+        }) as CustomProvider;
 
       const ORIGINAL_ENV = process.env['MANIFEST_ENCRYPTION_KEY'];
+      const ORIGINAL_PREVIOUS = process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'];
       beforeAll(() => {
         process.env['MANIFEST_ENCRYPTION_KEY'] = 'test-encryption-secret-min-32-chars-long-padding';
       });
@@ -1335,49 +1344,121 @@ describe('CustomProviderService', () => {
         } else {
           process.env['MANIFEST_ENCRYPTION_KEY'] = ORIGINAL_ENV;
         }
+        if (ORIGINAL_PREVIOUS === undefined) {
+          delete process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'];
+        } else {
+          process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'] = ORIGINAL_PREVIOUS;
+        }
       });
 
-      it('decrypts the stored key for the matching tenant + provider', async () => {
-        const stored = 'sk-stored-secret-value';
-        const enc = encrypt(stored, getEncryptionSecret());
-        const { svc, getProviders } = makeDeps({});
-        getProviders.mockResolvedValueOnce([
-          { provider: 'custom:cp-edit-id', api_key_encrypted: enc },
+      function withStoredKey(cp: CustomProvider) {
+        const deps = makeDeps({ findOneResults: [cp] });
+        deps.getProviders.mockResolvedValueOnce([
+          {
+            provider: 'custom:cp-edit-id',
+            api_key_encrypted: encrypt('sk-stored-secret-value', getEncryptionSecret()),
+          },
         ]);
+        return deps;
+      }
 
-        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id')).resolves.toBe(stored);
+      it('decrypts the stored key when base_url and api_kind match the stored row', async () => {
+        const { svc, findOne, getProviders } = withStoredKey(cpRow());
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE, 'openai')).resolves.toBe(
+          'sk-stored-secret-value',
+        );
+        expect(findOne).toHaveBeenCalledWith({
+          where: { id: 'cp-edit-id', tenant_id: 'tenant-1' },
+        });
         expect(getProviders).toHaveBeenCalledWith('tenant-1');
       });
 
+      it('defaults api_kind to openai when the caller omits it', async () => {
+        const { svc } = withStoredKey(cpRow());
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBe(
+          'sk-stored-secret-value',
+        );
+      });
+
+      it('still matches when the URLs differ only by trailing slashes or whitespace', async () => {
+        const { svc } = withStoredKey(cpRow({ base_url: `${BASE}/` }));
+        await expect(
+          svc.loadStoredApiKey('tenant-1', 'cp-edit-id', `  ${BASE}//  `, 'openai'),
+        ).resolves.toBe('sk-stored-secret-value');
+      });
+
+      it('never releases the key for a different base_url', async () => {
+        const { svc, getProviders } = withStoredKey(cpRow());
+        await expect(
+          svc.loadStoredApiKey('tenant-1', 'cp-edit-id', 'https://attacker.example/v1', 'openai'),
+        ).resolves.toBeUndefined();
+        expect(getProviders).not.toHaveBeenCalled();
+      });
+
+      it('never releases the key for a different api_kind', async () => {
+        const { svc, getProviders } = withStoredKey(cpRow());
+        await expect(
+          svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE, 'anthropic'),
+        ).resolves.toBeUndefined();
+        expect(getProviders).not.toHaveBeenCalled();
+      });
+
+      it('decrypts a key still stored under MANIFEST_ENCRYPTION_KEY_PREVIOUS', async () => {
+        const previous = 'previous-encryption-secret-min-32-chars-long';
+        process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'] = previous;
+        try {
+          const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+          getProviders.mockResolvedValueOnce([
+            { provider: 'custom:cp-edit-id', api_key_encrypted: encrypt('sk-old', previous) },
+          ]);
+          await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBe(
+            'sk-old',
+          );
+        } finally {
+          delete process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'];
+        }
+      });
+
       it('returns undefined when the provider row has no ciphertext (unauth local server)', async () => {
-        const { svc, getProviders } = makeDeps({});
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
         getProviders.mockResolvedValueOnce([
-          { provider: 'custom:cp-local', api_key_encrypted: null },
+          { provider: 'custom:cp-edit-id', api_key_encrypted: null },
         ]);
-        await expect(svc.loadStoredApiKey('tenant-1', 'cp-local')).resolves.toBeUndefined();
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
       });
 
-      it('returns undefined when no row exists for the given provider_id', async () => {
-        const { svc, getProviders } = makeDeps({});
+      it('returns undefined when no tenant_providers row exists for the provider', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
         getProviders.mockResolvedValueOnce([]);
-        await expect(svc.loadStoredApiKey('tenant-1', 'missing')).resolves.toBeUndefined();
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
       });
 
-      it('cross-tenant safety: a provider_id from another tenant resolves to undefined', async () => {
-        // The lookup only sees rows for the resolved tenantId, so a forged
-        // provider_id can never surface another tenant's encrypted key.
-        const { svc, getProviders } = makeDeps({});
-        getProviders.mockResolvedValueOnce([]); // tenant-attacker owns nothing
-        await expect(svc.loadStoredApiKey('tenant-attacker', 'cp-victim')).resolves.toBeUndefined();
-        expect(getProviders).toHaveBeenCalledWith('tenant-attacker');
+      it('cross-tenant safety: a provider_id from another tenant is not found', async () => {
+        // The row lookup is scoped to the caller's tenant, so a forged
+        // provider_id misses and the key store is never read.
+        const { svc, findOne, getProviders } = makeDeps({ findOneResults: [null] });
+        await expect(
+          svc.loadStoredApiKey('tenant-attacker', 'cp-victim', BASE),
+        ).resolves.toBeUndefined();
+        expect(findOne).toHaveBeenCalledWith({
+          where: { id: 'cp-victim', tenant_id: 'tenant-attacker' },
+        });
+        expect(getProviders).not.toHaveBeenCalled();
       });
 
-      it('swallows decrypt errors (corrupt ciphertext) and returns undefined', async () => {
-        const { svc, getProviders } = makeDeps({});
+      it('logs a warning without secret material and proceeds keyless on decrypt failure', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        const warn = jest
+          .spyOn((svc as unknown as { logger: { warn: (msg: string) => void } }).logger, 'warn')
+          .mockImplementation(() => undefined);
         getProviders.mockResolvedValueOnce([
-          { provider: 'custom:cp-broken', api_key_encrypted: 'not-a-valid-ciphertext' },
+          { provider: 'custom:cp-edit-id', api_key_encrypted: 'not-a-valid-ciphertext' },
         ]);
-        await expect(svc.loadStoredApiKey('tenant-1', 'cp-broken')).resolves.toBeUndefined();
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        const message = warn.mock.calls[0][0];
+        expect(message).toContain('cp-edit-id');
+        expect(message).not.toContain('not-a-valid-ciphertext');
       });
     });
   });

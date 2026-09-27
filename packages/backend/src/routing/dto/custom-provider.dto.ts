@@ -132,8 +132,9 @@ export class ProbeCustomProviderDto {
   // Edit-mode fallback: when the form re-opens an existing provider it has
   // no plaintext key (list() only returns has_api_key:bool). Sending the
   // provider id lets the server decrypt and reuse the stored key for the
-  // probe. The controller tenant-scopes the lookup, so a forged id can't
-  // exfiltrate another tenant's key. UUID (36 chars); cap defensively.
+  // probe. The lookup is tenant-scoped, and the key is only used when
+  // base_url and api_kind match the stored provider, so it can't be sent to
+  // another server. UUID (36 chars); cap defensively.
   @IsOptional()
   @IsString()
   @MaxLength(100)
