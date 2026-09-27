@@ -30,7 +30,7 @@ describe('resolveForwardEndpoint', () => {
       model: 'minimax/MiniMax-M3',
       providerRegion: 'cn',
     });
-    expect(out.forwardModel).toBe('minimax/MiniMax-M3');
+    expect(out.forwardModel).toBe('MiniMax-M3');
     expect(out.customEndpoint?.baseUrl).toBe('https://api.minimaxi.com');
     expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/v1/chat/completions');
   });

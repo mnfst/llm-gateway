@@ -88,7 +88,7 @@ export function resolveForwardEndpoint(
   }
   if (
     lower === 'minimax' &&
-    authType === 'subscription' &&
+    (authType === 'subscription' || (authType === 'api_key' && providerRegion === 'cn')) &&
     forwardModel.toLowerCase().startsWith('minimax/')
   ) {
     forwardModel = forwardModel.substring('minimax/'.length);

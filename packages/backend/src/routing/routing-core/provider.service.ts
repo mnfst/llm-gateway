@@ -45,7 +45,10 @@ import {
   getSubscriptionEndpointRegionConfig,
   SubscriptionEndpointRegionConfig,
 } from '../subscription-region';
-import { isMinimaxRegion } from '../oauth/minimax/minimax-oauth-helpers';
+import {
+  MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE,
+  isMinimaxRegion,
+} from '../oauth/minimax/minimax-oauth-helpers';
 import { filterProvidersForDeployment } from '../../common/utils/provider-availability';
 import { getManagedFreeProviderConfig } from '../../common/constants/managed-free-providers';
 
@@ -634,7 +637,7 @@ export class ProviderService {
         return isMinimaxRegion(existing?.region ?? undefined) ? existing!.region : null;
       }
       if (!isMinimaxRegion(requestedRegion)) {
-        throw new BadRequestException('MiniMax API-key region must be one of: global, cn');
+        throw new BadRequestException(MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE);
       }
       return requestedRegion;
     }

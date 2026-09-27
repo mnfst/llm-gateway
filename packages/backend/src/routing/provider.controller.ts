@@ -32,7 +32,10 @@ import {
 import { QWEN_REGION_VALIDATION_MESSAGE, isQwenRegion } from './qwen-region';
 import { getSubscriptionEndpointRegionConfig } from './subscription-region';
 import { isBedrockProvider, isBedrockRegion } from './bedrock-region';
-import { isMinimaxRegion } from './oauth/minimax/minimax-oauth-helpers';
+import {
+  MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE,
+  isMinimaxRegion,
+} from './oauth/minimax/minimax-oauth-helpers';
 import {
   CLOUD_LOCAL_PROVIDER_MESSAGE,
   isProviderAvailableForDeployment,
@@ -152,11 +155,11 @@ export class ProviderController {
         }
       } else if (isMinimaxApiKey) {
         if (!isMinimaxRegion(body.region)) {
-          throw new BadRequestException('MiniMax API-key region must be one of: global, cn');
+          throw new BadRequestException(MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE);
         }
       } else {
         throw new BadRequestException(
-          'region is only supported for Alibaba/Qwen providers, AWS Bedrock, MiniMax subscriptions, Xiaomi MiMo Token Plan, and Z.ai subscriptions',
+          'region is only supported for Alibaba/Qwen providers, AWS Bedrock, MiniMax, Xiaomi MiMo Token Plan, and Z.ai subscriptions',
         );
       }
     }
