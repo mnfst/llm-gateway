@@ -1224,7 +1224,7 @@ describe("CustomProviderForm — edit mode", () => {
     });
   });
 
-  it("still sends id when editingKey is open but the user left the field empty", async () => {
+  it("still sends id when the user typed a key in Change and then cleared it", async () => {
     mockProbeCustomProvider.mockResolvedValue({
       models: [{ model_name: "llama-3.1-8b" }],
     });
@@ -1239,8 +1239,11 @@ describe("CustomProviderForm — edit mode", () => {
     ));
 
     fireEvent.click(screen.getByText("Change"));
-    // Field opens but stays empty — user changed their mind. The probe
+    // User types a key, then clears it — they changed their mind. The probe
     // should still hit /models with the stored key, not unauthenticated.
+    const keyInput = screen.getByPlaceholderText("sk-...");
+    fireEvent.input(keyInput, { target: { value: "sk-abandoned" } });
+    fireEvent.input(keyInput, { target: { value: "" } });
     fireEvent.click(screen.getByText("Fetch models"));
 
     await waitFor(() => {

@@ -1433,6 +1433,17 @@ describe('CustomProviderService', () => {
         await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
       });
 
+      it('does not release a key stored under a different provider id', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        getProviders.mockResolvedValueOnce([
+          {
+            provider: 'custom:other-id',
+            api_key_encrypted: encrypt('sk-other-secret', getEncryptionSecret()),
+          },
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
+      });
+
       it('cross-tenant safety: a provider_id from another tenant is not found', async () => {
         // The row lookup is scoped to the caller's tenant, so a forged
         // provider_id misses and the key store is never read.

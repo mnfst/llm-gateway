@@ -285,8 +285,22 @@ describe('CustomProviderController', () => {
         undefined,
       );
       expect(result).toEqual({ models: [{ model_name: 'm1' }, { model_name: 'm2' }] });
-      // A user-typed key short-circuits the stored-key lookup entirely.
+    });
+
+    it('prefers a typed key over the stored one even when provider_id is sent', async () => {
+      await controller.probe(mockCtx, 'test-agent', {
+        base_url: 'http://host.docker.internal:8000/v1',
+        apiKey: 'sk-typed',
+        provider_id: 'cp-1',
+      } as never);
+
       expect(mockCustomProviderService.loadStoredApiKey).not.toHaveBeenCalled();
+      expect(mockCustomProviderService.probeModels).toHaveBeenCalledWith(
+        'http://host.docker.internal:8000/v1',
+        'sk-typed',
+        undefined,
+        undefined,
+      );
     });
 
     it('forwards api_kind to the service when provided in the body', async () => {
