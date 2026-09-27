@@ -13,7 +13,10 @@ import { Repository } from 'typeorm';
 import { createHash } from 'crypto';
 import { Request } from 'express';
 import { AgentApiKey } from '../../entities/agent-api-key.entity';
-import { IngestionContext } from '../interfaces/ingestion-context.interface';
+import {
+  IngestionContext,
+  RequestWithManifestErrorContext,
+} from '../interfaces/ingestion-context.interface';
 import { verifyKey, keyPrefix as computePrefix } from '../../common/utils/hash.util';
 import { API_KEY_PREFIX } from '../../common/constants/api-key.constants';
 import { isLoopbackPeer } from '../../common/utils/local-ip';
@@ -24,6 +27,7 @@ function cacheKey(token: string): string {
 }
 
 interface CachedKey {
+  keyId: string;
   tenantId: string;
   agentId: string;
   agentName: string;
@@ -41,13 +45,29 @@ interface CachedKey {
 @Injectable()
 export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AgentKeyAuthGuard.name);
-  private cache = new Map<string, CachedKey>();
+  // STATIC on purpose: Nest instantiates class-referenced @UseGuards enhancers
+  // per host module, so the proxy controllers and the OtlpModule export are
+  // DIFFERENT guard instances. Instance-level maps let a rotated key keep
+  // authenticating from another instance's warm cache for up to CACHE_TTL_MS;
+  // sharing the maps process-wide makes invalidateCache()/clearCache() reach
+  // every instance.
+  private static cache = new Map<string, CachedKey>();
   private devContext: { context: IngestionContext; expiresAt: number } | null = null;
-  // 5 min TTL keeps revoked-key staleness bounded while still amortizing the
-  // DB lookup across hot ingest bursts. Mutations call invalidateCache()
-  // directly when keys rotate or deactivate.
+  // 5 min TTL amortizes the expensive prefix lookup and hash verification.
+  // Cache hits still verify the key row is active, so rotation and deletion
+  // take effect across replicas without waiting for this TTL.
   private readonly CACHE_TTL_MS = 5 * 60 * 1000;
   private readonly MAX_CACHE_SIZE = 10_000;
+  // Maps a rejected token's hash to when its rejection stops being trusted.
+  // Without this, every request bearing a wrong/revoked mnfst_ key runs a
+  // fresh indexed DB lookup AND emits a warn log — so a single misconfigured
+  // agent in a retry loop sustains DB load and floods the logs indefinitely.
+  // The TTL is deliberately much shorter than CACHE_TTL_MS so a key that gets
+  // created or reactivated starts working quickly; key mutations also clear
+  // this via clearCache()/invalidateCache(), so a created key is never stuck.
+  private static negativeCache = new Map<string, number>();
+  private readonly NEGATIVE_CACHE_TTL_MS = 30 * 1000;
+  private readonly MAX_NEGATIVE_CACHE_SIZE = 10_000;
   private readonly cleanupTimer: ReturnType<typeof setInterval>;
 
   constructor(
@@ -88,6 +108,10 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
 
   onModuleDestroy(): void {
     clearInterval(this.cleanupTimer);
+    // The caches are static, so they outlive the instance and leak across
+    // application contexts (test isolation, and any repeated Nest bootstrap in
+    // one process). Tearing the module down clears them.
+    this.clearCache();
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -124,11 +148,17 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
   }
 
   invalidateCache(key: string) {
-    this.cache.delete(cacheKey(key));
+    const hashed = cacheKey(key);
+    AgentKeyAuthGuard.cache.delete(hashed);
+    // Drop any negative entry too, so re-creating or rotating a key that was
+    // briefly rejected (e.g. a client raced ahead of key creation) takes
+    // effect immediately instead of waiting out the negative TTL.
+    AgentKeyAuthGuard.negativeCache.delete(hashed);
   }
 
   clearCache() {
-    this.cache.clear();
+    AgentKeyAuthGuard.cache.clear();
+    AgentKeyAuthGuard.negativeCache.clear();
   }
 
   private setContext(request: Request, ctx: IngestionContext): void {
@@ -146,17 +176,49 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
   private async validateMnfstToken(request: Request, token: string): Promise<boolean> {
     const hashed = cacheKey(token);
     const now = Date.now();
-    const cached = this.cache.get(hashed);
+
+    // Negative cache first: a recently-rejected token short-circuits here
+    // without touching the DB or emitting a log line. This is what collapses
+    // a wrong/revoked-key storm to one DB lookup + one warn per TTL window.
+    const negativeExpiry = AgentKeyAuthGuard.negativeCache.get(hashed);
+    if (negativeExpiry !== undefined && negativeExpiry > now) {
+      // LRU touch — re-insert to move to tail of insertion order.
+      AgentKeyAuthGuard.negativeCache.delete(hashed);
+      AgentKeyAuthGuard.negativeCache.set(hashed, negativeExpiry);
+      throw new UnauthorizedException('Invalid API key');
+    }
+    if (negativeExpiry !== undefined) {
+      // Stale negative entry — drop it and re-check against the DB so a key
+      // that has since been created/reactivated can authenticate again.
+      AgentKeyAuthGuard.negativeCache.delete(hashed);
+    }
+
+    const cached = AgentKeyAuthGuard.cache.get(hashed);
     // A key whose own expiry has passed must stop authenticating immediately,
     // even if its cache entry is still inside the 5-min TTL. Drop the stale
     // entry and fall through to the DB path (which re-checks expiry and rejects
     // with "API key expired") rather than honoring it here.
     if (cached && cached.keyExpiresAt !== null && cached.keyExpiresAt <= now) {
-      this.cache.delete(hashed);
+      AgentKeyAuthGuard.cache.delete(hashed);
     } else if (cached && cached.expiresAt > now) {
+      let stillActive: boolean;
+      try {
+        stillActive = await this.keyRepo.existsBy({
+          id: cached.keyId,
+          is_active: true,
+        });
+      } catch (err) {
+        this.logger.warn(`Agent-key activity recheck failed: ${(err as Error).message}`);
+        throw new UnauthorizedException('Invalid API key');
+      }
+      if (!stillActive) {
+        AgentKeyAuthGuard.cache.delete(hashed);
+        this.rememberInvalid(hashed);
+        throw new UnauthorizedException('Invalid API key');
+      }
       // LRU touch — re-insert to move to tail of insertion order
-      this.cache.delete(hashed);
-      this.cache.set(hashed, cached);
+      AgentKeyAuthGuard.cache.delete(hashed);
+      AgentKeyAuthGuard.cache.set(hashed, cached);
       this.setContext(request, {
         tenantId: cached.tenantId,
         agentId: cached.agentId,
@@ -188,6 +250,9 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
     const keyRecord = candidates.find((c) => verifyKey(token, c.key_hash));
 
     if (!keyRecord) {
+      // Remember the rejection so an identical repeat is served from the
+      // negative cache (no DB, no log) until the short TTL lapses.
+      this.rememberInvalid(hashed);
       // Log only the fixed prefix — even leaking the next character or two
       // narrows the search space if these warnings end up in a SIEM that
       // retains them indefinitely.
@@ -195,7 +260,32 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
       throw new UnauthorizedException('Invalid API key');
     }
 
+    // The candidate query left-joins agent + tenant. If either relation fails
+    // to hydrate — e.g. the agent is soft-deleted in the race between the query
+    // above and the dereference below — reading keyRecord.agent.name /
+    // keyRecord.tenant.owner_user_id would throw a TypeError and surface a 500
+    // that leaks an internal error. Treat an unhydrated relation as an invalid
+    // key: remember the rejection (so an identical retry is served from the
+    // negative cache) and return a clean 401.
+    if (!keyRecord.agent || !keyRecord.tenant) {
+      this.rememberInvalid(hashed);
+      this.logger.warn(
+        `Rejected agent key with unhydrated relations (prefix: ${API_KEY_PREFIX}...)`,
+      );
+      throw new UnauthorizedException('Invalid API key');
+    }
+
     if (keyRecord.expires_at && new Date(keyRecord.expires_at) < new Date()) {
+      // An expired key still identifies its agent, so this rejection is the one
+      // auth failure Manifest can attribute and record (M004). The other four
+      // (M001–M003, M005) never resolve a tenant and stay unrecorded — see
+      // UNRECORDABLE_MANIFEST_CODES.
+      (request as Request & RequestWithManifestErrorContext).manifestErrorContext = {
+        tenantId: keyRecord.tenant_id,
+        agentId: keyRecord.agent_id,
+        agentName: keyRecord.agent.name,
+        userId: keyRecord.tenant.owner_user_id,
+      };
       throw new UnauthorizedException('API key expired');
     }
 
@@ -208,13 +298,14 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
       .catch((err: Error) => this.logger.warn(`Failed to update last_used_at: ${err.message}`));
 
     this.evictExpired();
-    while (this.cache.size >= this.MAX_CACHE_SIZE) {
-      const firstKey = this.cache.keys().next().value;
+    while (AgentKeyAuthGuard.cache.size >= this.MAX_CACHE_SIZE) {
+      const firstKey = AgentKeyAuthGuard.cache.keys().next().value;
       if (firstKey === undefined) break;
-      this.cache.delete(firstKey);
+      AgentKeyAuthGuard.cache.delete(firstKey);
     }
 
-    this.cache.set(hashed, {
+    AgentKeyAuthGuard.cache.set(hashed, {
+      keyId: keyRecord.id,
       tenantId: keyRecord.tenant_id,
       agentId: keyRecord.agent_id,
       agentName: keyRecord.agent.name,
@@ -269,10 +360,23 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
     return ctx;
   }
 
+  private rememberInvalid(hashed: string): void {
+    this.evictExpired();
+    while (AgentKeyAuthGuard.negativeCache.size >= this.MAX_NEGATIVE_CACHE_SIZE) {
+      const firstKey = AgentKeyAuthGuard.negativeCache.keys().next().value;
+      if (firstKey === undefined) break;
+      AgentKeyAuthGuard.negativeCache.delete(firstKey);
+    }
+    AgentKeyAuthGuard.negativeCache.set(hashed, Date.now() + this.NEGATIVE_CACHE_TTL_MS);
+  }
+
   private evictExpired() {
     const now = Date.now();
-    for (const [key, entry] of this.cache) {
-      if (entry.expiresAt <= now) this.cache.delete(key);
+    for (const [key, entry] of AgentKeyAuthGuard.cache) {
+      if (entry.expiresAt <= now) AgentKeyAuthGuard.cache.delete(key);
+    }
+    for (const [key, expiresAt] of AgentKeyAuthGuard.negativeCache) {
+      if (expiresAt <= now) AgentKeyAuthGuard.negativeCache.delete(key);
     }
   }
 }

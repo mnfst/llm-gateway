@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { fetchJson, fetchMutate, parseErrorMessage, routingPath } from '../../../src/services/api/core';
+import {
+  fetchJson,
+  fetchMutate,
+  parseErrorMessage,
+  routingPath,
+} from '../../../src/services/api/core';
 import { invalidateAll } from '../../../src/services/api/cache';
 
 const mockToastError = vi.fn();
@@ -52,7 +57,7 @@ describe('core api helpers', () => {
       expect(routingPath('demo', '/tiers/simple')).toBe('/routing/demo/tiers/simple');
     });
 
-    it('inserts a slash when the suffix doesn\'t start with one', () => {
+    it("inserts a slash when the suffix doesn't start with one", () => {
       expect(routingPath('demo', 'tiers/simple')).toBe('/routing/demo/tiers/simple');
     });
 
@@ -93,6 +98,21 @@ describe('core api helpers', () => {
 
       await expect(fetchJson('/anything')).rejects.toThrow('Session expired');
       expect(location.href).toBe('/login');
+    });
+
+    it('rejects without the login redirect on a session-expiry 401 when loginRedirect is false', async () => {
+      // A probe that may legitimately run signed-out (the plan prefetch in
+      // AuthGuard) must not hard-navigate the browser to /login, or the guard
+      // never gets to preserve the requested path in the redirect.
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeResponse({ ok: false, status: 401, text: '' }));
+      vi.stubGlobal('fetch', fetchMock);
+
+      await expect(fetchJson('/anything', undefined, { loginRedirect: false })).rejects.toThrow(
+        'Session expired',
+      );
+      expect(location.href).toBe('');
     });
 
     it('does not redirect when already on /login', async () => {

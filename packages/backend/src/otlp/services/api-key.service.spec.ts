@@ -25,6 +25,7 @@ jest.mock('../../common/utils/crypto.util', () => {
   return {
     ...actual,
     getEncryptionSecret: () => TEST_SECRET,
+    getDecryptionSecrets: () => [TEST_SECRET],
   };
 });
 
@@ -202,6 +203,32 @@ describe('ApiKeyGeneratorService', () => {
           tenant_id: 'uuid-tenant-1',
         }),
       );
+    });
+    it('writes explicit Autofix and recording choices when provided', async () => {
+      mockTenantFindOne.mockResolvedValue(null);
+
+      await service.onboardAgent({
+        ...defaultParams,
+        autofixEnabled: false,
+        recordMessages: false,
+      });
+
+      expect(mockAgentInsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          autofix_enabled: false,
+          record_messages: false,
+        }),
+      );
+    });
+
+    it('omits Autofix and recording when the caller made no choice', async () => {
+      mockTenantFindOne.mockResolvedValue(null);
+
+      await service.onboardAgent(defaultParams);
+
+      const inserted = mockAgentInsert.mock.calls[0][0];
+      expect(inserted).not.toHaveProperty('autofix_enabled');
+      expect(inserted).not.toHaveProperty('record_messages');
     });
 
     it('should store encrypted key, key_hash and key_prefix', async () => {

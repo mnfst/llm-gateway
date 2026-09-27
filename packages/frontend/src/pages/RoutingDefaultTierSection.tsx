@@ -10,6 +10,7 @@ import type {
 } from '../services/api.js';
 import { DEFAULT_STAGE, STAGES } from '../services/providers.js';
 import OutputControls from '../components/OutputControls.js';
+import RoutingDeprecationNotice from '../components/RoutingDeprecationNotice.js';
 import RoutingTierCard from './RoutingTierCard.js';
 
 export interface RoutingDefaultTierSectionProps {
@@ -40,6 +41,13 @@ export interface RoutingDefaultTierSectionProps {
   complexityEnabled: () => boolean;
   togglingComplexity: () => boolean;
   onToggleComplexity: () => void;
+  /**
+   * Gate for the deprecated "Route by complexity" toggle. When this returns
+   * false the toggle is hidden entirely and the section shows only the single
+   * default model + fallbacks. Hidden for agents that never enabled complexity
+   * routing (see `legacyComplexityVisible` in Routing.tsx). Defaults to shown.
+   */
+  showComplexityToggle?: () => boolean;
   responseMode: () => ResponseMode;
   changingResponseMode: () => boolean;
   onResponseModeChange: (mode: ResponseMode) => void | Promise<void>;
@@ -155,11 +163,28 @@ const RoutingDefaultTierSection: Component<RoutingDefaultTierSectionProps> = (pr
       ? 'Analyzes the complexity of each request on the fly and routes it to the matching tier.'
       : 'Pick one model and up to 5 fallbacks as your default routing.';
 
-  const controls = () => <div class="routing-section__controls">{switchButton()}</div>;
+  const showComplexityToggle = () => props.showComplexityToggle?.() ?? true;
+  const controls = () => (
+    <Show when={showComplexityToggle()}>
+      <div class="routing-section__controls">{switchButton()}</div>
+    </Show>
+  );
+
+  // Deprecation banner: shown to legacy/invested agents (the only ones with the
+  // toggle) while complexity routing is actually active.
+  const deprecationNotice = () => (
+    <Show when={showComplexityToggle() && props.complexityEnabled()}>
+      <RoutingDeprecationNotice title="We're deprecating rule-based routing.">
+        You can still use it until September 1, 2026, but we recommend migrating to default or
+        custom routing.
+      </RoutingDeprecationNotice>
+    </Show>
+  );
 
   if (props.embedded) {
     return (
       <div>
+        {deprecationNotice()}
         <div
           class="routing-section__header routing-section__header--with-control"
           style="margin-bottom: 16px;"
@@ -179,6 +204,7 @@ const RoutingDefaultTierSection: Component<RoutingDefaultTierSectionProps> = (pr
 
   return (
     <div class="routing-section">
+      {deprecationNotice()}
       <div class="routing-section__header routing-section__header--with-control">
         <div>
           <span class="routing-section__title">Default routing</span>

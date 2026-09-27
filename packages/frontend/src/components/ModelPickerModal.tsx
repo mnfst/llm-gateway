@@ -1,5 +1,15 @@
-import { createSignal, For, Show, type Component } from 'solid-js';
 import {
+  createMemo,
+  createSignal,
+  For,
+  onCleanup,
+  onMount,
+  Show,
+  startTransition,
+  type Component,
+} from 'solid-js';
+import {
+  refreshModels,
   refreshProviderModels,
   type AuthType,
   type AvailableModel,
@@ -19,6 +29,18 @@ import ModelCapabilityBadges, {
   CAPABILITY_LABELS,
   ModelModalityBadges,
 } from './ModelCapabilityBadges.js';
+import VirtualList from './VirtualList.js';
+
+const PICKER_NARROW_QUERY = '(max-width: 640px)';
+const PICKER_GROUP_HEADER_HEIGHT = 32;
+const PICKER_MODEL_ROW_HEIGHT = 40;
+/** Stacked label + four cells + gaps + padding in the ≤640px layout. */
+const PICKER_MODEL_ROW_HEIGHT_NARROW = 160;
+
+type ModalModel = { value: string; label: string; pricing: AvailableModel };
+type PickerItem =
+  | { kind: 'header'; provId: string; name: string }
+  | { kind: 'model'; provId: string; name: string; model: ModalModel };
 
 interface Props {
   tierId: string;
@@ -70,18 +92,31 @@ const ACTION_CAPABILITIES: readonly ModelCapability[] = ['stream', 'tools'];
 const MODALITY_ORDER: readonly ModelModality[] = ['text', 'image', 'audio', 'video'];
 const DEFAULT_MODALITIES: readonly ModelModality[] = ['text'];
 
+const wasFetchedToday = (fetchedAt: string | null | undefined, now: Date): boolean => {
+  if (!fetchedAt) return false;
+  const fetched = new Date(fetchedAt);
+  if (Number.isNaN(fetched.getTime())) return false;
+  return (
+    fetched.getFullYear() === now.getFullYear() &&
+    fetched.getMonth() === now.getMonth() &&
+    fetched.getDate() === now.getDate()
+  );
+};
+
 const unavailableCapabilityLabel = (capability: ModelCapability): string => {
   if (capability === 'stream') return 'Stream unavailable';
   return `${capability.charAt(0).toUpperCase()}${capability.slice(1)} unavailable`;
 };
 
 const ModelPickerModal: Component<Props> = (props) => {
+  const isUsable = (p: { is_active: boolean; has_api_key: boolean; cached_model_count?: number }) =>
+    p.is_active && (p.has_api_key || (p.cached_model_count ?? 0) > 0);
   const hasSubscription = () =>
-    (props.connectedProviders ?? []).some((p) => p.is_active && p.auth_type === 'subscription');
+    (props.connectedProviders ?? []).some((p) => isUsable(p) && p.auth_type === 'subscription');
   const hasApiKey = () =>
-    (props.connectedProviders ?? []).some((p) => p.is_active && p.auth_type === 'api_key');
+    (props.connectedProviders ?? []).some((p) => isUsable(p) && p.auth_type === 'api_key');
   const hasLocal = () =>
-    (props.connectedProviders ?? []).some((p) => p.is_active && p.auth_type === 'local');
+    (props.connectedProviders ?? []).some((p) => isUsable(p) && p.auth_type === 'local');
   // Show the tab strip whenever the user has models in more than one auth
   // category — otherwise the picker is single-category and the tabs add
   // noise. Local counts as its own category alongside subscription/api_key.
@@ -105,6 +140,40 @@ const ModelPickerModal: Component<Props> = (props) => {
     props.requiredCapability ? new Set([props.requiredCapability]) : new Set(),
   );
   const [refreshingProvId, setRefreshingProvId] = createSignal<string | null>(null);
+  const [isNarrow, setIsNarrow] = createSignal(false);
+  // Parent callbacks refetch resources read inside this modal's Suspense
+  // boundary. Keep the current picker visible until those resources settle.
+  const notifyProviderRefreshed = () => startTransition(() => props.onProviderRefreshed?.());
+
+  onMount(() => {
+    if (typeof window.matchMedia === 'function') {
+      const media = window.matchMedia(PICKER_NARROW_QUERY);
+      const sync = () => setIsNarrow(media.matches);
+      sync();
+      media.addEventListener('change', sync);
+      onCleanup(() => media.removeEventListener('change', sync));
+    }
+
+    const agentName = props.agentName;
+    if (!agentName) return;
+    const now = new Date();
+    const needsRefresh = (props.connectedProviders ?? []).some(
+      (provider) =>
+        provider.is_active &&
+        !provider.provider.startsWith('custom:') &&
+        !wasFetchedToday(provider.models_fetched_at, now),
+    );
+    if (!needsRefresh) return;
+
+    const refreshKey = `manifest:routing-model-refresh:${agentName}`;
+    const today = now.toDateString();
+    if (sessionStorage.getItem(refreshKey) === today) return;
+    sessionStorage.setItem(refreshKey, today);
+
+    void refreshModels(agentName)
+      .then(() => notifyProviderRefreshed())
+      .catch(() => undefined);
+  });
 
   const toggleCapability = (cap: ModelCapability) => {
     const current = new Set(requiredCapabilities());
@@ -137,7 +206,7 @@ const ModelPickerModal: Component<Props> = (props) => {
       } else {
         toast.error(result.error ?? `Couldn't refresh ${displayName}`);
       }
-      await props.onProviderRefreshed?.();
+      await notifyProviderRefreshed();
     } catch {
       // network/server error toast already raised by fetchMutate
     } finally {
@@ -176,7 +245,7 @@ const ModelPickerModal: Component<Props> = (props) => {
     return ids;
   };
 
-  const groupedModels = () => {
+  const groupedModels = createMemo(() => {
     const q = search().toLowerCase().trim();
     const labels = providerLabelMap();
     const providerIds = providerIdSet();
@@ -184,7 +253,6 @@ const ModelPickerModal: Component<Props> = (props) => {
     const tab = activeTab();
     const hasConnectedProviders = (props.connectedProviders ?? []).length > 0;
 
-    type ModalModel = { value: string; label: string; pricing: AvailableModel };
     const groupMap = new Map<string, { provId: string; name: string; models: ModalModel[] }>();
 
     const freeOnly = tab === 'api_key' && showFreeOnly();
@@ -266,7 +334,37 @@ const ModelPickerModal: Component<Props> = (props) => {
     }
     groups.sort((a, b) => a.name.localeCompare(b.name));
     return groups;
-  };
+  });
+
+  const pickerItems = createMemo((): PickerItem[] => {
+    const items: PickerItem[] = [];
+    for (const group of groupedModels()) {
+      items.push({
+        kind: 'header',
+        provId: group.provId,
+        name: group.name,
+      });
+      for (const model of group.models) {
+        items.push({
+          kind: 'model',
+          provId: group.provId,
+          name: group.name,
+          model,
+        });
+      }
+    }
+    return items;
+  });
+
+  const pickerItemHeight = (item: PickerItem) =>
+    item.kind === 'header'
+      ? PICKER_GROUP_HEADER_HEIGHT
+      : isNarrow()
+        ? PICKER_MODEL_ROW_HEIGHT_NARROW
+        : PICKER_MODEL_ROW_HEIGHT;
+
+  const pickerResetKey = () =>
+    `${activeTab()}\0${search()}\0${showFreeOnly()}\0${[...requiredCapabilities()].sort().join(',')}`;
 
   /** Returns the role of a model in the current tier: "Primary", "Fallback 1", etc. or null */
   const modelRole = (
@@ -443,7 +541,7 @@ const ModelPickerModal: Component<Props> = (props) => {
                   >
                     <path d="m21 2-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4" />
                   </svg>
-                  API Keys
+                  Usage-based
                 </button>
               </Show>
               <Show when={hasLocal()}>
@@ -536,56 +634,86 @@ const ModelPickerModal: Component<Props> = (props) => {
           </div>
         </div>
 
-        <div class="routing-modal__list">
-          <Show when={groupedModels().length > 0}>
-            <div class="routing-modal__table-head" aria-hidden="true">
-              <span>Model</span>
-              <span>Capabilities</span>
-              <span>Input</span>
-              <span>Output</span>
-              <span>Price</span>
+        <Show when={groupedModels().length > 0}>
+          <div class="routing-modal__table-head" aria-hidden="true">
+            <span>Model</span>
+            <span>Capabilities</span>
+            <span>Input</span>
+            <span>Output</span>
+            <span>Price</span>
+          </div>
+        </Show>
+        <Show
+          when={pickerItems().length > 0}
+          fallback={
+            <div class="routing-modal__list">
+              <div class="routing-modal__empty">
+                {search().trim()
+                  ? 'No models match your search.'
+                  : showFreeOnly()
+                    ? 'No free models available from your connected providers.'
+                    : isSub()
+                      ? 'No subscription providers connected. Connect a provider to see models.'
+                      : isLocal()
+                        ? 'No local providers connected. Connect a local provider to see models.'
+                        : 'No API key providers connected. Connect a provider to see models.'}
+                <Show when={!search().trim() && !showFreeOnly() && props.onConnectProviders}>
+                  <button
+                    class="btn btn--primary btn--sm"
+                    onClick={() => props.onConnectProviders?.()}
+                  >
+                    Connect provider
+                  </button>
+                </Show>
+              </div>
             </div>
-          </Show>
-          <For each={groupedModels()}>
-            {(group) => (
-              <div class="routing-modal__group">
+          }
+        >
+          <VirtualList
+            class="routing-modal__list"
+            items={pickerItems()}
+            itemHeight={pickerItemHeight}
+            resetKey={pickerResetKey()}
+          >
+            {(item) =>
+              item.kind === 'header' ? (
                 <div class="routing-modal__group-header">
                   <span class="routing-modal__group-icon">
-                    {group.provId.startsWith('custom:')
+                    {item.provId.startsWith('custom:')
                       ? (() => {
                           const cp = (props.customProviders ?? []).find(
-                            (c) => `custom:${c.id}` === group.provId,
+                            (c) => `custom:${c.id}` === item.provId,
                           );
                           return (
-                            customProviderLogo(group.name, 16, cp?.base_url) ?? (
+                            customProviderLogo(item.name, 16, cp?.base_url) ?? (
                               <span
                                 class="provider-card__logo-letter"
                                 style={{
-                                  background: customProviderColor(group.name),
+                                  background: customProviderColor(item.name),
                                   width: '16px',
                                   height: '16px',
                                   'font-size': '9px',
                                   'border-radius': '50%',
                                 }}
                               >
-                                {group.name.charAt(0).toUpperCase()}
+                                {item.name.charAt(0).toUpperCase()}
                               </span>
                             )
                           );
                         })()
-                      : providerIcon(group.provId, 16)}
+                      : providerIcon(item.provId, 16)}
                   </span>
-                  <span class="routing-modal__group-name">{group.name}</span>
-                  <Show when={props.agentName && !group.provId.startsWith('custom:')}>
+                  <span class="routing-modal__group-name">{item.name}</span>
+                  <Show when={props.agentName && !item.provId.startsWith('custom:')}>
                     <button
                       class="routing-modal__group-refresh"
                       disabled={refreshingProvId() !== null}
                       onClick={(e) => {
                         e.stopPropagation();
-                        void handleRefreshGroup(group.provId, group.name);
+                        void handleRefreshGroup(item.provId, item.name);
                       }}
-                      aria-label={`Refresh ${group.name} models`}
-                      title={`Refresh ${group.name} models`}
+                      aria-label={`Refresh ${item.name} models`}
+                      title={`Refresh ${item.name} models`}
                     >
                       <svg
                         width="12"
@@ -599,7 +727,7 @@ const ModelPickerModal: Component<Props> = (props) => {
                         aria-hidden="true"
                         classList={{
                           'routing-modal__group-refresh-icon--spinning':
-                            refreshingProvId() === group.provId,
+                            refreshingProvId() === item.provId,
                         }}
                       >
                         <path d="M21 12a9 9 0 1 1-3-6.7L21 8" />
@@ -608,117 +736,95 @@ const ModelPickerModal: Component<Props> = (props) => {
                     </button>
                   </Show>
                 </div>
-                <For each={group.models}>
-                  {(model) => {
-                    const disabledReason = () => missingRequiredCapability(model.pricing);
-                    const disabled = () => disabledReason() !== null;
-                    return (
-                      <button
-                        class="routing-modal__model"
-                        classList={{ 'routing-modal__model--disabled': disabled() }}
-                        disabled={disabled()}
-                        title={disabledReason() ?? undefined}
-                        onClick={() =>
-                          props.onSelect(props.tierId, model.value, group.provId, activeTab())
-                        }
-                      >
-                        <span class="routing-modal__model-left">
-                          <span class="routing-modal__model-label">
-                            {model.label}
-                            <Show when={modelRole(model.value, group.provId, activeTab())}>
-                              {(role) => <span class="routing-modal__role-tag">{role()}</span>}
-                            </Show>
-                          </span>
+              ) : (
+                (() => {
+                  const model = item.model;
+                  const disabledReason = () => missingRequiredCapability(model.pricing);
+                  const disabled = () => disabledReason() !== null;
+                  return (
+                    <button
+                      class="routing-modal__model"
+                      classList={{ 'routing-modal__model--disabled': disabled() }}
+                      disabled={disabled()}
+                      title={disabledReason() ?? undefined}
+                      onClick={() =>
+                        props.onSelect(props.tierId, model.value, item.provId, activeTab())
+                      }
+                    >
+                      <span class="routing-modal__model-left">
+                        <span class="routing-modal__model-label">
+                          {model.label}
+                          <Show when={modelRole(model.value, item.provId, activeTab())}>
+                            {(role) => <span class="routing-modal__role-tag">{role()}</span>}
+                          </Show>
                         </span>
-                        <span class="routing-modal__model-cell">
-                          <span class="routing-modal__model-cell-label">Capabilities</span>
-                          <Show
-                            when={actionCapabilitiesFor(model.pricing).length > 0}
-                            fallback={
-                              <span
-                                class="model-capability-badges model-capability-badges--compact"
-                                aria-label="No stream or tools"
-                              />
-                            }
-                          >
-                            <ModelCapabilityBadges
-                              capabilities={actionCapabilitiesFor(model.pricing)}
-                              compact
-                              iconOnly
+                      </span>
+                      <span class="routing-modal__model-cell">
+                        <span class="routing-modal__model-cell-label">Capabilities</span>
+                        <Show
+                          when={actionCapabilitiesFor(model.pricing).length > 0}
+                          fallback={
+                            <span
+                              class="model-capability-badges model-capability-badges--compact"
+                              aria-label="No stream or tools"
                             />
-                          </Show>
-                        </span>
-                        <span class="routing-modal__model-cell">
-                          <span class="routing-modal__model-cell-label">Input</span>
-                          <ModelModalityBadges
-                            modalities={inputModalitiesFor(model.pricing)}
-                            direction="input"
+                          }
+                        >
+                          <ModelCapabilityBadges
+                            capabilities={actionCapabilitiesFor(model.pricing)}
                             compact
                             iconOnly
                           />
-                        </span>
-                        <span class="routing-modal__model-cell">
-                          <span class="routing-modal__model-cell-label">Output</span>
-                          <ModelModalityBadges
-                            modalities={outputModalitiesFor(model.pricing)}
-                            direction="output"
-                            compact
-                            iconOnly
-                          />
-                        </span>
-                        <span class="routing-modal__model-cell routing-modal__model-cell--price">
-                          <span class="routing-modal__model-cell-label">Price</span>
-                          <Show
-                            when={isPaid()}
-                            fallback={
+                        </Show>
+                      </span>
+                      <span class="routing-modal__model-cell">
+                        <span class="routing-modal__model-cell-label">Input</span>
+                        <ModelModalityBadges
+                          modalities={inputModalitiesFor(model.pricing)}
+                          direction="input"
+                          compact
+                          iconOnly
+                        />
+                      </span>
+                      <span class="routing-modal__model-cell">
+                        <span class="routing-modal__model-cell-label">Output</span>
+                        <ModelModalityBadges
+                          modalities={outputModalitiesFor(model.pricing)}
+                          direction="output"
+                          compact
+                          iconOnly
+                        />
+                      </span>
+                      <span class="routing-modal__model-cell routing-modal__model-cell--price">
+                        <span class="routing-modal__model-cell-label">Price</span>
+                        <Show
+                          when={isPaid()}
+                          fallback={
+                            <span class="routing-modal__model-price">
+                              {isLocal()
+                                ? 'Runs on your machine'
+                                : (formatPerRequestCost(model.pricing.cost_per_request) ??
+                                  'Included in subscription')}
+                            </span>
+                          }
+                        >
+                          <Show when={model.pricing}>
+                            {(p) => (
                               <span class="routing-modal__model-price">
-                                {isLocal()
-                                  ? 'Runs on your machine'
-                                  : (formatPerRequestCost(model.pricing.cost_per_request) ??
-                                    'Included in subscription')}
+                                {pricePerM(p().input_price_per_token)} in ·{' '}
+                                {pricePerM(p().output_price_per_token)} out
                               </span>
-                            }
-                          >
-                            <Show when={model.pricing}>
-                              {(p) => (
-                                <span class="routing-modal__model-price">
-                                  {pricePerM(p().input_price_per_token)} in ·{' '}
-                                  {pricePerM(p().output_price_per_token)} out
-                                </span>
-                              )}
-                            </Show>
+                            )}
                           </Show>
-                        </span>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-            )}
-          </For>
-          <Show when={groupedModels().length === 0}>
-            <div class="routing-modal__empty">
-              {search().trim()
-                ? 'No models match your search.'
-                : showFreeOnly()
-                  ? 'No free models available from your connected providers.'
-                  : isSub()
-                    ? 'No subscription providers connected. Connect a provider to see models.'
-                    : isLocal()
-                      ? 'No local providers connected. Connect a local provider to see models.'
-                      : 'No API key providers connected. Connect a provider to see models.'}
-              <Show when={!search().trim() && !showFreeOnly() && props.onConnectProviders}>
-                <button
-                  class="btn btn--primary btn--sm"
-                  style="margin-top: 12px;"
-                  onClick={() => props.onConnectProviders?.()}
-                >
-                  Connect provider
-                </button>
-              </Show>
-            </div>
-          </Show>
-        </div>
+                        </Show>
+                      </span>
+                    </button>
+                  );
+                })()
+              )
+            }
+          </VirtualList>
+        </Show>
       </div>
     </div>
   );

@@ -128,4 +128,126 @@ describe('MessageFeedbackService', () => {
       expect(msgQb.andWhere).toHaveBeenCalled();
     });
   });
+
+  describe('request-first storage', () => {
+    it('stores feedback on an explicit request', async () => {
+      const requestUpdate = jest.fn().mockResolvedValue({ affected: 1 });
+      const requestRepo = {
+        findOne: jest.fn().mockResolvedValue({ id: 'req-1', tenant_id: 'tenant-123' }),
+        update: requestUpdate,
+      };
+      const messageRepo = {
+        createQueryBuilder: jest.fn(),
+        update: jest.fn(),
+      };
+      const requestService = new MessageFeedbackService(messageRepo as never, requestRepo as never);
+
+      await requestService.setFeedback('req-1', 'tenant-123', 'like');
+
+      expect(requestUpdate).toHaveBeenCalledWith('req-1', {
+        feedback_rating: 'like',
+        feedback_tags: null,
+        feedback_details: null,
+      });
+      expect(messageRepo.createQueryBuilder).not.toHaveBeenCalled();
+    });
+
+    it('stores feedback on an unlinked attempt exposed as a synthetic request', async () => {
+      const attemptQb = mockQb({ id: 'attempt-1', tenant_id: 'tenant-123', request_id: null });
+      const attemptUpdate = jest.fn().mockResolvedValue({ affected: 1 });
+      const requestRepo = {
+        findOne: jest.fn().mockResolvedValue(null),
+        update: jest.fn(),
+      };
+      const messageRepo = {
+        createQueryBuilder: jest.fn().mockReturnValue(attemptQb),
+        update: attemptUpdate,
+      };
+      const requestService = new MessageFeedbackService(messageRepo as never, requestRepo as never);
+
+      await requestService.setFeedback('attempt-1', 'tenant-123', 'dislike', ['Too slow']);
+
+      expect(attemptUpdate).toHaveBeenCalledWith('attempt-1', {
+        feedback_rating: 'dislike',
+        feedback_tags: 'Too slow',
+        feedback_details: null,
+      });
+    });
+
+    it('resolves a linked attempt detail id to its parent request', async () => {
+      const attemptQb = mockQb({
+        id: 'attempt-1',
+        tenant_id: 'tenant-123',
+        request_id: 'req-1',
+      });
+      const requestUpdate = jest.fn().mockResolvedValue({ affected: 1 });
+      const requestRepo = {
+        findOne: jest
+          .fn()
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ id: 'req-1', tenant_id: 'tenant-123' }),
+        update: requestUpdate,
+      };
+      const messageRepo = {
+        createQueryBuilder: jest.fn().mockReturnValue(attemptQb),
+        update: jest.fn(),
+      };
+      const requestService = new MessageFeedbackService(messageRepo as never, requestRepo as never);
+
+      await requestService.setFeedback('attempt-1', 'tenant-123', 'like');
+
+      expect(requestRepo.findOne).toHaveBeenLastCalledWith({
+        where: { id: 'req-1', tenant_id: 'tenant-123' },
+      });
+      expect(requestUpdate).toHaveBeenCalledWith('req-1', {
+        feedback_rating: 'like',
+        feedback_tags: null,
+        feedback_details: null,
+      });
+      expect(messageRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('clears feedback on an explicit request', async () => {
+      const requestUpdate = jest.fn().mockResolvedValue({ affected: 1 });
+      const requestService = new MessageFeedbackService(
+        { createQueryBuilder: jest.fn(), update: jest.fn() } as never,
+        {
+          findOne: jest.fn().mockResolvedValue({ id: 'req-1', tenant_id: 'tenant-123' }),
+          update: requestUpdate,
+        } as never,
+      );
+
+      await requestService.clearFeedback('req-1', 'tenant-123');
+
+      expect(requestUpdate).toHaveBeenCalledWith('req-1', {
+        feedback_rating: null,
+        feedback_tags: null,
+        feedback_details: null,
+      });
+    });
+
+    it('rejects a linked attempt whose parent is outside the tenant', async () => {
+      const attemptQb = mockQb({
+        id: 'attempt-1',
+        tenant_id: 'tenant-123',
+        request_id: 'req-missing',
+      });
+      const requestService = new MessageFeedbackService(
+        { createQueryBuilder: jest.fn(() => attemptQb), update: jest.fn() } as never,
+        { findOne: jest.fn().mockResolvedValue(null), update: jest.fn() } as never,
+      );
+
+      await expect(requestService.setFeedback('attempt-1', 'tenant-123', 'like')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('does not query request ownership without a tenant', async () => {
+      const requestRepo = { findOne: jest.fn(), update: jest.fn() };
+      const requestService = new MessageFeedbackService({} as never, requestRepo as never);
+
+      await expect((requestService as any).findOwnedRequest('req-1', null)).resolves.toBeNull();
+      expect(requestRepo.findOne).not.toHaveBeenCalled();
+    });
+  });
 });

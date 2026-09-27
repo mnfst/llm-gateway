@@ -25,16 +25,18 @@ export const TIER_DESCRIPTIONS: Readonly<Record<TierSlot, string>> = {
 
 /**
  * Superset of the scoring-output `Tier` that includes non-scoring tier values
- * which can legally appear in `agent_messages.routing_tier` — currently just
- * `'playground'`, emitted by `/api/v1/playground/run`. Use this type (not `Tier`)
+ * which can legally appear in `agent_messages.routing_tier`: `'direct'` for
+ * explicit SDK model overrides and `'playground'` for `/api/v1/playground/run`.
+ * Use this type (not `Tier`)
  * for message badges, filters, and telemetry buckets. Do NOT use it in the
  * scoring, routing, or tier-assignment layers — those consume the narrower
  * `Tier` domain.
  */
-export const ALL_TIERS = [...TIERS, 'playground'] as const;
+export const ALL_TIERS = [...TIERS, 'direct', 'playground'] as const;
 export type MessageTier = (typeof ALL_TIERS)[number];
 
 export const TIER_LABELS_ALL: Readonly<Record<MessageTier, string>> = {
   ...TIER_LABELS,
+  direct: 'Direct',
   playground: 'Playground',
 };

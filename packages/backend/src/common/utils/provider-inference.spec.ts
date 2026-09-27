@@ -53,6 +53,18 @@ describe('inferProviderFromModel', () => {
     expect(inferProviderFromModel('moonshot-v1-128k')).toBe('moonshot');
   });
 
+  it('returns "moonshot" for the bare Kimi Coding Plan wire ids', () => {
+    expect(inferProviderFromModel('k3')).toBe('moonshot');
+    expect(inferProviderFromModel('k3-256k')).toBe('moonshot');
+    expect(inferProviderFromModel('kimi-for-coding')).toBe('moonshot');
+    expect(inferProviderFromModel('kimi-for-coding-highspeed')).toBe('moonshot');
+  });
+
+  it('does not infer moonshot for unrelated k3-prefixed ids', () => {
+    expect(inferProviderFromModel('k3pro')).toBeUndefined();
+    expect(inferProviderFromModel('k30')).toBeUndefined();
+  });
+
   it('returns "minimax" for minimax- prefix', () => {
     expect(inferProviderFromModel('MiniMax-M2.5')).toBe('minimax');
   });

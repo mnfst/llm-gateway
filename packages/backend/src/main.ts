@@ -1,18 +1,32 @@
+// Keep this first so opt-in Sentry error monitoring initializes before Nest.
+import './instrument';
 import { NestFactory } from '@nestjs/core';
 import { ConsoleLogger, Logger, ValidationPipe } from '@nestjs/common';
 import helmet from 'helmet';
 import compression from 'compression';
 import * as express from 'express';
 import { AppModule } from './app.module';
-import { auth } from './auth/auth.instance';
+import { auth, mcpDisabledReason, mcpEnabled } from './auth/auth.instance';
+import { mcpOAuthResponse } from './auth/mcp-oauth-response';
+import { mountMcpDiscovery, mountMcpUnavailable } from './mcp/mcp-discovery';
 import { SpaFallbackFilter } from './common/filters/spa-fallback.filter';
 import { httpErrorLogger } from './common/middleware/http-error-logger.middleware';
 import {
+  API_BODY_LIMIT,
+  PROXY_BODY_LIMIT,
+  bodyParserErrorHandler,
+  createProxyBodyBudgetMiddleware,
+} from './common/middleware/body-parser-limits';
+import {
+  applyPivotClaimCors,
   applyPrivateNetworkAllow,
+  buildCorsOptions,
   buildDevAllowedOrigins,
+  buildProdAllowedOrigins,
   buildFrameSrc,
-  createCorsOriginHandler,
+  parseFrameAncestors,
 } from './cors-csp-config';
+import { createRateLimitReachedHandler } from './common/middleware/rate-limit-log';
 import { shouldCompress } from './routing/proxy/compression-filter';
 
 export async function bootstrap() {
@@ -51,12 +65,7 @@ export async function bootstrap() {
           fontSrc: ["'self'"],
           objectSrc: ["'none'"],
           frameSrc,
-          frameAncestors: process.env['FRAME_ANCESTORS']
-            ? process.env['FRAME_ANCESTORS']
-                .split(',')
-                .map((v) => v.trim())
-                .filter((v) => v !== '*')
-            : ["'none'"],
+          frameAncestors: parseFrameAncestors(process.env['FRAME_ANCESTORS']),
           // Disable helmet's default `upgrade-insecure-requests`: it breaks
           // HTTP-only LAN deployments (10.x / 192.168.x / 172.16-31.x) where
           // browsers don't treat the origin as trustworthy and rewrite
@@ -73,42 +82,57 @@ export async function bootstrap() {
   // the package's default content-type filter.
   app.use(compression({ filter: shouldCompress }));
 
-  // CORS is enabled only in dev so the Vite frontend on :3000, the local
-  // Wingman build at `WINGMAN_PORT`, and the hosted Wingman SPA can hit
-  // the backend cross-origin. Production never enables CORS — the
-  // dashboard is same-origin and the Wingman drawer is dead-code-
-  // eliminated, so there are no legitimate cross-origin callers.
+  // CORS: the dashboard is same-origin, but the hosted Wingman gateway tester
+  // (https://wingman.manifest.build) is a legitimate cross-origin caller of the
+  // gateway routes, so both dev and production allow its origin. Dev also allows
+  // the Vite frontend on :3000 and the local Wingman build at `WINGMAN_PORT`;
+  // production allows the hosted Wingman origin plus any `WINGMAN_CORS_ORIGINS` a
+  // self-hoster opts into.
   //
-  // `credentials: false` is deliberate — Wingman uses bearer keys, never
-  // cookies, and keeping credentials off the cross-origin path means a
-  // misconfigured allow-list can't leak session cookies. We omit
-  // `allowedHeaders` on purpose so the cors middleware reflects the
-  // request's `Access-Control-Request-Headers`: Wingman replays real SDK
-  // fingerprints (e.g. the OpenAI/Stainless `X-Stainless-*` family), and a
-  // fixed allow-list silently fails those preflights.
-  if (isDev) {
-    const configuredOrigin = process.env['CORS_ORIGIN'] || 'http://localhost:3000';
-    const allowedOrigins = buildDevAllowedOrigins({
-      configuredOrigin,
-      wingmanPort,
-    });
-    // PNA preflight must answer before the cors middleware ends the
-    // OPTIONS response. Registering this `app.use` first puts it ahead
-    // of the cors handler in the express middleware chain.
-    app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
-      applyPrivateNetworkAllow(req, allowedOrigins, (name, value) => res.setHeader(name, value));
-      next();
-    });
-    app.enableCors({
-      origin: createCorsOriginHandler(allowedOrigins),
-      credentials: false,
-    });
-  }
+  // See `buildCorsOptions` for the rationale behind `credentials: false`, the
+  // omitted `allowedHeaders`, and the preflight `maxAge`.
+  const corsAllowedOrigins = isDev
+    ? buildDevAllowedOrigins({
+        configuredOrigin: process.env['CORS_ORIGIN'] || 'http://localhost:3000',
+        wingmanPort,
+      })
+    : buildProdAllowedOrigins({ extraOrigins: process.env['WINGMAN_CORS_ORIGINS'] });
+  // Legacy Private Network Access support, for browsers older than Chrome 138.
+  // Newer Chrome replaced PNA with Local Network Access, a user permission that
+  // no response header can satisfy — so this does *not* fix a blocked
+  // public-HTTPS → loopback request on a current browser, however much the
+  // browser's "CORS error" wording suggests it should. See the note on
+  // `applyPrivateNetworkAllow` before reaching for it. Registered ahead of the
+  // cors middleware because the preflight has to be answered before that
+  // middleware ends the OPTIONS response; it only echoes the header for
+  // already-allow-listed origins, so it's a no-op for a public gateway.
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    applyPrivateNetworkAllow(req, corsAllowedOrigins, (name, value) => res.setHeader(name, value));
+    next();
+  });
+  // The pivot waiting-list claim is posted from self-hosted dashboards in the
+  // browser, so this one route answers CORS for any origin. Registered before
+  // the allow-list cors middleware so its preflight wins; see
+  // `applyPivotClaimCors` for why this is safe.
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const handled = applyPivotClaimCors(req, (name, value) => res.setHeader(name, value));
+    if (handled) {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+  app.enableCors(buildCorsOptions(corsAllowedOrigins));
 
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
       whitelist: true,
+      // Reject requests carrying unknown fields with a 400 instead of silently
+      // stripping them. `whitelist` alone drops extras without a signal, which
+      // hides client/API misuse; forbidding them surfaces it and keeps the DTO
+      // contract strict.
+      forbidNonWhitelisted: true,
     }),
   );
 
@@ -150,6 +174,7 @@ export async function bootstrap() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many login attempts. Try again later.' },
+    handler: createRateLimitReachedHandler('sign-in'),
   });
   const signupLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -157,6 +182,7 @@ export async function bootstrap() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many sign-up attempts. Try again later.' },
+    handler: createRateLimitReachedHandler('sign-up'),
   });
   // forget-password is the worst offender: each request sends an email and
   // can be used for account enumeration via timing differences. Tight cap.
@@ -166,6 +192,7 @@ export async function bootstrap() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many password reset requests. Try again later.' },
+    handler: createRateLimitReachedHandler('password-reset'),
   });
   const verifyEmailLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -173,6 +200,7 @@ export async function bootstrap() {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many verification requests. Try again later.' },
+    handler: createRateLimitReachedHandler('verify-email'),
   });
   expressApp.use('/api/auth/sign-in', loginLimiter);
   expressApp.use('/api/auth/sign-up', signupLimiter);
@@ -184,11 +212,34 @@ export async function bootstrap() {
 
   // Mount Better Auth handler (needs raw body, before express.json)
   const { toNodeHandler } = await import('better-auth/node');
-  expressApp.all('/api/auth/*splat', toNodeHandler(auth));
+  const authHandler = (request: Request) =>
+    auth.handler(request).then((response) => mcpOAuthResponse(request, response));
+  expressApp.all(
+    '/api/auth/*splat',
+    // Better Auth's adapter checks for a handler property and delegates to it.
+    toNodeHandler({ handler: authHandler } as typeof auth),
+  );
 
-  // Re-add body parsing for NestJS routes
-  expressApp.use(express.json({ limit: '1mb' }));
-  expressApp.use(express.urlencoded({ extended: true, limit: '1mb' }));
+  // Re-add body parsing for NestJS routes. The OpenAI-compatible proxy has a
+  // separate parser because clients may legitimately send large inline image
+  // payloads. Regular Manifest API/auth routes stay small.
+  expressApp.use('/v1', createProxyBodyBudgetMiddleware());
+  expressApp.use('/v1', express.json({ limit: PROXY_BODY_LIMIT }));
+  expressApp.use('/v1', express.urlencoded({ extended: true, limit: PROXY_BODY_LIMIT }));
+  expressApp.use(express.json({ limit: API_BODY_LIMIT }));
+  expressApp.use(express.urlencoded({ extended: true, limit: API_BODY_LIMIT }));
+  expressApp.use(bodyParserErrorHandler);
+
+  // Both the OAuth discovery documents and the MCP module go together: with the
+  // Better Auth MCP plugin unloaded there is no authorization server to
+  // advertise, and publishing metadata for an endpoint that does not exist
+  // sends clients into a flow that cannot complete.
+  if (mcpEnabled) {
+    mountMcpDiscovery(app);
+  } else {
+    mountMcpUnavailable(app);
+    logger.warn(`Remote MCP server disabled: ${mcpDisabledReason}`);
+  }
 
   const port = Number(process.env['PORT'] ?? 3001);
   const host = process.env['BIND_ADDRESS'] ?? '127.0.0.1';

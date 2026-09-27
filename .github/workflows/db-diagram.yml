@@ -80,15 +80,24 @@ jobs:
             -- packages/backend/src/database/migrations/ > /tmp/changed-migrations.txt
           cat /tmp/changed-migrations.txt
 
-      - name: Swap migrations dir to base ref
-        run: |
-          rm -rf packages/backend/src/database/migrations
-          git checkout "$BASE_SHA" -- packages/backend/src/database/migrations/
-
-      - name: Run BASE migrations
+      - name: Run BASE migrations (clean base checkout)
         env:
           DATABASE_URL: ${{ env.BASE_DB_URL }}
-        run: npm run migration:run --workspace=packages/backend
+        run: |
+          # Build the base schema from a clean checkout of the base commit so the
+          # whole database definition (data-source-definitions.ts + entities +
+          # migrations) stays internally consistent. Swapping only the migrations
+          # directory breaks once migrations are imported explicitly
+          # (data-source-definitions.ts) or when a PR adds/removes entities.
+          # Reuse the already-installed HEAD node_modules: dependency versions do
+          # not change across the few commits in a PR range.
+          git worktree add --detach /tmp/base-tree "$BASE_SHA"
+          ln -s "$GITHUB_WORKSPACE/node_modules" /tmp/base-tree/node_modules
+          ln -s \
+            "$GITHUB_WORKSPACE/packages/backend/node_modules" \
+            /tmp/base-tree/packages/backend/node_modules
+          cd /tmp/base-tree
+          npm run migration:run --workspace=packages/backend
 
       - name: Extract BASE schema
         env:

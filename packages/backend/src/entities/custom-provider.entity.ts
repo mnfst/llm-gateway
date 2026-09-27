@@ -30,6 +30,16 @@ export class CustomProvider {
   @Column('varchar')
   name!: string;
 
+  /**
+   * Public prefix of this provider's model ids in `/v1/models`
+   * (`<alias>/<model_name>`). Null means the models publish under the
+   * internal `custom:<uuid>/<model_name>` key. Uniqueness is a
+   * case-insensitive partial index on (tenant_id, LOWER(alias)) owned by
+   * the migration, same as `name`.
+   */
+  @Column('varchar', { nullable: true })
+  alias!: string | null;
+
   @Column('varchar')
   base_url!: string;
 

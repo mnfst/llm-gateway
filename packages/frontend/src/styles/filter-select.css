@@ -62,6 +62,12 @@
   background: hsl(var(--muted));
 }
 
+.agent-filter-select__item:disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
 .agent-filter-select__actions {
   display: flex;
   gap: 8px;

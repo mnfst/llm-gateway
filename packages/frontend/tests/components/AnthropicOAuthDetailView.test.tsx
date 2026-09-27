@@ -70,6 +70,19 @@ function renderView(connectedValue = false) {
 
 const OAUTH_PAYLOAD = 'auth-code-123#state-xyz';
 
+function mockOpenPopup() {
+  const replace = vi.fn();
+  const close = vi.fn();
+  const popup = {
+    closed: false,
+    opener: window,
+    close,
+    location: { replace },
+  } as unknown as Window;
+  const openSpy = vi.spyOn(window, 'open').mockReturnValue(popup);
+  return { popup, openSpy, replace, close };
+}
+
 describe('AnthropicOAuthDetailView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,8 +95,7 @@ describe('AnthropicOAuthDetailView', () => {
     expect(screen.getByLabelText('Anthropic authorization code')).toBeDefined();
   });
 
-  it('shows a toast and clears state when the popup is blocked', async () => {
-    mockStartAnthropicOAuth.mockResolvedValue({ url: 'https://x', state: 'abc' });
+  it('shows a toast without starting OAuth when the popup is blocked', async () => {
     const openSpy = vi.spyOn(window, 'open').mockReturnValue(null);
 
     renderView();
@@ -92,14 +104,13 @@ describe('AnthropicOAuthDetailView', () => {
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith(expect.stringMatching(/Popup was blocked/));
     });
+    expect(mockStartAnthropicOAuth).not.toHaveBeenCalled();
     openSpy.mockRestore();
   });
 
   it('starts the OAuth flow and opens a popup', async () => {
     mockStartAnthropicOAuth.mockResolvedValue({ url: 'https://x', state: 'abc' });
-    const openSpy = vi
-      .spyOn(window, 'open')
-      .mockReturnValue({ closed: false } as unknown as Window);
+    const { popup, openSpy, replace } = mockOpenPopup();
 
     renderView();
     fireEvent.click(screen.getByText('Sign in with Claude'));
@@ -107,18 +118,16 @@ describe('AnthropicOAuthDetailView', () => {
     await waitFor(() => {
       expect(mockStartAnthropicOAuth).toHaveBeenCalledWith('test-agent');
     });
-    expect(openSpy).toHaveBeenCalledWith(
-      'https://x',
-      'manifest-anthropic-oauth',
-      'noopener,noreferrer',
-    );
+    expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank');
+    expect(popup.opener).toBeNull();
+    expect(replace).toHaveBeenCalledWith('https://x');
     openSpy.mockRestore();
   });
 
   it('exchanges a pasted authorization code', async () => {
     mockStartAnthropicOAuth.mockResolvedValue({ url: 'https://x', state: 'state-xyz' });
     mockSubmitAnthropicOAuth.mockResolvedValue({ ok: true });
-    vi.spyOn(window, 'open').mockReturnValue({ closed: false } as unknown as Window);
+    mockOpenPopup();
 
     const { onClose, onUpdate } = renderView();
     fireEvent.click(screen.getByText('Sign in with Claude'));
@@ -223,7 +232,7 @@ describe('AnthropicOAuthDetailView', () => {
   it('shows an error if the OAuth exchange fails', async () => {
     mockStartAnthropicOAuth.mockResolvedValue({ url: 'https://x', state: 's1' });
     mockSubmitAnthropicOAuth.mockRejectedValue(new Error('boom'));
-    vi.spyOn(window, 'open').mockReturnValue({ closed: false } as unknown as Window);
+    mockOpenPopup();
 
     renderView();
     fireEvent.click(screen.getByText('Sign in with Claude'));
@@ -241,7 +250,7 @@ describe('AnthropicOAuthDetailView', () => {
   it('shows the generic exchange error when the failure is not an Error object', async () => {
     mockStartAnthropicOAuth.mockResolvedValue({ url: 'https://x', state: 's1' });
     mockSubmitAnthropicOAuth.mockRejectedValue('boom');
-    vi.spyOn(window, 'open').mockReturnValue({ closed: false } as unknown as Window);
+    mockOpenPopup();
 
     renderView();
     fireEvent.click(screen.getByText('Sign in with Claude'));
@@ -354,9 +363,11 @@ describe('AnthropicOAuthDetailView', () => {
 
   it('swallows errors thrown by startAnthropicOAuth', async () => {
     mockStartAnthropicOAuth.mockRejectedValue(new Error('network'));
+    const { close } = mockOpenPopup();
     renderView();
     fireEvent.click(screen.getByText('Sign in with Claude'));
     await waitFor(() => expect(mockStartAnthropicOAuth).toHaveBeenCalled());
+    expect(close).toHaveBeenCalled();
     expect(screen.getByText('Sign in with Claude')).toBeDefined();
   });
 });
@@ -562,7 +573,7 @@ describe('AnthropicOAuthDetailView — addKeyOpen effect', () => {
 
   it('auto-launches handleSignIn when addKeyOpen is true and connected', async () => {
     mockStartAnthropicOAuth.mockResolvedValue({ url: 'https://x', state: 'abc' });
-    vi.spyOn(window, 'open').mockReturnValue({ closed: false } as unknown as Window);
+    mockOpenPopup();
 
     renderViewWithAddKeyOpen();
 
@@ -572,9 +583,59 @@ describe('AnthropicOAuthDetailView — addKeyOpen effect', () => {
     expect(screen.getByLabelText('Anthropic authorization code')).toBeDefined();
   });
 
+  it('opens the add-account popup before the OAuth start request resolves', async () => {
+    let resolveStart: (value: { url: string; state: string }) => void = () => {};
+    mockStartAnthropicOAuth.mockReturnValue(
+      new Promise<{ url: string; state: string }>((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+    const { popup, openSpy, replace } = mockOpenPopup();
+
+    renderViewWithAddKeyOpen();
+
+    await waitFor(() => {
+      expect(openSpy).toHaveBeenCalledWith('about:blank', '_blank');
+    });
+    expect(mockStartAnthropicOAuth).toHaveBeenCalledWith('test-agent');
+    expect(popup.opener).toBeNull();
+    expect(replace).not.toHaveBeenCalled();
+
+    resolveStart({ url: 'https://x', state: 'abc' });
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith('https://x');
+    });
+  });
+
+  it('does not navigate a popup closed while the OAuth start request is pending', async () => {
+    let resolveStart: (value: { url: string; state: string }) => void = () => {};
+    mockStartAnthropicOAuth.mockReturnValue(
+      new Promise<{ url: string; state: string }>((resolve) => {
+        resolveStart = resolve;
+      }),
+    );
+    const { popup, replace, close } = mockOpenPopup();
+
+    renderViewWithAddKeyOpen();
+    await waitFor(() => {
+      expect(mockStartAnthropicOAuth).toHaveBeenCalledWith('test-agent');
+    });
+
+    Object.defineProperty(popup, 'closed', { value: true });
+    resolveStart({ url: 'https://x', state: 'abc' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Sign in with Claude')).toBeDefined();
+    });
+    expect(replace).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Anthropic authorization code')).toBeDefined();
+  });
+
   it('cancels a connected add-account Claude OAuth flow', async () => {
     mockStartAnthropicOAuth.mockResolvedValue({ url: 'https://x', state: 'abc' });
-    vi.spyOn(window, 'open').mockReturnValue({ closed: false } as unknown as Window);
+    mockOpenPopup();
 
     renderViewWithAddKeyOpen();
 

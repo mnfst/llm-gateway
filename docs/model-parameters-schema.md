@@ -7,12 +7,10 @@ catalog. The catalog is metadata: it describes which request parameters Manifest
 can configure for a provider/auth/model tuple. User-selected values still live in
 `agent_model_params`.
 
-The primary on-demand runtime source is
-`https://modelparams.dev/api/v1/params/{model}.json`, where subscription
-variants use the `-subscription` model suffix. Manifest still refreshes
-`https://modelparams.dev/api/v1/models.json` as the offline/index fallback, and
-keeps the latest valid remote catalog in memory through transient refresh
-failures.
+The runtime source is the versioned `modelparams` npm package, generated from
+the same modelparams.dev catalog. Manifest loads that package catalog at runtime
+and keeps provider/auth/model route matching inside
+`ProviderParamSpecService`.
 
 The executable validator is `isParamApplicability` in
 `packages/shared/src/provider-params-spec.ts`. Any schema change must update:

@@ -66,7 +66,10 @@ vi.mock('../../src/components/playground/PlaygroundColumn.jsx', () => ({
         <span data-testid={`fastest-${c.id}`}>{String(props.isFastest)}</span>
         <span data-testid={`readonly-${c.id}`}>{String(props.readOnly)}</span>
         <span data-testid={`hasmarkbest-${c.id}`}>{String(!!props.onMarkBest)}</span>
-        <button data-testid={`markbest-${c.id}`} onClick={() => (props.onMarkBest as () => void)?.()}>
+        <button
+          data-testid={`markbest-${c.id}`}
+          onClick={() => (props.onMarkBest as () => void)?.()}
+        >
           mb
         </button>
         <button
@@ -81,7 +84,10 @@ vi.mock('../../src/components/playground/PlaygroundColumn.jsx', () => ({
         >
           ch
         </button>
-        <button data-testid={`retry-${c.id}`} onClick={() => (props.onRetry as (id: string) => void)(c.id)}>
+        <button
+          data-testid={`retry-${c.id}`}
+          onClick={() => (props.onRetry as (id: string) => void)(c.id)}
+        >
           rt
         </button>
       </div>
@@ -89,31 +95,38 @@ vi.mock('../../src/components/playground/PlaygroundColumn.jsx', () => ({
   },
 }));
 
+let mockPromptTextarea: HTMLTextAreaElement | null = null;
 vi.mock('../../src/components/playground/PlaygroundPrompt.jsx', () => ({
-  default: (props: Record<string, unknown>) => (
-    <div data-testid="prompt">
-      <span data-testid="prompt-disabled">{String(props.disabled)}</span>
-      {/* Touch every prop so SolidJS evaluates each accessor (coverage). */}
-      <span data-testid="prompt-value">{String(props.value)}</span>
-      <span data-testid="prompt-running">{String(props.running)}</span>
-      {props.headersSlot as JSX.Element}
-      <button data-testid="prompt-submit" onClick={() => (props.onSubmit as () => void)()}>
-        submit
-      </button>
-      <button
-        data-testid="prompt-set"
-        onClick={() => (props.onChange as (v: string) => void)('hello world')}
-      >
-        set
-      </button>
-      <button
-        data-testid="prompt-recall"
-        onClick={() => (props.onRecallPrevious as () => void)()}
-      >
-        recall
-      </button>
-    </div>
-  ),
+  default: (props: Record<string, unknown>) => {
+    // Simulate the ref callback: create a fake textarea and pass it back.
+    const el = document.createElement('textarea');
+    mockPromptTextarea = el;
+    (props.ref as ((el: HTMLTextAreaElement) => void) | undefined)?.(el);
+    return (
+      <div data-testid="prompt">
+        <span data-testid="prompt-disabled">{String(props.disabled)}</span>
+        {/* Touch every prop so SolidJS evaluates each accessor (coverage). */}
+        <span data-testid="prompt-value">{String(props.value)}</span>
+        <span data-testid="prompt-running">{String(props.running)}</span>
+        {props.headersSlot as JSX.Element}
+        <button data-testid="prompt-submit" onClick={() => (props.onSubmit as () => void)()}>
+          submit
+        </button>
+        <button
+          data-testid="prompt-set"
+          onClick={() => (props.onChange as (v: string) => void)('hello world')}
+        >
+          set
+        </button>
+        <button
+          data-testid="prompt-recall"
+          onClick={() => (props.onRecallPrevious as () => void)()}
+        >
+          recall
+        </button>
+      </div>
+    );
+  },
 }));
 
 let lastSummaryProps: Record<string, unknown> | null = null;
@@ -225,9 +238,7 @@ vi.mock('../../src/components/playground/RequestHeadersPopover.jsx', async (impo
         <span data-testid="headers-entrycount">{props.entries.length}</span>
         <button
           data-testid="headers-change"
-          onClick={() =>
-            props.onChange([{ id: 'h1', key: 'X-Custom', value: 'v1' }])
-          }
+          onClick={() => props.onChange([{ id: 'h1', key: 'X-Custom', value: 'v1' }])}
         >
           change
         </button>
@@ -270,7 +281,10 @@ vi.mock('../../src/components/ProviderSelectModal.jsx', () => ({
         <button data-testid="provider-modal-close" onClick={() => (props.onClose as () => void)()}>
           close
         </button>
-        <button data-testid="provider-modal-update" onClick={() => (props.onUpdate as () => void)()}>
+        <button
+          data-testid="provider-modal-update"
+          onClick={() => (props.onUpdate as () => void)()}
+        >
           update
         </button>
       </div>
@@ -361,6 +375,7 @@ describe('Playground page', () => {
     lastSummaryProps = null;
     providerModalProps = null;
     sidebarContent = null;
+    mockPromptTextarea = null;
     searchParamsState.run = undefined;
     for (const k of Object.keys(lsStore)) delete lsStore[k];
     for (const k of Object.keys(ssStore)) delete ssStore[k];
@@ -370,11 +385,17 @@ describe('Playground page', () => {
     mockGetCustomProviders.mockReset().mockResolvedValue([]);
     mockGetPlaygroundAgent.mockReset().mockResolvedValue({ name: agentName });
     mockGetPlaygroundRun.mockReset().mockResolvedValue(makeRunDetail());
-    mockListPlaygroundRuns
-      .mockReset()
-      .mockResolvedValue([
-        { id: 'r-42', prompt: 'p', createdAt: '2026-01-01', modelCount: 1, models: ['M'], starred: false, bestColumnId: null },
-      ]);
+    mockListPlaygroundRuns.mockReset().mockResolvedValue([
+      {
+        id: 'r-42',
+        prompt: 'p',
+        createdAt: '2026-01-01',
+        modelCount: 1,
+        models: ['M'],
+        starred: false,
+        bestColumnId: null,
+      },
+    ]);
     mockStreamPlayground.mockReset().mockResolvedValue(streamResult());
     mockSetPlaygroundRunBest.mockReset().mockResolvedValue('dbcol-1');
     setSearchParamsFn.mockClear();
@@ -452,9 +473,7 @@ describe('Playground page', () => {
 
       await waitFor(() => expect(mockStreamPlayground).toHaveBeenCalled());
       // Run id was set in the URL + sessionStorage.
-      await waitFor(() =>
-        expect(ssStore['manifest.playground.lastRun']).toBeDefined(),
-      );
+      await waitFor(() => expect(ssStore['manifest.playground.lastRun']).toBeDefined());
       // The running→idle effect refreshes history and auto-selects the latest.
       await waitFor(() => expect(mockListPlaygroundRuns).toHaveBeenCalled());
       // After streaming completes the summary table receives the columns.
@@ -471,9 +490,9 @@ describe('Playground page', () => {
       fireEvent.click(await find('prompt-submit'));
       // No prompt set → runAll() returns undefined → no run param written.
       await new Promise((r) => setTimeout(r, 20));
-      expect(
-        setSearchParamsFn.mock.calls.some((c) => c[0] && 'run' in c[0] && c[0].run),
-      ).toBe(false);
+      expect(setSearchParamsFn.mock.calls.some((c) => c[0] && 'run' in c[0] && c[0].run)).toBe(
+        false,
+      );
     });
 
     it('toasts when the streamed run fails for a column', async () => {
@@ -489,17 +508,16 @@ describe('Playground page', () => {
 
   describe('winner badges (real findWinners)', () => {
     it('marks the cheapest + fastest columns once two columns succeed', async () => {
-      mockStreamPlayground.mockImplementation(
-        async (req: { model: string }) =>
-          req.model === 'openai/gpt-4o-mini'
-            ? streamResult({
-                columnId: 'db-openai',
-                metrics: { cost: 0.001, inputTokens: 1, outputTokens: 2, durationMs: 50 },
-              })
-            : streamResult({
-                columnId: 'db-anthropic',
-                metrics: { cost: 0.005, inputTokens: 1, outputTokens: 2, durationMs: 300 },
-              }),
+      mockStreamPlayground.mockImplementation(async (req: { model: string }) =>
+        req.model === 'openai/gpt-4o-mini'
+          ? streamResult({
+              columnId: 'db-openai',
+              metrics: { cost: 0.001, inputTokens: 1, outputTokens: 2, durationMs: 50 },
+            })
+          : streamResult({
+              columnId: 'db-anthropic',
+              metrics: { cost: 0.005, inputTokens: 1, outputTokens: 2, durationMs: 300 },
+            }),
       );
       render(() => <Playground />);
       await find('prompt-set');
@@ -519,35 +537,46 @@ describe('Playground page', () => {
       expect(fastFlags).toContain('true');
       // Summary table receives the completed columns.
       await waitFor(() =>
-        expect(Number(document.querySelector('[data-testid="summary-cols"]')?.textContent)).toBe(
-          2,
-        ),
+        expect(Number(document.querySelector('[data-testid="summary-cols"]')?.textContent)).toBe(2),
       );
     });
   });
 
   describe('best answer wiring (real store.markBest)', () => {
     it('marks a column best and reflects it in the column + summary props', async () => {
-      render(() => <Playground />);
+      const onBestModelChange = vi.fn();
+      render(() => <Playground onBestModelChange={onBestModelChange} />);
       await find('prompt-set');
       fireEvent.click(await find('prompt-set'));
       fireEvent.click(await find('prompt-submit'));
       // Wait for at least one column to finish and expose a mark-best button.
-      const colId = await waitFor(() => {
+      const markedColumn = await waitFor(() => {
         const success = lastColProps.find(
           (p) => (p.column as { status: string }).status === 'success',
         );
         if (!success) throw new Error('no success column yet');
-        return (success.column as { id: string }).id;
+        return success.column as {
+          id: string;
+          model: string;
+          provider: string;
+          authType: string;
+        };
       });
       mockSetPlaygroundRunBest.mockResolvedValue('dbcol-1');
-      fireEvent.click(await find(`markbest-${colId}`));
+      fireEvent.click(await find(`markbest-${markedColumn.id}`));
       await waitFor(() => expect(mockSetPlaygroundRunBest).toHaveBeenCalled());
       await waitFor(() =>
-        expect(document.querySelector('[data-testid="summary-best"]')?.textContent).toBe(
-          'dbcol-1',
-        ),
+        expect(onBestModelChange).toHaveBeenCalledWith({
+          model: markedColumn.model,
+          provider: markedColumn.provider,
+          authType: markedColumn.authType,
+        }),
       );
+      await waitFor(() =>
+        expect(document.querySelector('[data-testid="summary-best"]')?.textContent).toBe('dbcol-1'),
+      );
+      fireEvent.click(await find(`markbest-${markedColumn.id}`));
+      await waitFor(() => expect(onBestModelChange).toHaveBeenCalledWith(null));
     });
 
     it('toasts the error when persisting the best pick fails', async () => {
@@ -695,7 +724,9 @@ describe('Playground page', () => {
       expect(document.querySelector('[data-testid="prompt"]')).not.toBeNull();
 
       fireEvent.click(await find(`remove-${colId}`));
-      await waitFor(() => expect(document.querySelector(`[data-testid="col-${colId}"]`)).toBeNull());
+      await waitFor(() =>
+        expect(document.querySelector(`[data-testid="col-${colId}"]`)).toBeNull(),
+      );
     });
 
     it('opens the add-model picker via the Add button and adds a column', async () => {
@@ -737,9 +768,7 @@ describe('Playground page', () => {
       // Close via the popover and via the toggle.
       fireEvent.click(await find('headers-close'));
       await waitFor(() =>
-        expect(document.querySelector('[data-testid="headers-open"]')?.textContent).toBe(
-          'closed',
-        ),
+        expect(document.querySelector('[data-testid="headers-open"]')?.textContent).toBe('closed'),
       );
       fireEvent.click(trigger);
       fireEvent.click(trigger);
@@ -792,7 +821,9 @@ describe('Playground page', () => {
         },
       });
       // onChange triggers updateHeaders → persistHeaders → swallowed throw.
-      expect(() => fireEvent.click(document.querySelector('[data-testid="headers-change"]') as HTMLElement)).not.toThrow();
+      expect(() =>
+        fireEvent.click(document.querySelector('[data-testid="headers-change"]') as HTMLElement),
+      ).not.toThrow();
     });
   });
 
@@ -821,6 +852,26 @@ describe('Playground page', () => {
       fireEvent.click(await find('sidebar-new'));
       // Store reset clears columns; pickDefaults reseeds afterwards.
       expect(setSearchParamsFn).toHaveBeenCalledWith({ run: undefined });
+    });
+
+    it('schedules focus on the prompt textarea via requestAnimationFrame when starting a new playground', async () => {
+      const rafSpy = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+        cb(0);
+        return 0;
+      });
+      const focusSpy = vi.fn();
+      render(() => <Playground />);
+      await waitFor(() =>
+        expect(document.querySelectorAll('[data-testid^="col-"]').length).toBeGreaterThan(0),
+      );
+      // Attach a focus spy to the textarea that the mock handed to promptRef.
+      if (mockPromptTextarea) mockPromptTextarea.focus = focusSpy;
+      renderSidebar();
+      rafSpy.mockClear();
+      fireEvent.click(await find('sidebar-new'));
+      expect(rafSpy).toHaveBeenCalled();
+      expect(focusSpy).toHaveBeenCalled();
+      rafSpy.mockRestore();
     });
 
     it('Ctrl+Shift+O starts a new playground', async () => {

@@ -5,8 +5,6 @@ import { fromNodeHeaders } from 'better-auth/node';
 import { createHash } from 'crypto';
 import { auth } from './auth.instance';
 import { IS_PUBLIC_KEY } from '../common/decorators/public.decorator';
-import { isLoopbackPeer } from '../common/utils/local-ip';
-import { isSelfHosted } from '../common/utils/detect-self-hosted';
 import { TenantCacheService } from '../common/services/tenant-cache.service';
 import { RequestWithTenantContext } from '../common/decorators/tenant-context.decorator';
 
@@ -88,24 +86,6 @@ export class SessionGuard implements CanActivate, OnModuleDestroy {
       }
     } catch (err) {
       this.logger.warn(`Session lookup failed: ${(err as Error).message}`);
-    }
-
-    // In the self-hosted version, fall back to a synthetic user for loopback
-    // requests without a session (e.g. curl, programmatic access).
-    //
-    // Use the TCP peer address (request.socket.remoteAddress) — request.ip
-    // honors `trust proxy` and X-Forwarded-For, which a remote attacker can
-    // forge when the backend is reachable directly or sits behind a proxy
-    // that fails to strip XFF. The socket address cannot be spoofed.
-    if (isSelfHosted() && isLoopbackPeer(request)) {
-      (request as Request & { user: unknown }).user = {
-        id: 'local',
-        name: 'Local User',
-        email: 'local@localhost',
-      };
-      (request as Request & { authMethod: string }).authMethod = 'session';
-      await this.attachTenantContext(request, { id: 'local' });
-      return true;
     }
 
     // Always pass — let ApiKeyGuard handle unauthenticated requests

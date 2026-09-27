@@ -1,7 +1,9 @@
 import { UnauthorizedException, BadRequestException, HttpException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ArgumentsHost } from '@nestjs/common';
+import { FREE_PLAN_REQUESTS_PER_MONTH } from 'manifest-shared';
 import { ProxyExceptionFilter } from '../proxy-exception.filter';
+import type { ProxyMessageRecorder } from '../proxy-message-recorder';
 
 function createMockHost(body: Record<string, unknown> = {}, headers: Record<string, string> = {}) {
   const req: Record<string, unknown> = { body, headers };
@@ -33,6 +35,7 @@ function chatHost(body: Record<string, unknown> = {}) {
 describe('ProxyExceptionFilter', () => {
   let filter: ProxyExceptionFilter;
   let config: jest.Mocked<ConfigService>;
+  let recordManifestBlockedRequest: jest.Mock;
 
   beforeEach(() => {
     config = {
@@ -42,7 +45,10 @@ describe('ProxyExceptionFilter', () => {
       }),
     } as unknown as jest.Mocked<ConfigService>;
 
-    filter = new ProxyExceptionFilter(config);
+    recordManifestBlockedRequest = jest.fn().mockResolvedValue(undefined);
+    filter = new ProxyExceptionFilter(config, {
+      recordManifestBlockedRequest,
+    } as unknown as ProxyMessageRecorder);
   });
 
   describe('auth errors (401) — chat client', () => {
@@ -100,6 +106,98 @@ describe('ProxyExceptionFilter', () => {
       expect(res.status).toHaveBeenCalledWith(200);
       const content = res.json.mock.calls[0][0].choices[0].message.content;
       expect(content).toContain("I don't recognize this key");
+    });
+  });
+
+  describe('recording an expired key (M004)', () => {
+    it('records the rejection against the agent the guard resolved', () => {
+      const { host, req } = chatHost({ model: 'gpt-4o' });
+      req.manifestErrorContext = {
+        tenantId: 't-1',
+        agentId: 'a-1',
+        agentName: 'Fireplace',
+        userId: 'u-1',
+      };
+
+      filter.catch(new UnauthorizedException('API key expired'), host);
+
+      expect(recordManifestBlockedRequest).toHaveBeenCalledWith(
+        req.manifestErrorContext,
+        expect.objectContaining({
+          httpStatus: 401,
+          errorCode: 'M004',
+          reason: 'key_expired',
+          model: 'gpt-4o',
+          errorMessage: expect.stringContaining('M004'),
+        }),
+      );
+    });
+
+    it('stores the same text the caller saw, dashboard link included', () => {
+      const { host, req, res } = chatHost();
+      req.manifestErrorContext = {
+        tenantId: 't-1',
+        agentId: 'a-1',
+        agentName: 'Fireplace',
+        userId: null,
+      };
+
+      filter.catch(new UnauthorizedException('API key expired'), host);
+
+      const recorded = recordManifestBlockedRequest.mock.calls[0][1].errorMessage as string;
+      const shown = res.json.mock.calls[0][0].choices[0].message.content as string;
+      expect(recorded).toBe(shown);
+      // A row that doesn't say where to generate a new key isn't actionable.
+      expect(recorded).toContain('http://localhost:3001');
+    });
+
+    it('records nothing when the key never resolved to an agent', () => {
+      const { host } = chatHost();
+      filter.catch(new UnauthorizedException('API key expired'), host);
+      expect(recordManifestBlockedRequest).not.toHaveBeenCalled();
+    });
+
+    it('records nothing for auth failures that cannot be attributed', () => {
+      const { host, req } = chatHost();
+      req.manifestErrorContext = {
+        tenantId: 't-1',
+        agentId: 'a-1',
+        agentName: 'Fireplace',
+        userId: null,
+      };
+      filter.catch(new UnauthorizedException('Invalid API key'), host);
+      expect(recordManifestBlockedRequest).not.toHaveBeenCalled();
+    });
+
+    it('swallows a recorder failure rather than turning a 401 into a 500', () => {
+      recordManifestBlockedRequest.mockRejectedValueOnce(new Error('db down'));
+      const { host, req, res } = chatHost();
+      req.manifestErrorContext = {
+        tenantId: 't-1',
+        agentId: 'a-1',
+        agentName: 'Fireplace',
+        userId: null,
+      };
+
+      expect(() => filter.catch(new UnauthorizedException('API key expired'), host)).not.toThrow();
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+
+    it('omits a non-string model rather than persisting garbage', () => {
+      const { host, req } = chatHost({ model: 42 });
+      req.manifestErrorContext = {
+        tenantId: 't-1',
+        agentId: 'a-1',
+        agentName: 'Fireplace',
+        userId: null,
+      };
+
+      filter.catch(new UnauthorizedException('API key expired'), host);
+
+      expect(recordManifestBlockedRequest).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ model: undefined }),
+      );
     });
 
     it('includes dashboard URL in auth error messages', () => {
@@ -181,7 +279,7 @@ describe('ProxyExceptionFilter', () => {
       const content = res.json.mock.calls[0][0].choices[0].message.content;
       expect(content).toContain('[🦚 Manifest M500]');
       expect(content).toContain('Something broke on our end');
-      expect(content).toContain('https://manifest.build/docs/errors/M500');
+      expect(content).toContain('https://manifest.build/llm-gateway/docs/errors/M500/');
     });
 
     it('converts unknown auth message to friendly message', () => {
@@ -262,6 +360,82 @@ describe('ProxyExceptionFilter', () => {
       filter.catch(new UnauthorizedException('Invalid API key'), host);
 
       expect(res.status).toHaveBeenCalledWith(401);
+    });
+  });
+
+  describe('plan request-limit block (402 PLAN_LIMIT_REQUESTS)', () => {
+    const blockExc = () =>
+      new HttpException(
+        {
+          statusCode: 402,
+          code: 'PLAN_LIMIT_REQUESTS',
+          limit: FREE_PLAN_REQUESTS_PER_MONTH,
+          used: FREE_PLAN_REQUESTS_PER_MONTH,
+        },
+        402,
+      );
+
+    it('renders the friendly M204 upgrade message for a non-streaming chat client (HTTP 200)', () => {
+      const { host, res } = chatHost();
+      filter.catch(blockExc(), host);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = res.json.mock.calls[0][0];
+      const content = payload.choices[0].message.content as string;
+      expect(content).toContain('M204');
+      expect(content).toContain(`${FREE_PLAN_REQUESTS_PER_MONTH} requests`);
+      expect(content).toContain('http://localhost:3001/upgrade?reason=requests');
+    });
+
+    it('returns a real 402 with insufficient_quota + code for an SDK/tool client', () => {
+      const { host, res } = createMockHost({}, { accept: 'application/json' });
+      filter.catch(blockExc(), host);
+
+      expect(res.status).toHaveBeenCalledWith(402);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({
+            type: 'insufficient_quota',
+            code: 'PLAN_LIMIT_REQUESTS',
+            message: expect.stringContaining('Upgrade to Pro'),
+          }),
+          limit: FREE_PLAN_REQUESTS_PER_MONTH,
+          used: FREE_PLAN_REQUESTS_PER_MONTH,
+        }),
+      );
+      const payload = res.json.mock.calls[0][0];
+      expect(payload.error.message).toContain('http://localhost:3001/upgrade?reason=requests');
+    });
+
+    it('ignores a 402 without the PLAN_LIMIT_REQUESTS code (falls through)', () => {
+      const { host, res } = createMockHost({}, { accept: 'application/json' });
+      filter.catch(new HttpException({ statusCode: 402, code: 'SOMETHING_ELSE' }, 402), host);
+
+      // Falls through to the generic tool envelope, not the billing branch.
+      expect(res.status).toHaveBeenCalledWith(402);
+      const payload = res.json.mock.calls[0][0];
+      expect(payload.error.type).not.toBe('insufficient_quota');
+    });
+
+    it('renders the friendly M204 upgrade message as SSE for a streaming chat client', () => {
+      const { host, res } = createMockHost({ stream: true });
+      filter.catch(blockExc(), host);
+
+      expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream');
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = res.send.mock.calls[0][0] as string;
+      expect(payload).toContain('data: [DONE]');
+      expect(payload).toContain('M204');
+    });
+
+    it('returns the 402 to an Accept: text/event-stream non-streaming client with a friendly response', () => {
+      const { host, res } = chatHost();
+      filter.catch(blockExc(), host);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      const payload = res.json.mock.calls[0][0];
+      const content = payload.choices[0].message.content as string;
+      expect(content).toContain('M204');
     });
   });
 });

@@ -11,6 +11,13 @@ jest.mock('../../../common/utils/crypto.util', () => ({
   decrypt: jest.fn(),
   encrypt: jest.fn(),
   getEncryptionSecret: jest.fn(() => 'a'.repeat(64)),
+  getDecryptionSecrets: jest.fn(() => ['test-secret-32-chars-long-enough!!']),
+  decryptWithAny: jest.fn((ciphertext: string, secrets: string[]) => {
+    const mod = jest.requireMock('../../../common/utils/crypto.util') as {
+      decrypt: (c: string, s: string) => string;
+    };
+    return { plaintext: mod.decrypt(ciphertext, secrets[0]), secretIndex: 0 };
+  }),
 }));
 
 import { decrypt } from '../../../common/utils/crypto.util';
@@ -22,7 +29,9 @@ describe('ProviderKeyService', () => {
     findOne: jest.Mock;
   };
   let pricingCache: jest.Mocked<Pick<ModelPricingCacheService, 'getByModel'>>;
-  let discoveryService: jest.Mocked<Pick<ModelDiscoveryService, 'getModelForAgent'>>;
+  let discoveryService: jest.Mocked<
+    Pick<ModelDiscoveryService, 'getModelForAgent' | 'getModelsForAgent'>
+  >;
   let routingCache: {
     getApiKey: jest.Mock;
     setApiKey: jest.Mock;
@@ -39,7 +48,10 @@ describe('ProviderKeyService', () => {
       findOne: jest.fn().mockResolvedValue(null),
     };
     pricingCache = { getByModel: jest.fn().mockReturnValue(undefined) };
-    discoveryService = { getModelForAgent: jest.fn().mockResolvedValue(undefined) };
+    discoveryService = {
+      getModelForAgent: jest.fn().mockResolvedValue(undefined),
+      getModelsForAgent: jest.fn().mockResolvedValue([]),
+    };
     routingCache = {
       getApiKey: jest.fn().mockReturnValue(undefined),
       setApiKey: jest.fn(),
@@ -532,6 +544,162 @@ describe('ProviderKeyService', () => {
         { provider: 'openai', auth_type: 'api_key', is_active: true } as TenantProvider,
       ]);
       expect(await svc.isModelAvailable('agent-1', 'gpt-4o')).toBe(true);
+    });
+  });
+
+  describe('isRouteAvailable', () => {
+    const discovered = (provider: string, id: string, authType?: string) =>
+      ({ id, provider, authType }) as never;
+
+    it('resolves an ambiguous model id through the pinned provider/authType', async () => {
+      // Two connections expose the same model id — the name-only lookup
+      // (getModelForAgent) refuses to answer, which used to disable the tier.
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('openai', 'gpt-5.5', 'api_key'),
+        discovered('openai', 'gpt-5.5', 'subscription'),
+      ]);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: 'openai',
+          authType: 'subscription',
+          model: 'gpt-5.5',
+        }),
+      ).toBe(true);
+    });
+
+    it('returns false when the pinned provider does not expose the model and has no record', async () => {
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('openai', 'gpt-5.5', 'api_key'),
+      ]);
+      providerRepo.find.mockResolvedValue([]);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: 'anthropic',
+          authType: 'api_key',
+          model: 'gpt-5.5',
+        }),
+      ).toBe(false);
+    });
+
+    it('does not accept an active provider record when discovery has other models for the pin', async () => {
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('openai', 'gpt-4o', 'api_key'),
+      ]);
+      providerRepo.find.mockResolvedValue([
+        { provider: 'openai', auth_type: 'api_key', is_active: true } as TenantProvider,
+      ]);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: 'openai',
+          authType: 'api_key',
+          model: 'retired-model',
+        }),
+      ).toBe(false);
+    });
+
+    it('falls back to an active provider record when discovery is cold', async () => {
+      discoveryService.getModelsForAgent.mockResolvedValue([]);
+      providerRepo.find.mockResolvedValue([
+        { provider: 'openai', auth_type: 'subscription', is_active: true } as TenantProvider,
+      ]);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: 'openai',
+          authType: 'subscription',
+          model: 'gpt-5.5',
+        }),
+      ).toBe(true);
+    });
+
+    it('respects the authType pin against provider records', async () => {
+      discoveryService.getModelsForAgent.mockResolvedValue([]);
+      providerRepo.find.mockResolvedValue([
+        { provider: 'openai', auth_type: 'api_key', is_active: true } as TenantProvider,
+      ]);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: 'openai',
+          authType: 'subscription',
+          model: 'gpt-5.5',
+        }),
+      ).toBe(false);
+    });
+
+    it('requires native discovery for pinned Qwen routes', async () => {
+      discoveryService.getModelsForAgent.mockResolvedValue([]);
+      providerRepo.find.mockResolvedValue([
+        { provider: 'qwen', auth_type: 'api_key', is_active: true } as TenantProvider,
+      ]);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: 'qwen',
+          authType: 'api_key',
+          model: 'qwen-max',
+        }),
+      ).toBe(false);
+    });
+
+    it('treats discovered models without an authType as compatible with any pin', async () => {
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('openai', 'gpt-5.5', undefined),
+      ]);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: 'openai',
+          authType: 'subscription',
+          model: 'gpt-5.5',
+        }),
+      ).toBe(true);
+    });
+
+    it('delegates to isModelAvailable when the route has no provider pin', async () => {
+      discoveryService.getModelForAgent.mockResolvedValue({ id: 'gpt-4o' } as never);
+      expect(
+        await svc.isRouteAvailable('tenant-1', {
+          provider: '',
+          authType: 'api_key',
+          model: 'gpt-4o',
+        }),
+      ).toBe(true);
+      expect(discoveryService.getModelForAgent).toHaveBeenCalledWith(
+        'tenant-1',
+        'gpt-4o',
+        undefined,
+      );
+    });
+  });
+
+  describe('hasRouteCredentials', () => {
+    it('reuses the provider-key lookup for a pinned route', async () => {
+      const getProviderKeys = jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([
+        {
+          id: 'provider-key-1',
+          label: 'Default',
+          priority: 0,
+          apiKey: 'decrypted',
+          region: null,
+        },
+      ]);
+      const pinned = {
+        provider: 'openai',
+        authType: 'api_key',
+        model: 'gpt-4o',
+      } as const;
+
+      await expect(svc.hasRouteCredentials('tenant-1', pinned, 'agent-1')).resolves.toBe(true);
+      expect(getProviderKeys).toHaveBeenCalledWith('tenant-1', 'openai', 'api_key', 'agent-1');
+    });
+
+    it('rejects routes whose provider-key chain is empty', async () => {
+      jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([]);
+
+      await expect(
+        svc.hasRouteCredentials(
+          'tenant-1',
+          { provider: 'opencode-go', authType: 'api_key', model: 'glm-5.2' },
+          'agent-1',
+        ),
+      ).resolves.toBe(false);
     });
   });
 

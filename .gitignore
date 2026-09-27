@@ -8,11 +8,17 @@ build/
 !docker/.env.example
 .DS_Store
 Thumbs.db
+
+# Local dev artifacts (playwright snapshots, /serve port pin)
+.playwright-mcp/
+.fieldflow/
+.serve-ports
 *.tmp
 *.swp
 .vscode/
 .idea/
 coverage/
+.data/
 *.tsbuildinfo
 .specify/memory/
 .agent/
@@ -28,6 +34,7 @@ coverage/
 .gstack/
 scripts/.env.verify
 scripts/verify-free-model-ids.sh
-# Superpowers-generated markdown (plans, brainstorms, specs)
+# Superpowers-generated markdown (plans, brainstorms, specs, reports)
 docs/superpowers/
 docs/plans/
+.superpowers/

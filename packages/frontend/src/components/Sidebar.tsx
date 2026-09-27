@@ -1,22 +1,14 @@
 import { A, useLocation } from '@solidjs/router';
-import { Show, For, createSignal, createResource, type Component } from 'solid-js';
-import { useAgentName } from '../services/routing.js';
-import { getAgents } from '../services/api.js';
-import { checkIsSelfHosted } from '../services/setup-status.js';
-import { agentPing } from '../services/sse.js';
-import { platformIcon } from 'manifest-shared';
+import { Show, createSignal, createResource, type Component } from 'solid-js';
+import { getBillingStatus } from '../services/api/billing.js';
+import { FREE_REQUEST_LIMIT_LABEL } from '../services/billing-display.js';
+import { checkIsSelfHosted, checkMcpEnabled } from '../services/setup-status.js';
 import AddAgentModal from './AddAgentModal.jsx';
+import AutofixAnnouncement from './AutofixAnnouncement.jsx';
 
 interface SidebarProps {
   mobileOpen?: boolean;
   onNavigate?: () => void;
-}
-
-interface HarnessItem {
-  agent_name: string;
-  display_name?: string;
-  agent_platform?: string | null;
-  agent_category?: string | null;
 }
 
 /**
@@ -33,30 +25,25 @@ function makeIsGlobalActive(pathname: () => string) {
 const Sidebar: Component<SidebarProps> = (props) => {
   const location = useLocation();
   const isGlobalActive = makeIsGlobalActive(() => location.pathname);
-  const getAgentName = useAgentName();
-  const [agentsCollapsed, setAgentsCollapsed] = createSignal(false);
   const [addModalOpen, setAddModalOpen] = createSignal(false);
   // Local providers only exist on self-hosted installs — a cloud backend
   // can't reach the user's localhost, so the Local entry is hidden there.
   const [selfHosted] = createResource(checkIsSelfHosted);
-
-  // Harness list for the in-nav switcher. Refetches whenever the agent SSE ping
-  // fires (create/delete/rename). Uses the DEFAULT getAgents() — playground agents
-  // (the reserved Playground) are excluded so they never leak into the switcher.
-  const [agents] = createResource(
-    () => agentPing(),
-    async (): Promise<HarnessItem[]> => {
-      try {
-        const data = (await getAgents()) as { agents?: HarnessItem[] } | HarnessItem[] | null;
-        if (Array.isArray(data)) return data;
-        return data?.agents ?? [];
-      } catch {
-        return [];
-      }
-    },
-  );
-
-  const currentAgent = () => getAgentName();
+  // An install served over plain HTTP cannot host the MCP OAuth resource, so
+  // the backend runs without the endpoint entirely. The entry waits for the
+  // status like the Local one does, rather than appearing and then vanishing
+  // on the installs that don't have it.
+  const [mcpEnabled] = createResource(checkMcpEnabled);
+  const [billing] = createResource(async () => {
+    try {
+      return await getBillingStatus();
+    } catch {
+      return null;
+    }
+  });
+  const showUpgrade = () => billing()?.enabled && billing()?.plan === 'free';
+  const requestLimitLabel = () =>
+    billing()?.requests.limit?.toLocaleString('en-US') ?? FREE_REQUEST_LIMIT_LABEL;
 
   const handleNav = () => {
     props.onNavigate?.();
@@ -89,62 +76,19 @@ const Sidebar: Component<SidebarProps> = (props) => {
         classList={{ active: isGlobalActive('/messages') }}
         aria-current={isGlobalActive('/messages') ? 'page' : undefined}
       >
-        Messages
+        Requests
       </A>
-      <div class="sidebar__section-label">PROVIDERS</div>
-      <A
-        href="/providers/subscriptions"
-        class="sidebar__link"
-        classList={{ active: isGlobalActive('/providers/subscriptions') }}
-        aria-current={isGlobalActive('/providers/subscriptions') ? 'page' : undefined}
-      >
-        Subscriptions
-      </A>
-      <A
-        href="/providers/usage-based"
-        class="sidebar__link"
-        classList={{ active: isGlobalActive('/providers/usage-based') }}
-        aria-current={isGlobalActive('/providers/usage-based') ? 'page' : undefined}
-      >
-        Usage-based
-      </A>
-      <Show when={selfHosted()}>
+      {/* Harnesses is a plain nav entry to the /harnesses page; the + keeps
+          the one-click create from the nav. */}
+      <div class="sidebar__link-row">
         <A
-          href="/providers/local"
+          href="/harnesses"
           class="sidebar__link"
-          classList={{ active: isGlobalActive('/providers/local') }}
-          aria-current={isGlobalActive('/providers/local') ? 'page' : undefined}
+          classList={{ active: isGlobalActive('/harnesses') }}
+          aria-current={isGlobalActive('/harnesses') ? 'page' : undefined}
         >
-          Local
+          Harnesses
         </A>
-      </Show>
-
-      {/* Harnesses — collapsible section with a + create button.
-          The collapse toggle and the create button are sibling buttons (never
-          nested) so both are independently keyboard-operable. */}
-      <div class="sidebar__section-header">
-        <button
-          type="button"
-          class="sidebar__section-caret"
-          onClick={() => setAgentsCollapsed(!agentsCollapsed())}
-          aria-expanded={!agentsCollapsed()}
-        >
-          <span>HARNESSES</span>
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            fill="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-            style={{
-              transition: 'transform 150ms',
-              transform: agentsCollapsed() ? 'rotate(-90deg)' : 'rotate(0deg)',
-            }}
-          >
-            <path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z" />
-          </svg>
-        </button>
         <button
           type="button"
           class="sidebar__section-add"
@@ -164,40 +108,58 @@ const Sidebar: Component<SidebarProps> = (props) => {
           </svg>
         </button>
       </div>
-
-      <Show when={!agentsCollapsed()}>
-        <div class="sidebar__agents-list">
-          <For
-            each={agents() ?? []}
-            fallback={
-              <Show when={!agents.loading}>
-                <div class="sidebar__agents-empty">No harnesses yet</div>
-              </Show>
-            }
-          >
-            {(agent) => {
-              const name = () => agent.agent_name;
-              const display = () => agent.display_name || agent.agent_name;
-              const icon = () => platformIcon(agent.agent_platform, agent.agent_category);
-              const isSelected = () => currentAgent() === name();
-              return (
-                <A
-                  href={`/harnesses/${encodeURIComponent(name())}`}
-                  class="sidebar__agent-item"
-                  classList={{ 'sidebar__agent-item--active': isSelected() }}
-                  aria-current={isSelected() ? 'page' : undefined}
-                  onClick={handleNav}
-                >
-                  <Show when={icon()}>
-                    <img src={icon()} alt="" class="sidebar__agent-icon" />
-                  </Show>
-                  <span class="sidebar__agent-item-name">{display()}</span>
-                </A>
-              );
-            }}
-          </For>
-        </div>
+      <div class="sidebar__section-label">PROVIDERS</div>
+      <Show when={selfHosted()}>
+        <A
+          href="/providers/local"
+          class="sidebar__link"
+          classList={{ active: isGlobalActive('/providers/local') }}
+          aria-current={isGlobalActive('/providers/local') ? 'page' : undefined}
+        >
+          Local
+        </A>
       </Show>
+      <A
+        href="/providers/usage-based"
+        class="sidebar__link"
+        classList={{ active: isGlobalActive('/providers/usage-based') }}
+        aria-current={isGlobalActive('/providers/usage-based') ? 'page' : undefined}
+      >
+        Usage-based
+      </A>
+      <A
+        href="/providers/subscriptions"
+        class="sidebar__link"
+        classList={{ active: isGlobalActive('/providers/subscriptions') }}
+        aria-current={isGlobalActive('/providers/subscriptions') ? 'page' : undefined}
+      >
+        Subscriptions
+      </A>
+
+      {/* Integrations: surfaces that drive Manifest from outside the dashboard.
+          The "New" pills are a showcase device, not structure — delete the two
+          spans once these stop being new. n8n joins here when it gets a page. */}
+      <div class="sidebar__section-label">INTEGRATIONS</div>
+      <Show when={mcpEnabled()}>
+        <A
+          href="/integrations/mcp"
+          class="sidebar__link"
+          classList={{ active: isGlobalActive('/integrations/mcp') }}
+          aria-current={isGlobalActive('/integrations/mcp') ? 'page' : undefined}
+        >
+          MCP server
+          <span class="sidebar__badge">New</span>
+        </A>
+      </Show>
+      <A
+        href="/integrations/cli"
+        class="sidebar__link"
+        classList={{ active: isGlobalActive('/integrations/cli') }}
+        aria-current={isGlobalActive('/integrations/cli') ? 'page' : undefined}
+      >
+        CLI
+        <span class="sidebar__badge">New</span>
+      </A>
 
       <div class="sidebar__section-label">TOOLS</div>
       <A
@@ -211,20 +173,71 @@ const Sidebar: Component<SidebarProps> = (props) => {
 
       <div class="sidebar__spacer" />
 
-      <a
-        href="https://github.com/mnfst/manifest/discussions/new?category=feature-request"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="sidebar__feedback"
-      >
-        <span class="sidebar__feedback-title">
-          <i class="bxd bx-message-bubble-detail" />
-          Feedback
-        </span>
-        <p class="sidebar__feedback-hint">Share ideas or report bugs.</p>
-      </a>
+      {/* Autofix announcement: shows for everyone in every deployment mode,
+          with a per-session dismiss. Links to the landing page on manifest.build. */}
+      <AutofixAnnouncement />
 
-      {/* Create-harness modal, opened by the HARNESSES section + button */}
+      <Show when={!selfHosted() && showUpgrade()}>
+        <div class="sidebar-usage">
+          <span class="sidebar-usage__title">
+            {new Date().toLocaleDateString('en-US', { month: 'long' })} usage
+          </span>
+          <span
+            class="sidebar-usage__count"
+            classList={{
+              'sidebar-usage__count--danger':
+                (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8,
+            }}
+          >
+            {billing()!.requests.used != null
+              ? billing()!.requests.used!.toLocaleString('en-US')
+              : '0'}
+            {' / '}
+            {billing()!.requests.limit != null
+              ? billing()!.requests.limit!.toLocaleString('en-US')
+              : '0'}
+            {' requests'}
+          </span>
+          <div class="sidebar-usage__bar">
+            <div
+              class="sidebar-usage__fill"
+              classList={{
+                'sidebar-usage__fill--warning':
+                  (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.5 &&
+                  (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) < 0.8,
+                'sidebar-usage__fill--danger':
+                  (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8,
+              }}
+              style={{
+                width: `${Math.min(100, ((billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1)) * 100)}%`,
+              }}
+            />
+          </div>
+          <Show when={(billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8}>
+            <p class="sidebar-usage__alert">
+              {(billing()!.requests.used ?? 0) >= (billing()!.requests.limit ?? 1)
+                ? "You've reached your monthly limit. Requests are being blocked."
+                : `You're limited to ${requestLimitLabel()} requests this month. Upgrade for unlimited.`}
+            </p>
+          </Show>
+        </div>
+        <A href="/upgrade" class="sidebar-upgrade" onClick={handleNav}>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="16"
+            height="16"
+            fill="currentColor"
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+          >
+            <path d="M12 2C6.486 2 2 6.486 2 12s4.486 10 10 10 10-4.486 10-10S17.514 2 12 2m0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8" />
+            <path d="m8 12 1.41 1.41L11 11.83V17h2v-5.17l1.59 1.59L16 12l-4-4z" />
+          </svg>
+          Upgrade plan
+        </A>
+      </Show>
+
+      {/* Create-harness modal, opened by the + button next to the Harnesses nav link */}
       <AddAgentModal open={addModalOpen()} onClose={() => setAddModalOpen(false)} />
     </nav>
   );

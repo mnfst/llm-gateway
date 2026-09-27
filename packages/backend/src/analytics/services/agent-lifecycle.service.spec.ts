@@ -78,7 +78,6 @@ describe('AgentLifecycleService', () => {
         display_name: 'Bot One',
         agent_category: 'app',
         agent_platform: 'openai-sdk',
-        record_messages: true,
       });
 
       const result = await service.findAgentInfo('user-1', 'bot-1');
@@ -87,20 +86,7 @@ describe('AgentLifecycleService', () => {
         display_name: 'Bot One',
         agent_category: 'app',
         agent_platform: 'openai-sdk',
-        record_messages: true,
       });
-    });
-
-    it('defaults record_messages to false when entity has it unset', async () => {
-      mockAgentGetOne.mockResolvedValueOnce({
-        id: 'agent-id-1',
-        name: 'bot-1',
-        display_name: 'Bot One',
-        agent_category: null,
-        agent_platform: null,
-      });
-      const result = await service.findAgentInfo('user-1', 'bot-1');
-      expect(result?.record_messages).toBe(false);
     });
 
     it('falls back display_name to agent name when null', async () => {
@@ -308,7 +294,7 @@ describe('AgentLifecycleService', () => {
       await service.renameAgent('test-user', 'old-agent', 'new-agent', 'New Agent');
 
       expect(mockTransaction).toHaveBeenCalledTimes(1);
-      expect(mockExecute).toHaveBeenCalledTimes(3);
+      expect(mockExecute).toHaveBeenCalledTimes(4);
       expect(mockManagerQb.update).toHaveBeenCalledWith('agents');
       expect(mockManagerQb.set).toHaveBeenCalledWith({
         name: 'new-agent',
@@ -318,13 +304,14 @@ describe('AgentLifecycleService', () => {
       const updateCalls = mockManagerQb.update.mock.calls.map((c: unknown[]) => c[0]);
       expect(updateCalls).toContain('agents');
       expect(updateCalls).toContain('agent_messages');
+      expect(updateCalls).toContain('requests');
       expect(updateCalls).toContain('notification_rules');
       expect(updateCalls).not.toContain('notification_logs');
 
       const tenantScopedWhereCalls = mockManagerQb.where.mock.calls.filter(
         (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('tenant_id'),
       );
-      expect(tenantScopedWhereCalls.length).toBe(2);
+      expect(tenantScopedWhereCalls.length).toBe(3);
       for (const call of tenantScopedWhereCalls) {
         expect(call[1]).toEqual({ tenantId: 'tenant-1', currentName: 'old-agent' });
       }
@@ -444,46 +431,6 @@ describe('AgentLifecycleService', () => {
 
       const andWhereCalls = mockAndWhere.mock.calls.map((c: unknown[]) => c[0]);
       expect(andWhereCalls).toContain('a.is_playground = false');
-    });
-  });
-
-  describe('setRecordMessages', () => {
-    it('updates the record_messages flag and returns the agent id', async () => {
-      mockAgentGetOne.mockResolvedValueOnce({ id: 'agent-id-42', name: 'my-agent' });
-
-      const mockExecute = jest.fn().mockResolvedValue({});
-      const mockUpdateQb = {
-        update: jest.fn().mockReturnThis(),
-        set: jest.fn().mockReturnThis(),
-        where: jest.fn().mockReturnThis(),
-        execute: mockExecute,
-      };
-      mockAgentCreateQueryBuilder
-        .mockReturnValueOnce({
-          select: jest.fn().mockReturnThis(),
-          leftJoin: jest.fn().mockReturnThis(),
-          where: jest.fn().mockReturnThis(),
-          andWhere: jest.fn().mockReturnThis(),
-          orderBy: jest.fn().mockReturnThis(),
-          getOne: mockAgentGetOne,
-          getMany: jest.fn().mockResolvedValue([]),
-        })
-        .mockReturnValueOnce(mockUpdateQb);
-
-      const result = await service.setRecordMessages('test-user', 'my-agent', true);
-
-      expect(result).toEqual({ agentId: 'agent-id-42' });
-      expect(mockUpdateQb.set).toHaveBeenCalledWith({ record_messages: true });
-      expect(mockUpdateQb.where).toHaveBeenCalledWith('id = :id', { id: 'agent-id-42' });
-      expect(mockExecute).toHaveBeenCalledTimes(1);
-    });
-
-    it('throws NotFoundException when agent is not found', async () => {
-      mockAgentGetOne.mockResolvedValueOnce(null);
-
-      await expect(service.setRecordMessages('test-user', 'missing', false)).rejects.toThrow(
-        NotFoundException,
-      );
     });
   });
 });

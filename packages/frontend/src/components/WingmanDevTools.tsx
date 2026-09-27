@@ -39,9 +39,12 @@ const WingmanDevTools: Component = () => {
   const [heightVh, setHeightVh] = createSignal(readStoredHeight());
   const [resizing, setResizing] = createSignal(false);
 
-  // Wingman is a hosted SPA at wingman.manifest.build. A build-time
-  // `VITE_WINGMAN_URL` override still wins so contributors can point the
-  // drawer at a locally-running Wingman build.
+  // `__WINGMAN_URL__` is set by vite.config.ts to a loopback origin in dev: the
+  // Wingman dev proxy republishes the hosted SPA there so the iframe sits in
+  // the same address space as the gateway it calls. Framing the hosted HTTPS
+  // origin directly makes every request a local-network request, which Chrome
+  // blocks (see wingman-dev-proxy.ts). The literal is only a fallback for a
+  // build that didn't define it.
   const HOSTED_WINGMAN_URL = 'https://wingman.manifest.build';
   const deriveWingmanBase = (): string => __WINGMAN_URL__ || HOSTED_WINGMAN_URL;
 
@@ -189,12 +192,18 @@ const WingmanDevTools: Component = () => {
               </button>
             </div>
           </header>
+          {/* `local-network-access` is delegated as a fallback. It is not
+              needed when the drawer points at the loopback proxy (same
+              address space, no permission involved), but if someone points
+              VITE_WINGMAN_URL back at an https origin it's the difference
+              between Chrome offering the permission prompt and denying it
+              outright by permissions policy, with no prompt possible. */}
           <iframe
             src={iframeSrc()}
             class="wingman-drawer__frame"
             title="Wingman gateway tester"
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-clipboard-write"
-            allow="clipboard-read; clipboard-write"
+            allow="clipboard-read; clipboard-write; local-network-access"
           />
         </aside>
       </Show>

@@ -1,4 +1,5 @@
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import { AnthropicOauthService } from './anthropic-oauth.service';
 import {
@@ -29,11 +30,19 @@ function createProviderService() {
       recalculateTiers,
       nextOAuthLabel,
       getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+        getFreshSubscriptionCredential,
+        upsertProvider,
+      }),
     } as unknown as ProviderService,
     upsertProvider,
     recalculateTiers,
     nextOAuthLabel,
     getFreshSubscriptionCredential,
+    withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+      getFreshSubscriptionCredential,
+      upsertProvider,
+    }),
   };
 }
 

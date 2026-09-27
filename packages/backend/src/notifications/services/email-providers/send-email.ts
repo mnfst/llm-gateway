@@ -63,6 +63,17 @@ function resolveConfig(env?: SendEmailEnvConfig): EmailProviderConfig | null {
   return null;
 }
 
+/**
+ * True when a transactional email provider is fully configured, i.e. a call to
+ * `sendEmail` would actually dispatch rather than no-op. This is the single
+ * source of truth for "can we send email?" — the setup status endpoint reads it
+ * so the password-reset UI can warn instead of silently pretending a reset link
+ * was sent on installs with no provider wired in.
+ */
+export function isEmailConfigured(env?: SendEmailEnvConfig): boolean {
+  return resolveConfig(env) !== null;
+}
+
 export async function sendEmail(
   opts: SendEmailOptions,
   env?: SendEmailEnvConfig,

@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: manifest
+    runtime: image
+    image:
+      url: docker.io/manifestdotbuild/manifest:6
+    plan: starter
+    numInstances: 1
+    healthCheckPath: /api/v1/health
+    autoDeployTrigger: off
+    disk:
+      name: manifest-recordings
+      mountPath: /data/request-recordings
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: 2099
+      - key: DATABASE_URL
+        fromDatabase:
+          name: manifest-postgres
+          property: connectionString
+      - key: BETTER_AUTH_SECRET
+        generateValue: true
+      - key: MANIFEST_ENCRYPTION_KEY
+        generateValue: true
+      - key: BETTER_AUTH_URL
+        fromService:
+          type: web
+          name: manifest
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: MANIFEST_MODE
+        value: selfhosted
+      - key: REQUEST_RECORDING_STORAGE
+        value: filesystem
+      - key: REQUEST_RECORDING_FILESYSTEM_PATH
+        value: /data/request-recordings
+
+databases:
+  - name: manifest-postgres
+    plan: free
+    databaseName: manifest
+    user: manifest
+    ipAllowList: []

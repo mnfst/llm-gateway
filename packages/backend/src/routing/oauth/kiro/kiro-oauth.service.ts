@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { ProviderService } from '../../routing-core/provider.service';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import { scrubSecrets } from '../../../common/utils/secret-scrub';
-import { coordinateOAuthRefresh, oauthRefreshKey } from '../core';
+import { coordinateOAuthRefresh, oauthRefreshKey, subscriptionCredentialLock } from '../core';
 import {
   KIRO_CLIENT_NAME,
   KIRO_CLIENT_TYPE,
@@ -246,22 +246,15 @@ export class KiroOauthService {
         key: oauthRefreshKey('kiro', tenantId, keyLabel),
         logger: this.logger,
         callerBlob: blob,
-        readFreshRaw: () =>
-          this.providerService.getFreshSubscriptionCredential(tenantId, 'kiro', keyLabel),
         parse: parseKiroOAuthTokenBlob,
         refresh: (current) => this.refreshAccessToken(current),
-        persist: (refreshed) =>
-          this.providerService
-            .upsertProvider(
-              agentId,
-              tenantId,
-              'kiro',
-              serializeKiroOAuthTokenBlob(refreshed),
-              'subscription',
-              undefined,
-              keyLabel,
-            )
-            .then(() => undefined),
+        withLock: subscriptionCredentialLock(
+          (t, p, l, fn) => this.providerService.withSubscriptionCredentialLock(t, p, l, fn),
+          tenantId,
+          'kiro',
+          keyLabel,
+          serializeKiroOAuthTokenBlob,
+        ),
       });
       return resolved.t;
     } catch (err) {

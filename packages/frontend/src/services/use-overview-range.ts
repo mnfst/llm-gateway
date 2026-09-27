@@ -1,9 +1,8 @@
-import { createSignal, onMount } from 'solid-js';
+import { createSignal } from 'solid-js';
 import { COMPACT_COLUMNS } from '../components/message-table-types.js';
-import { checkIsSelfHosted } from './setup-status.js';
 
 export const RANGE_STORAGE_KEY = 'manifest_chart_range';
-export const VALID_RANGES = new Set(['24h', '7d', '30d']);
+export const VALID_RANGES = new Set(['24h', '7d', '30d', '90d', '365d']);
 
 /**
  * Shared range signal + localStorage persistence for Overview pages.
@@ -26,16 +25,10 @@ export function useOverviewRange(options?: { markUserSelected?: () => void }) {
 }
 
 /**
- * Shared self-hosted check + column filter used by all Overview pages.
- * Returns reactive `isSelfHosted` signal and derived `columns` accessor.
+ * Shared Messages-table columns for the Overview pages. Kept as a hook so callers
+ * stay stable, though the column set is now the same everywhere.
  */
 export function useOverviewColumns() {
-  const [isSelfHosted, setIsSelfHosted] = createSignal(false);
-  onMount(() => {
-    checkIsSelfHosted().then(setIsSelfHosted);
-  });
-  const columns = () =>
-    isSelfHosted() ? COMPACT_COLUMNS.filter((c) => c !== 'feedback') : COMPACT_COLUMNS;
-
-  return { isSelfHosted, columns };
+  const columns = () => COMPACT_COLUMNS;
+  return { columns };
 }

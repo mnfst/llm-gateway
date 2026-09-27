@@ -78,6 +78,7 @@ describe('CustomProviderController', () => {
         {
           id: 'cp-1',
           name: 'Groq',
+          alias: 'groq',
           base_url: 'https://api.groq.com/v1',
           models: [{ model_name: 'llama' }],
           created_at: '2026-03-04',
@@ -93,6 +94,7 @@ describe('CustomProviderController', () => {
       expect(result[0]).toEqual({
         id: 'cp-1',
         name: 'Groq',
+        alias: 'groq',
         base_url: 'https://api.groq.com/v1',
         has_api_key: true,
         models: [{ model_name: 'llama' }],

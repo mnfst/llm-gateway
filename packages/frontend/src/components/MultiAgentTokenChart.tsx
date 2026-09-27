@@ -1,7 +1,12 @@
-import { createSignal, For, Show, type Component } from 'solid-js';
+import { createSignal, type Component } from 'solid-js';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
-import '../styles/agent-chart-tooltip.css';
+import ChartHoverTooltip, {
+  HIDDEN_TOOLTIP,
+  formatTooltipDate,
+  snapToBucket,
+  type HoverTooltipState,
+} from './ChartHoverTooltip.jsx';
 import { getHslA } from '../services/theme.js';
 import { formatNumber, formatCost } from '../services/formatters.js';
 import {
@@ -38,37 +43,14 @@ export const AGENT_COLORS = [
   '#D946EF',
 ];
 
-interface TooltipState {
-  visible: boolean;
-  left: number;
-  top: number;
-  alignRight: boolean;
-  date: string;
-  entries: Array<{ agent: string; value: number; color: string }>;
-  total: number;
-}
-
 interface MultiAgentTokenChartProps {
   agents: string[];
   timeseries: Array<Record<string, number | string>>;
   range: string;
   colorMap?: Record<string, string>;
   onHoverValues?: (values: Record<string, number> | null) => void;
-  /** When set (e.g. "Messages"), y-axis formats as plain numbers instead of token suffixes. */
+  /** When set (e.g. "Requests"), y-axis formats as plain numbers instead of token suffixes. */
   label?: string;
-}
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-function formatTooltipDate(epochSec: number, multiDay: boolean): string {
-  const d = new Date(epochSec * 1000);
-  const day = d.getDate();
-  const mon = MONTHS[d.getMonth()]!;
-  const year = d.getFullYear();
-  if (multiDay) return `${day} ${mon} ${year}`;
-  const hh = String(d.getHours()).padStart(2, '0');
-  const mm = String(d.getMinutes()).padStart(2, '0');
-  return `${day} ${mon} ${year}, ${hh}:${mm}`;
 }
 
 const MultiAgentTokenChart: Component<MultiAgentTokenChartProps> = (props) => {
@@ -77,15 +59,7 @@ const MultiAgentTokenChart: Component<MultiAgentTokenChartProps> = (props) => {
   const isCost = () => props.label === 'Cost';
   const fmtVal = (v: number) => (isCost() ? (formatCost(v) ?? '$0.00') : formatNumber(v));
 
-  const [tooltip, setTooltip] = createSignal<TooltipState>({
-    visible: false,
-    left: 0,
-    top: 0,
-    alignRight: false,
-    date: '',
-    entries: [],
-    total: 0,
-  });
+  const [tooltip, setTooltip] = createSignal<HoverTooltipState>(HIDDEN_TOOLTIP);
 
   const bucketKey = () => (props.range === '24h' ? 'hour' : 'date');
 
@@ -164,14 +138,7 @@ const MultiAgentTokenChart: Component<MultiAgentTokenChartProps> = (props) => {
             y: false,
             points: { show: false },
             drag: { x: false, y: false },
-            move: (u: uPlot, left: number, top: number) => {
-              const idx = u.posToIdx(left);
-              const snappedLeft =
-                idx != null && u.data[0]?.[idx] != null
-                  ? Math.round(u.valToPos(u.data[0][idx]!, 'x'))
-                  : left;
-              return [snappedLeft, top];
-            },
+            move: snapToBucket,
           },
           hooks: {
             setCursor: [
@@ -185,7 +152,7 @@ const MultiAgentTokenChart: Component<MultiAgentTokenChartProps> = (props) => {
 
                 // Raw (un-stacked) values
                 const vals: Record<string, number> = {};
-                const entries: TooltipState['entries'] = [];
+                const entries: HoverTooltipState['entries'] = [];
                 let total = 0;
                 for (let i = 0; i < props.agents.length; i++) {
                   const agentName = props.agents[i]!;
@@ -193,7 +160,7 @@ const MultiAgentTokenChart: Component<MultiAgentTokenChartProps> = (props) => {
                   vals[agentName] = v;
                   const color =
                     props.colorMap?.[agentName] ?? AGENT_COLORS[i % AGENT_COLORS.length] ?? '#888';
-                  entries.push({ agent: agentName, value: v, color });
+                  entries.push({ label: agentName, value: v, color });
                   total += v;
                 }
                 props.onHoverValues?.(vals);
@@ -252,19 +219,6 @@ const MultiAgentTokenChart: Component<MultiAgentTokenChartProps> = (props) => {
     },
   });
 
-  const tt = () => tooltip();
-  const ROWS_PER_COL = 16;
-
-  const visibleEntries = () => tt().entries.filter((e) => e.value > 0);
-  const columns = () => {
-    const items = visibleEntries();
-    const cols: Array<typeof items> = [];
-    for (let i = 0; i < items.length; i += ROWS_PER_COL) {
-      cols.push(items.slice(i, i + ROWS_PER_COL));
-    }
-    return cols;
-  };
-
   const hideTooltip = () => {
     setTooltip((prev) => ({ ...prev, visible: false }));
     props.onHoverValues?.(null);
@@ -273,42 +227,7 @@ const MultiAgentTokenChart: Component<MultiAgentTokenChartProps> = (props) => {
   return (
     <div style="position: relative; overflow: visible;" onMouseLeave={hideTooltip}>
       <div ref={el} style="width: 100%; min-height: 260px;" />
-      <Show when={tt().visible && visibleEntries().length > 0}>
-        <div
-          class="agent-chart-tooltip"
-          style={{
-            left: tt().alignRight ? 'auto' : `${tt().left + 2}px`,
-            right: tt().alignRight ? `${(el?.clientWidth ?? 0) - tt().left + 2}px` : 'auto',
-            top: `${tt().top}px`,
-          }}
-        >
-          <div class="agent-chart-tooltip__date">{tt().date}</div>
-          <div class="agent-chart-tooltip__columns">
-            <For each={columns()}>
-              {(col) => (
-                <div class="agent-chart-tooltip__list">
-                  <For each={col}>
-                    {(entry) => (
-                      <div class="agent-chart-tooltip__row">
-                        <span
-                          class="agent-chart-tooltip__swatch"
-                          style={{ background: entry.color }}
-                        />
-                        <span class="agent-chart-tooltip__name">{entry.agent}</span>
-                        <span class="agent-chart-tooltip__value">{fmtVal(entry.value)}</span>
-                      </div>
-                    )}
-                  </For>
-                </div>
-              )}
-            </For>
-          </div>
-          <div class="agent-chart-tooltip__total">
-            <span>Total</span>
-            <span class="agent-chart-tooltip__total-value">{fmtVal(tt().total)}</span>
-          </div>
-        </div>
-      </Show>
+      <ChartHoverTooltip state={tooltip()} fmtVal={fmtVal} hostWidth={() => el?.clientWidth ?? 0} />
     </div>
   );
 };

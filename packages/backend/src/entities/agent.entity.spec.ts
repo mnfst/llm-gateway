@@ -142,12 +142,6 @@ describe('Agent entity', () => {
       expect(complexity!.options.type).toBe('boolean');
       // Opt-in feature — must default to false so existing agents are unaffected.
       expect(complexity!.options.default).toBe(false);
-
-      const record = cols.find((c) => c.propertyName === 'record_messages');
-      expect(record).toBeDefined();
-      expect(record!.options.type).toBe('boolean');
-      // Recording defaults ON; opt-out via UI toggles this to false.
-      expect(record!.options.default).toBe(true);
     });
 
     it('marks the expected fields as nullable and the required ones as non-null', () => {

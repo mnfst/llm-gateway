@@ -147,7 +147,7 @@ async function postRun(body: Record<string, unknown>): Promise<string> {
 }
 
 describe('Playground E2E — POST /api/v1/playground/run (SSE)', () => {
-  it('streams deltas + a done event and records an agent_messages row on happy path', async () => {
+  it('streams deltas + a done event and records a provider attempt on happy path', async () => {
     stubOpenAiChatStream(['hello ', 'world'], { prompt_tokens: 7, completion_tokens: 3 });
 
     const sseText = await postRun({
@@ -188,7 +188,7 @@ describe('Playground E2E — POST /api/v1/playground/run (SSE)', () => {
     expect(rows[0]).toMatchObject({
       routing_tier: 'playground',
       routing_reason: null,
-      status: 'ok',
+      status: 'success',
       provider: 'openai',
       model: 'gpt-4o-mini',
       input_tokens: 7,

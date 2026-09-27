@@ -18,6 +18,7 @@ interface Props {
   headersSlot?: JSX.Element;
   historyOpen?: boolean;
   onHeightChange?: (height: number) => void;
+  ref?: (el: HTMLTextAreaElement) => void;
 }
 
 const MAX_PROMPT_LINES = 15;
@@ -94,7 +95,10 @@ const PlaygroundPrompt: Component<Props> = (props) => {
         }}
       >
         <textarea
-          ref={setRef}
+          ref={(el) => {
+            setRef(el);
+            props.ref?.(el);
+          }}
           class="playground-prompt__textarea"
           placeholder="Send a prompt to compare models..."
           value={props.value}

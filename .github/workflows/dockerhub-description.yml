@@ -1,0 +1,27 @@
+name: Docker Hub description
+
+# Keeps the Docker Hub repository page in sync with docker/DOCKER_README.md.
+# The page used to be pasted by hand and drifted for months behind the file
+# (dead LAN instructions, stale tag examples, missing recordings volume).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docker/DOCKER_README.md
+      - .github/workflows/dockerhub-description.yml
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: peter-evans/dockerhub-description@432a30c9e07499fd01da9f8a49f0faf9e0ca5b77 # v4.0.2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: manifestdotbuild/manifest
+          readme-filepath: docker/DOCKER_README.md

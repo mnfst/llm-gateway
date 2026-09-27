@@ -7,7 +7,7 @@ import type { AuthType, ModelRoute, ResponseMode } from 'manifest-shared';
 import { SpecificityAssignment } from '../../entities/specificity-assignment.entity';
 import { ModelDiscoveryService } from '../../model-discovery/model-discovery.service';
 import { RoutingCacheService } from './routing-cache.service';
-import { explicitRoute, unambiguousRoute } from './route-helpers';
+import { explicitRoute, readFallbackRoutes, unambiguousRoute, routeMatches } from './route-helpers';
 import { assertStreamableResponseMode } from './response-mode-guard';
 
 @Injectable()
@@ -217,7 +217,13 @@ export class SpecificityService {
   ): Promise<ModelRoute[]> {
     const existing = await this.repo.findOne({ where: { agent_id: agentId, category } });
     if (!existing) return [];
-    const fallbackRoutes = await this.buildFallbackRoutes(agentId, tenantId, models, routes);
+    const fallbackRoutes = await this.buildFallbackRoutes(
+      agentId,
+      tenantId,
+      models,
+      routes,
+      readFallbackRoutes(existing),
+    );
     assertStreamableResponseMode(
       existing.response_mode,
       `task-specific tier "${category}"`,
@@ -268,25 +274,39 @@ export class SpecificityService {
     tenantId: string,
     models: string[],
     routes?: ModelRoute[],
+    storedRoutes?: ModelRoute[] | null,
   ): Promise<ModelRoute[] | null> {
     if (models.length === 0) return null;
     const available = await this.discoveryService.getModelsForAgent(tenantId, agentId);
     if (routes && routes.length === models.length) {
       const aligned = routes.every((r, i) => r.model === models[i]);
+      const pool = [...(storedRoutes ?? [])];
       const validated =
         aligned &&
-        routes.every((r) =>
-          available.some(
+        routes.every((r) => {
+          const kept = pool.findIndex((s) => routeMatches(s, r));
+          if (kept >= 0) {
+            pool.splice(kept, 1);
+            return true;
+          }
+          return available.some(
             (m) =>
               m.id === r.model &&
               m.provider.toLowerCase() === r.provider.toLowerCase() &&
               m.authType === r.authType,
-          ),
-        );
+          );
+        });
       if (validated) return routes;
     }
+    const pool = [...(storedRoutes ?? [])];
     const resolved: ModelRoute[] = [];
     for (const m of models) {
+      const kept = pool.findIndex((s) => s.model === m);
+      if (kept >= 0) {
+        resolved.push(pool[kept]);
+        pool.splice(kept, 1);
+        continue;
+      }
       const route = unambiguousRoute(m, available);
       if (!route) {
         throw new BadRequestException(

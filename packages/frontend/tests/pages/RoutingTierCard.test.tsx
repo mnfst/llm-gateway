@@ -688,8 +688,7 @@ describe('RoutingTierCard', () => {
         })}
       />
     ));
-    expect(container.textContent).toContain('$0.0136/req');
-    expect(container.textContent).not.toContain('Included in subscription');
+    expect(container.textContent).toContain('Included ($0.0136 quota/req)');
   });
 
   it('renders the custom-provider letter in the chip when override_route is custom', () => {

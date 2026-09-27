@@ -15,6 +15,19 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
         <img src="/icons/manifest.svg" alt="Manifest" style={{ ...s, 'border-radius': '3px' }} />
       );
 
+    /* ── Meta ────────────────────────────────────── */
+    case 'meta':
+      return (
+        <img
+          src="/icons/providers/meta.svg"
+          alt=""
+          width={size}
+          height={size}
+          style={{ ...s, display: 'block', 'object-fit': 'contain' }}
+          aria-hidden="true"
+        />
+      );
+
     /* ── OpenAI ───────────────────────────────────── */
     case 'openai':
       return (
@@ -80,7 +93,45 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
         </svg>
       );
 
+    /* ── Cerebras ─────────────────────────────────── */
+    case 'cerebras':
+      return (
+        <svg
+          style={s}
+          viewBox="0 0 24 24"
+          fill="currentColor"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <path
+            clip-rule="evenodd"
+            d="M14.121 2.701a9.299 9.299 0 000 18.598V22.7c-5.91 0-10.7-4.791-10.7-10.701S8.21 1.299 14.12 1.299V2.7zm4.752 3.677A7.353 7.353 0 109.42 17.643l-.901 1.074a8.754 8.754 0 01-1.08-12.334 8.755 8.755 0 0112.335-1.08l-.901 1.075zm-2.255.844a5.407 5.407 0 00-5.048 9.563l-.656 1.24a6.81 6.81 0 016.358-12.043l-.654 1.24zM14.12 8.539a3.46 3.46 0 100 6.922v1.402a4.863 4.863 0 010-9.726v1.402z"
+            fill="#F15A29"
+            fill-rule="evenodd"
+          />
+          <path d="M15.407 10.836a2.24 2.24 0 00-.51-.409 1.084 1.084 0 00-.544-.152c-.255 0-.483.047-.684.14a1.58 1.58 0 00-.84.912c-.074.203-.11.416-.11.631 0 .218.036.43.11.631a1.594 1.594 0 00.84.913c.2.093.43.14.684.14.216 0 .417-.046.602-.135.188-.09.35-.225.475-.392l.928 1.006c-.14.14-.3.261-.482.363a3.367 3.367 0 01-1.083.38c-.17.026-.317.04-.44.04a3.315 3.315 0 01-1.182-.21 2.825 2.825 0 01-.961-.597 2.816 2.816 0 01-.644-.929 2.987 2.987 0 01-.238-1.21c0-.444.08-.847.238-1.21.15-.35.368-.666.643-.929.278-.261.605-.464.962-.596a3.315 3.315 0 011.182-.21c.355 0 .712.068 1.072.204.361.138.685.36.944.649l-.962.97z" />
+        </svg>
+      );
+
+    /* ── Pioneer ─────────────────────────────────── */
+    case 'pioneer':
+      return (
+        <svg
+          style={s}
+          viewBox="0 0 60 60"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <path
+            d="M32.1028 25.4779L46.2919 13.1826L46.8173 13.7081L34.5212 27.8953L60 29.5634V30.4366L34.5202 32.1028L46.8173 46.2928L46.2919 46.8183L32.1028 34.5212L30.4366 60H29.5634L27.8953 34.5212L13.7072 46.8173L13.1817 46.2919L25.4769 32.1037L0 30.4366V29.5634L25.4769 27.8944L13.1826 13.7081L13.7081 13.1826L27.8953 25.4779L29.5634 0H30.4366L32.1028 25.4779Z"
+            fill="#EA580C"
+          />
+        </svg>
+      );
+
     /* ── Gemini ───────────────────────────────────── */
+    case 'gemini-free':
     case 'gemini':
       return (
         <svg
@@ -149,6 +200,67 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
         </svg>
       );
 
+    /* ── Google Vertex AI ─────────────────────────── */
+    case 'vertex':
+      // Source: official Google Cloud product icon for Vertex AI.
+      return (
+        <svg
+          style={s}
+          viewBox="0 0 24 24"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <path
+            fill="#669df6"
+            d="M20 13.89a.77.77 0 0 0-1-.16l-7 5.14v.22a.72.72 0 1 1 0 1.43a.74.74 0 0 0 .45-.15l7.41-5.47a.76.76 0 0 0 .14-1.01"
+          />
+          <path
+            fill="#aecbfa"
+            d="M12 20.52a.72.72 0 0 1 0-1.43v-.22l-7-5.14a.76.76 0 0 0-1 .16a.74.74 0 0 0 .16 1l7.41 5.47a.73.73 0 0 0 .44.15Z"
+          />
+          <path
+            fill="#4285f4"
+            d="M12 18.34a1.47 1.47 0 1 0 1.47 1.47A1.47 1.47 0 0 0 12 18.34m0 2.18a.72.72 0 1 1 .72-.71a.71.71 0 0 1-.72.71"
+          />
+          <path
+            fill="#aecbfa"
+            d="M6 6.11a.76.76 0 0 1-.75-.75V3.48a.76.76 0 1 1 1.51 0v1.88a.76.76 0 0 1-.76.75"
+          />
+          <circle cx="5.98" cy="12" r=".76" fill="#aecbfa" />
+          <circle cx="5.98" cy="9.79" r=".76" fill="#aecbfa" />
+          <circle cx="5.98" cy="7.57" r=".76" fill="#aecbfa" />
+          <path
+            fill="#4285f4"
+            d="M18 8.31a.76.76 0 0 1-.75-.76V5.67a.75.75 0 1 1 1.5 0v1.88a.75.75 0 0 1-.75.76"
+          />
+          <circle cx="18.02" cy="12.01" r=".76" fill="#4285f4" />
+          <circle cx="18.02" cy="9.76" r=".76" fill="#4285f4" />
+          <circle cx="18.02" cy="3.48" r=".76" fill="#4285f4" />
+          <path
+            fill="#669df6"
+            d="M12 15a.76.76 0 0 1-.75-.75v-1.91a.76.76 0 0 1 1.51 0v1.89A.76.76 0 0 1 12 15"
+          />
+          <circle cx="12" cy="16.45" r=".76" fill="#669df6" />
+          <circle cx="12" cy="10.14" r=".76" fill="#669df6" />
+          <circle cx="12" cy="7.92" r=".76" fill="#669df6" />
+          <path
+            fill="#4285f4"
+            d="M15 10.54a.76.76 0 0 1-.75-.75V7.91a.76.76 0 1 1 1.51 0v1.88a.76.76 0 0 1-.76.75"
+          />
+          <circle cx="15.01" cy="5.69" r=".76" fill="#4285f4" />
+          <circle cx="15.01" cy="14.19" r=".76" fill="#4285f4" />
+          <circle cx="15.01" cy="11.97" r=".76" fill="#4285f4" />
+          <circle cx="8.99" cy="14.19" r=".76" fill="#aecbfa" />
+          <circle cx="8.99" cy="7.92" r=".76" fill="#aecbfa" />
+          <circle cx="8.99" cy="5.69" r=".76" fill="#aecbfa" />
+          <path
+            fill="#aecbfa"
+            d="M9 12.73a.76.76 0 0 1-.76-.73v-1.9a.75.75 0 1 1 1.5 0V12a.75.75 0 0 1-.74.73"
+          />
+        </svg>
+      );
+
     /* ── Groq ─────────────────────────────────────── */
     case 'groq':
       // Source: https://groq.com/favicon.svg (lightning bolt mark on the
@@ -167,6 +279,19 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
             d="m18.445 4.406-9.468 13.74 7.341.665-1.69 9.578 9.469-13.74-7.342-.664 1.69-9.579Z"
           />
         </svg>
+      );
+
+    /* ── Hugging Face ──────────────────────────────── */
+    case 'huggingface':
+      return (
+        <img
+          src="/icons/huggingface.svg"
+          alt=""
+          width={size}
+          height={size}
+          style={{ ...s, display: 'block', 'object-fit': 'contain' }}
+          aria-hidden="true"
+        />
       );
 
     /* ── Kilo ─────────────────────────────────────── */
@@ -257,6 +382,19 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
         </svg>
       );
 
+    /* ── ClinePass ─────────────────────────────────── */
+    case 'cline-pass':
+      return (
+        <img
+          src="/icons/providers/cline-pass.png"
+          alt=""
+          width={size}
+          height={size}
+          style={{ ...s, display: 'block', 'object-fit': 'contain', 'border-radius': '4px' }}
+          aria-hidden="true"
+        />
+      );
+
     /* ── Fireworks AI ─────────────────────────────── */
     case 'fireworks':
       return (
@@ -292,6 +430,19 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
             fill="#E10500"
           />
         </svg>
+      );
+
+    /* ── NousResearch ─────────────────────────────── */
+    case 'nous':
+      return (
+        <img
+          src="/icons/providers/nousresearch.svg"
+          alt=""
+          width={size}
+          height={size}
+          style={{ ...s, display: 'block', 'object-fit': 'contain' }}
+          aria-hidden="true"
+        />
       );
 
     /* ── xAI (Grok) ──────────────────────────────── */
@@ -394,14 +545,11 @@ export function providerIcon(id: string, size: number = 20): JSX.Element | null 
     /* ── OpenRouter ─────────────────────────────────── */
     case 'openrouter':
       return (
-        <svg
-          style={s}
-          viewBox="0 0 24 24"
-          fill="#6366f1"
-          xmlns="http://www.w3.org/2000/svg"
-          aria-hidden="true"
-        >
-          <path d="M16.778 1.844v1.919q-.569-.026-1.138-.032-.708-.008-1.415.037c-1.93.126-4.023.728-6.149 2.237-2.911 2.066-2.731 1.95-4.14 2.75-.396.223-1.342.574-2.185.798-.841.225-1.753.333-1.751.333v4.229s.768.108 1.61.333c.842.224 1.789.575 2.185.799 1.41.798 1.228.683 4.14 2.75 2.126 1.509 4.22 2.11 6.148 2.236.88.058 1.716.041 2.555.005v1.918l7.222-4.168-7.222-4.17v2.176c-.86.038-1.611.065-2.278.021-1.364-.09-2.417-.357-3.979-1.465-2.244-1.593-2.866-2.027-3.68-2.508.889-.518 1.449-.906 3.822-2.59 1.56-1.109 2.614-1.377 3.978-1.466.667-.044 1.418-.017 2.278.02v2.176L24 6.014Z" />
+        <svg style={s} viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path
+            d="M18.654 3.87a5.087 5.087 0 110 10.174L23.7 19.09c.64.641.187 1.737-.72 1.737H8.48a8.479 8.479 0 010-16.958h10.175zM8.479 7.26a5.087 5.087 0 100 10.176 5.087 5.087 0 000-10.175z"
+            fill="#7624F4"
+          />
         </svg>
       );
 
@@ -598,7 +746,12 @@ const CUSTOM_PROVIDER_LOGOS: Record<string, string> = {
   ollama: '/icons/ollama.svg',
   'ollama cloud': '/icons/ollama.svg',
   openrouter: '/icons/openrouter.svg',
+  pioneer: '/icons/pioneer.svg',
+  'pioneer ai': '/icons/pioneer.svg',
   qwen: '/icons/qwen.svg',
+  vertex: '/icons/vertex.svg',
+  'vertex ai': '/icons/vertex.svg',
+  'google vertex ai': '/icons/vertex.svg',
   siliconflow: '/icons/siliconflow.svg',
   'z ai': '/icons/zai.svg',
   'z ai (zhipu ai)': '/icons/zai.svg',
@@ -621,7 +774,9 @@ const BASE_URL_TO_PROVIDER: [RegExp, string][] = [
   [/integrate\.api\.nvidia\.com/i, 'nvidia nim'],
   [/api\.ollama\.com/i, 'ollama cloud'],
   [/openrouter\.ai/i, 'openrouter'],
+  [/api\.pioneer\.ai|pioneer\.ai/i, 'pioneer'],
   [/siliconflow\.cn|api\.siliconflow/i, 'siliconflow'],
+  [/aiplatform\.googleapis\.com/i, 'vertex'],
 ];
 
 const MODEL_NAME_TO_PROVIDER: [RegExp, string][] = [

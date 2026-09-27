@@ -10,14 +10,6 @@ vi.mock('../../src/services/api.js', () => ({
   clearMessageMiscategorized: (...args: unknown[]) => mockClearMiscategorized(...args),
 }));
 
-vi.mock('../../src/services/formatters.js', () => ({
-  formatDuration: (ms: number) => `${ms}ms`,
-  formatTime: (t: string) => t,
-  formatNumber: (v: number) => String(v),
-  sortedHeaderEntries: (h: Record<string, string> | null | undefined) =>
-    h ? Object.entries(h).sort(([a], [b]) => a.localeCompare(b)) : [],
-}));
-
 vi.mock('../../src/services/routing-utils.js', () => ({
   inferProviderName: (m: string) => {
     if (m.startsWith('gpt')) return 'OpenAI';
@@ -34,6 +26,14 @@ vi.mock('../../src/services/model-display.js', () => ({
   },
 }));
 
+vi.mock('@solidjs/router', () => ({
+  A: (props: any) => (
+    <a href={props.href} class={props.class} style={props.style}>
+      {props.children}
+    </a>
+  ),
+}));
+
 import MessageDetails from '../../src/components/MessageDetails';
 
 const detailsResponse = {
@@ -44,6 +44,7 @@ const detailsResponse = {
     model: 'gpt-4o',
     status: 'ok',
     error_message: null,
+    error_code: null,
     description: 'Test description',
     service_type: 'agent',
     input_tokens: 100,
@@ -61,43 +62,6 @@ const detailsResponse = {
     fallback_index: null,
     session_key: 'sess-001',
   },
-  llm_calls: [
-    {
-      id: 'lc-1',
-      call_index: 0,
-      request_model: 'gpt-4o',
-      response_model: 'gpt-4o',
-      gen_ai_system: 'openai',
-      input_tokens: 100,
-      output_tokens: 50,
-      cache_read_tokens: 0,
-      cache_creation_tokens: 0,
-      duration_ms: 800,
-      ttft_ms: 120,
-      temperature: 0.7,
-      max_output_tokens: 4096,
-      timestamp: '2026-02-16 10:00:01',
-    },
-  ],
-  tool_executions: [
-    {
-      id: 'te-1',
-      llm_call_id: 'lc-1',
-      tool_name: 'Read',
-      duration_ms: 50,
-      status: 'ok',
-      error_message: null,
-    },
-  ],
-  agent_logs: [
-    {
-      id: 'al-1',
-      severity: 'info',
-      body: 'Agent started processing',
-      timestamp: '2026-02-16 10:00:00',
-      span_id: 'span-1',
-    },
-  ],
 };
 
 describe('MessageDetails', () => {
@@ -110,37 +74,6 @@ describe('MessageDetails', () => {
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     expect(container.querySelector('.msg-detail__spinner')).not.toBeNull();
     expect(container.textContent).toContain('Loading details');
-  });
-
-  it('displays LLM calls section', async () => {
-    mockGetMessageDetails.mockResolvedValue(detailsResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('LLM Calls');
-      expect(container.textContent).toContain('gpt-4o');
-      expect(container.textContent).toContain('800ms');
-      expect(container.textContent).toContain('120ms');
-    });
-  });
-
-  it('displays tool executions section', async () => {
-    mockGetMessageDetails.mockResolvedValue(detailsResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('Tool Executions');
-      expect(container.textContent).toContain('Read');
-      expect(container.textContent).toContain('50ms');
-    });
-  });
-
-  it('displays agent logs section', async () => {
-    mockGetMessageDetails.mockResolvedValue(detailsResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('Harness Logs');
-      expect(container.textContent).toContain('Agent started processing');
-      expect(container.textContent).toContain('info');
-    });
   });
 
   it('displays trace ID in metadata', async () => {
@@ -173,27 +106,228 @@ describe('MessageDetails', () => {
     mockGetMessageDetails.mockResolvedValue(errorResponse);
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      const errorBox = container.querySelector('.msg-detail__error-box');
+      // The redesign renders the error message inside `.msg-detail__error-inline`
+      // (an icon + the message span) within the error/autofix row.
+      const errorBox = container.querySelector('.msg-detail__error-inline');
       expect(errorBox).not.toBeNull();
       expect(errorBox!.textContent).toBe('401 Unauthorized: invalid API key');
     });
   });
 
-  it('shows message summary even without related data', async () => {
-    const emptyResponse = {
-      message: { ...detailsResponse.message, error_message: null },
-      llm_calls: [],
-      tool_executions: [],
-      agent_logs: [],
-    };
-    mockGetMessageDetails.mockResolvedValue(emptyResponse);
+  it('links request-limit 402 errors to the upgrade page', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'error',
+        error_message: 'Request limit reached',
+        error_http_status: 402,
+        error_origin: 'policy',
+        error_class: 'plan_request_limit_exceeded',
+        routing_reason: 'plan_request_limit_exceeded',
+        superseded: false,
+      },
+    });
+
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Upgrade to Pro for unlimited requests.');
+      expect(container.textContent).toContain('Plan request limit');
+      const link = screen.getByText('Upgrade plan').closest('a');
+      expect(link?.getAttribute('href')).toBe('/upgrade?reason=requests');
+    });
+  });
+
+  it('surfaces a Manifest config error as origin/type, not a provider fault', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'error',
+        error_message: 'Provider API key missing',
+        routing_reason: 'no_provider_key',
+        error_origin: 'config',
+        error_class: 'no_provider_key',
+        superseded: false,
+      },
+    });
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Message');
+      expect(container.textContent).toContain('Origin');
+      expect(container.textContent).toContain('Manifest · Setup');
+      expect(container.textContent).toContain('Missing API key');
+    });
+  });
+
+  it('links the documented error code so a setup failure is debuggable', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'error',
+        // The rendered text the caller actually saw — provider name and fix link
+        // included — rather than a generic "Provider API key missing".
+        error_message:
+          '[🦚 Manifest M100] No anthropic API key yet. Add one here: https://x/routing',
+        error_code: 'M100',
+        error_origin: 'config',
+        error_class: 'no_provider_key',
+      },
+    });
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('M100');
+    });
+
+    const codeLink = container.querySelector('.msg-detail__error-code');
+    expect(codeLink?.getAttribute('href')).toBe('https://manifest.build/llm-gateway/docs/errors/M100/');
+    expect(codeLink?.getAttribute('target')).toBe('_blank');
+    expect(container.textContent).toContain('No anthropic API key yet');
+  });
+
+  it('omits the code row entirely for a provider failure', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'error',
+        error_message: 'Overloaded',
+        error_code: null,
+        error_origin: 'provider',
+        error_class: 'server_error',
+      },
+    });
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => expect(container.textContent).toContain('Overloaded'));
+    expect(container.querySelector('.msg-detail__error-code')).toBeNull();
+  });
+
+  it('explains that a request-origin failure never reached a provider', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'error',
+        error_message: '[🦚 Manifest M300] `messages` array is required.',
+        error_code: 'M300',
+        error_origin: 'request',
+        error_class: 'invalid_request',
+      },
+    });
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Manifest · Bad request');
+    });
+    expect(container.textContent).toContain('No provider was called.');
+  });
+
+  it('renders a fallback-recovery panel for a fallback_error attempt', async () => {
+    // A fallback_error is the failed original of a chain that recovered on a
+    // fallback. The redesign pairs the error block with a "fallback was
+    // triggered" next-card, and surfaces the provider origin/type.
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'fallback_error',
+        error_message: 'Overloaded',
+        error_origin: 'provider',
+        error_class: 'server_error',
+        superseded: true,
+      },
+    });
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Overloaded');
+      expect(container.textContent).toContain('A fallback was triggered after this error.');
+    });
+    // The provider fault is surfaced as origin + type in the error meta table.
+    expect(container.textContent).toContain('Provider');
+    expect(container.textContent).toContain('Server error');
+  });
+
+  it('renders the fallback-recovery panel for a normalized failed + superseded attempt', async () => {
+    // After status normalization the superseded primary stores the canonical
+    // `failed` and carries the recovery signal on the `superseded` boolean, not
+    // the legacy `fallback_error` status. The next-action card must still show.
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'failed',
+        error_message: 'Overloaded',
+        error_origin: 'provider',
+        error_class: 'server_error',
+        superseded: true,
+        autofix_applied: false,
+        autofix_role: null,
+      },
+    });
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Overloaded');
+      expect(container.textContent).toContain('A fallback was triggered after this error.');
+    });
+  });
+
+  it('does not treat a normalized superseded Autofix original as a fallback error', async () => {
+    // A superseded row that is the Autofix original must route to its own
+    // next-action panel, never the fallback one — the `!isAutofixOriginal`
+    // guard on the new superseded branch.
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        status: 'failed',
+        error_message: 'Bad request',
+        superseded: true,
+        autofix_applied: true,
+        autofix_role: 'original',
+      },
+    });
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Bad request');
+    });
+    expect(container.textContent).not.toContain('A fallback was triggered after this error.');
+  });
+
+  it('shows message summary', async () => {
+    const summaryResponse = {
+      message: { ...detailsResponse.message, error_message: null },
+    };
+    mockGetMessageDetails.mockResolvedValue(summaryResponse);
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Request');
       expect(container.textContent).toContain('Provider');
       expect(container.textContent).toContain('OpenAI');
-      expect(container.textContent).not.toContain('LLM Calls');
     });
+  });
+
+  it('lists every provider attempt with its status and cost', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      message: {
+        ...detailsResponse.message,
+        attempts: [
+          {
+            id: 'attempt-1',
+            provider: null,
+            model: null,
+            status: 'error',
+            cost_usd: null,
+          },
+          {
+            id: 'attempt-2',
+            provider: 'openai',
+            model: 'gpt-4o',
+            status: 'success',
+            cost_usd: '0.0123456',
+          },
+        ],
+      },
+    });
+
+    const { container } = render(() => <MessageDetails messageId="request-1" />);
+
+    await screen.findByRole('table', { name: 'Provider attempts' });
+    const rows = container.querySelectorAll('table[aria-label="Provider attempts"] tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.textContent).toContain('1Unknown—error—');
+    expect(rows[1]?.textContent).toContain('2openaiGPT-4osuccess$0.012346');
   });
 
   it('shows error state on API failure', async () => {
@@ -202,111 +336,6 @@ describe('MessageDetails', () => {
     await vi.waitFor(() => {
       const errorEl = container.querySelector('.msg-detail__error');
       expect(errorEl).not.toBeNull();
-    });
-  });
-
-  it('displays section counts', async () => {
-    mockGetMessageDetails.mockResolvedValue(detailsResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      const counts = container.querySelectorAll('.msg-detail__count');
-      expect(counts.length).toBe(3);
-      expect(counts[0]!.textContent).toBe('1');
-      expect(counts[1]!.textContent).toBe('1');
-      expect(counts[2]!.textContent).toBe('1');
-    });
-  });
-
-  it('displays tool execution status badge', async () => {
-    mockGetMessageDetails.mockResolvedValue(detailsResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      const badge = container.querySelector('.status-badge--ok');
-      expect(badge).not.toBeNull();
-    });
-  });
-
-  it('displays tool execution error status', async () => {
-    const errorToolResponse = {
-      ...detailsResponse,
-      tool_executions: [
-        {
-          id: 'te-err',
-          llm_call_id: 'lc-1',
-          tool_name: 'Write',
-          duration_ms: 100,
-          status: 'error',
-          error_message: 'Permission denied',
-        },
-      ],
-    };
-    mockGetMessageDetails.mockResolvedValue(errorToolResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('Permission denied');
-      const badge = container.querySelector('.status-badge--error');
-      expect(badge).not.toBeNull();
-    });
-  });
-
-  it('displays severity dot with warn color for warn logs', async () => {
-    const warnLogResponse = {
-      ...detailsResponse,
-      agent_logs: [
-        {
-          id: 'al-warn',
-          severity: 'warn',
-          body: 'Deprecation notice',
-          timestamp: '2026-02-16 10:00:00',
-          span_id: null,
-        },
-      ],
-    };
-    mockGetMessageDetails.mockResolvedValue(warnLogResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      const dot = container.querySelector('.msg-detail__severity-dot') as HTMLElement;
-      expect(dot).not.toBeNull();
-      expect(dot.getAttribute('title')).toBe('warn');
-      // The warn branch returns hsl(var(--chart-5)). The style attribute is a string.
-      expect(dot.getAttribute('style') ?? '').toContain('--chart-5');
-    });
-  });
-
-  it('displays severity dot with correct color for error logs', async () => {
-    const errorLogResponse = {
-      ...detailsResponse,
-      agent_logs: [
-        {
-          id: 'al-err',
-          severity: 'error',
-          body: 'Critical failure',
-          timestamp: '2026-02-16 10:00:00',
-          span_id: null,
-        },
-      ],
-    };
-    mockGetMessageDetails.mockResolvedValue(errorLogResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      const dot = container.querySelector('.msg-detail__severity-dot');
-      expect(dot).not.toBeNull();
-      expect(dot!.getAttribute('title')).toBe('error');
-    });
-  });
-
-  it('hides sections with no data', async () => {
-    const partialResponse = {
-      ...detailsResponse,
-      tool_executions: [],
-      agent_logs: [],
-    };
-    mockGetMessageDetails.mockResolvedValue(partialResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('LLM Calls');
-      expect(container.textContent).not.toContain('Tool Executions');
-      expect(container.textContent).not.toContain('Harness Logs');
     });
   });
 
@@ -354,7 +383,9 @@ describe('MessageDetails', () => {
     mockGetMessageDetails.mockResolvedValue(fallbackResponse);
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      const banner = container.querySelector('.msg-detail__fallback-banner');
+      // A successful request reached via fallback renders the fallback
+      // trigger card (`.autofix-card--fallback`) with the attempt number.
+      const banner = container.querySelector('.autofix-card--fallback');
       expect(banner).not.toBeNull();
       expect(banner!.textContent).toContain('gemini-2.5-flash-lite');
       expect(banner!.textContent).toContain('#1');
@@ -365,7 +396,7 @@ describe('MessageDetails', () => {
     mockGetMessageDetails.mockResolvedValue(detailsResponse);
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      expect(container.querySelector('.msg-detail__fallback-banner')).toBeNull();
+      expect(container.querySelector('.autofix-card--fallback')).toBeNull();
     });
   });
 
@@ -398,6 +429,23 @@ describe('MessageDetails', () => {
     });
   });
 
+  it('displays direct model overrides as DIRECT routing metadata', async () => {
+    mockGetMessageDetails.mockResolvedValue({
+      ...detailsResponse,
+      message: {
+        ...detailsResponse.message,
+        routing_tier: 'direct',
+        routing_reason: 'direct',
+      },
+    });
+    const { container } = render(() => <MessageDetails messageId="msg-1" />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Routing');
+      expect(container.textContent).toContain('DIRECT');
+      expect(container.textContent).not.toContain('default');
+    });
+  });
+
   it('renders App and SDK metadata when caller_attribution is present', async () => {
     const withAttribution = {
       ...detailsResponse,
@@ -425,7 +473,7 @@ describe('MessageDetails', () => {
     mockGetMessageDetails.mockResolvedValue(detailsResponse);
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Message');
+      expect(container.textContent).toContain('Request');
     });
     const labels = Array.from(container.querySelectorAll('.msg-detail__meta-label')).map(
       (n) => n.textContent,
@@ -461,21 +509,17 @@ describe('MessageDetails', () => {
     expect(toggle!.getAttribute('aria-expanded')).toBe('false');
 
     // Count badge stays visible when collapsed. Request Headers uses the
-    // distinct `msg-detail__count-badge` styling (border + bg) merged in from
-    // the header-tier work, while the table sections still use the plain
-    // `msg-detail__count`. Together they cover all four section counts.
+    // `msg-detail__count-badge` styling (border + bg).
     const headerCount = container.querySelector('.msg-detail__count-badge');
     expect(headerCount).not.toBeNull();
     expect(headerCount!.textContent).toBe('3');
-    const counts = container.querySelectorAll('.msg-detail__count');
-    expect(counts.length).toBe(3);
 
     // Table body is not rendered while collapsed.
     expect(container.textContent).not.toContain('curl/8.14.1');
     expect(container.textContent).not.toContain('x-custom-foo');
-    // There should be 3 tables visible (LLM Calls, Tool Executions, Harness Logs), not 4.
+    // No tables render while the only collapsible section is collapsed.
     const tables = container.querySelectorAll('table.msg-detail__table');
-    expect(tables.length).toBe(3);
+    expect(tables.length).toBe(0);
   });
 
   it('expands Request Headers when the title is clicked, and collapses on second click', async () => {
@@ -574,7 +618,7 @@ describe('MessageDetails', () => {
     mockGetMessageDetails.mockResolvedValue(noHeaders);
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Message');
+      expect(container.textContent).toContain('Request');
     });
     expect(container.textContent).not.toContain('Request Headers');
   });
@@ -587,78 +631,9 @@ describe('MessageDetails', () => {
     mockGetMessageDetails.mockResolvedValue(empty);
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Message');
+      expect(container.textContent).toContain('Request');
     });
     expect(container.textContent).not.toContain('Request Headers');
-  });
-
-  it('renders em dashes for null call_index, request_model, and response_model in an LLM call', async () => {
-    const nullFieldsResponse = {
-      ...detailsResponse,
-      llm_calls: [
-        {
-          ...detailsResponse.llm_calls[0],
-          call_index: null,
-          request_model: null,
-          response_model: null,
-        },
-      ],
-    };
-    mockGetMessageDetails.mockResolvedValue(nullFieldsResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('LLM Calls');
-      const cells = container.querySelectorAll('.msg-detail__table td');
-      const emDashes = Array.from(cells).filter((c) => c.textContent === '\u2014');
-      // Three null fields → at least three em-dashes in the LLM-call row.
-      expect(emDashes.length).toBeGreaterThanOrEqual(3);
-    });
-  });
-
-  it('renders em dash for null tool duration', async () => {
-    const nullToolDurationResponse = {
-      ...detailsResponse,
-      tool_executions: [
-        {
-          id: 'te-null',
-          llm_call_id: 'lc-1',
-          tool_name: 'Bash',
-          duration_ms: null,
-          status: 'ok',
-          error_message: null,
-        },
-      ],
-    };
-    mockGetMessageDetails.mockResolvedValue(nullToolDurationResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('Bash');
-      const cells = container.querySelectorAll('.msg-detail__table td');
-      const emDashCells = Array.from(cells).filter((c) => c.textContent === '\u2014');
-      expect(emDashCells.length).toBeGreaterThanOrEqual(1);
-    });
-  });
-
-  it('renders em dash for null log body', async () => {
-    const nullBodyLogResponse = {
-      ...detailsResponse,
-      agent_logs: [
-        {
-          id: 'al-nobody',
-          severity: 'info',
-          body: null,
-          timestamp: '2026-02-16 10:00:00',
-          span_id: null,
-        },
-      ],
-    };
-    mockGetMessageDetails.mockResolvedValue(nullBodyLogResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      const logCells = container.querySelectorAll('.msg-detail__log-body');
-      expect(logCells.length).toBe(1);
-      expect(logCells[0]!.textContent).toBe('\u2014');
-    });
   });
 
   it('omits Provider and Model when the message has no model attached', async () => {
@@ -671,13 +646,13 @@ describe('MessageDetails', () => {
     await vi.waitFor(() => {
       // With model=null, inferProviderName isn't called and `Provider` MetaField
       // renders nothing (value is null).
-      expect(container.textContent).toContain('Message');
+      expect(container.textContent).toContain('Request');
       expect(container.textContent).not.toContain('Provider');
       expect(container.textContent).not.toContain('Model ID');
     });
   });
 
-  it('omits the attempt # when fallback_index is null but fallback_from_model is set', async () => {
+  it('defaults to Attempt #1 in the fallback banner when fallback_index is null', async () => {
     const fallbackNoIndexResponse = {
       ...detailsResponse,
       message: {
@@ -689,26 +664,12 @@ describe('MessageDetails', () => {
     mockGetMessageDetails.mockResolvedValue(fallbackNoIndexResponse);
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
-      const banner = container.querySelector('.msg-detail__fallback-banner');
+      const banner = container.querySelector('.autofix-card--fallback');
       expect(banner).not.toBeNull();
       expect(banner!.textContent).toContain('gemini-2.5-flash-lite');
-      // Without fallback_index, the "(attempt #N)" suffix is hidden.
-      expect(banner!.textContent).not.toContain('attempt #');
-    });
-  });
-
-  it('shows em dash for null duration in LLM call', async () => {
-    const nullDurationResponse = {
-      ...detailsResponse,
-      llm_calls: [{ ...detailsResponse.llm_calls[0], duration_ms: null, ttft_ms: null }],
-    };
-    mockGetMessageDetails.mockResolvedValue(nullDurationResponse);
-    const { container } = render(() => <MessageDetails messageId="msg-1" />);
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('LLM Calls');
-      const cells = container.querySelectorAll('.msg-detail__table td');
-      const durationValues = Array.from(cells).filter((c) => c.textContent === '\u2014');
-      expect(durationValues.length).toBeGreaterThanOrEqual(2);
+      // With no explicit index the attempt number falls back to #1 rather than
+      // being hidden — `(fallback_index ?? 0) + 1`.
+      expect(banner!.textContent).toContain('Attempt #1');
     });
   });
 
@@ -826,7 +787,7 @@ describe('MessageDetails', () => {
   // The Model Parameters section is purely additive — every existing test
   // above this block uses a `detailsResponse` fixture that never sets
   // `request_params`, so they implicitly verify the back-compat property
-  // (rows recorded before this feature stay visually unchanged).
+  // (rows created before this feature stay visually unchanged).
   describe('Model Parameters section', () => {
     it('stays hidden for messages without request_params (back-compat for pre-feature rows)', async () => {
       // No `request_params` on the base fixture → the dashboard renders
@@ -835,7 +796,7 @@ describe('MessageDetails', () => {
       mockGetMessageDetails.mockResolvedValue(detailsResponse);
       const { container } = render(() => <MessageDetails messageId="msg-1" />);
       await vi.waitFor(() => {
-        expect(container.textContent).toContain('Message');
+        expect(container.textContent).toContain('Request');
       });
       expect(container.textContent).not.toContain('Model Parameters');
     });
@@ -848,7 +809,7 @@ describe('MessageDetails', () => {
       mockGetMessageDetails.mockResolvedValue(nullParams);
       const { container } = render(() => <MessageDetails messageId="msg-1" />);
       await vi.waitFor(() => {
-        expect(container.textContent).toContain('Message');
+        expect(container.textContent).toContain('Request');
       });
       expect(container.textContent).not.toContain('Model Parameters');
     });
@@ -861,7 +822,7 @@ describe('MessageDetails', () => {
       mockGetMessageDetails.mockResolvedValue(emptyParams);
       const { container } = render(() => <MessageDetails messageId="msg-1" />);
       await vi.waitFor(() => {
-        expect(container.textContent).toContain('Message');
+        expect(container.textContent).toContain('Request');
       });
       expect(container.textContent).not.toContain('Model Parameters');
     });
@@ -938,7 +899,7 @@ describe('MessageDetails', () => {
       expect(chevron.classList.contains('msg-detail__chevron--open')).toBe(true);
     });
 
-    it("renders an info tooltip explaining what model parameters are and that the surface will grow", async () => {
+    it('renders an info tooltip explaining what model parameters are and that the surface will grow', async () => {
       const withParams = {
         ...detailsResponse,
         message: {
@@ -951,9 +912,10 @@ describe('MessageDetails', () => {
       await vi.waitFor(() => {
         expect(container.textContent).toContain('Model Parameters');
       });
-      // The tooltip lives next to the toggle button as a sibling — putting
-      // it inside the button would nest interactive elements (invalid HTML).
-      const row = container.querySelector('.msg-detail__section-row');
+      // The tooltip lives next to the toggle button as a sibling in the
+      // panel header — putting it inside the button would nest interactive
+      // elements (invalid HTML).
+      const row = container.querySelector('.toggle-panel__header');
       expect(row).not.toBeNull();
       const tooltip = row!.querySelector('.info-tooltip');
       expect(tooltip).not.toBeNull();
@@ -1018,10 +980,9 @@ describe('MessageDetails', () => {
       expect(titleButton.textContent).toContain('3');
       titleButton.click();
       // Scope the key-extraction to the Model Parameters table specifically;
-      // the LLM Calls / Tool Executions / Harness Logs sections also use
-      // `.msg-detail__table` and would dilute a global selector. The
-      // wrapper id starts with `msg-detail-model-params-` for exactly this
-      // kind of disambiguation.
+      // the Request Headers section also uses `.msg-detail__table` and would
+      // dilute a global selector. The wrapper id starts with
+      // `msg-detail-model-params-` for exactly this kind of disambiguation.
       await vi.waitFor(() => {
         const wrapper = Array.from(container.querySelectorAll<HTMLElement>('[id]')).find((el) =>
           el.id.startsWith('msg-detail-model-params-'),

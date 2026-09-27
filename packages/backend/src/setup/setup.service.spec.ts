@@ -32,6 +32,8 @@ function buildMockDataSource(runnerQuery: jest.Mock) {
   };
 }
 
+import { resetMcpAvailability } from '../auth/mcp-availability';
+
 describe('SetupService', () => {
   let runnerQuery: jest.Mock;
   let ds: ReturnType<typeof buildMockDataSource>;
@@ -219,6 +221,87 @@ describe('SetupService', () => {
       process.env['GITHUB_CLIENT_ID'] = 'id';
       process.env['GITHUB_CLIENT_SECRET'] = 'secret';
       expect(service.getEnabledSocialProviders()).toEqual(['github']);
+    });
+  });
+
+  describe('isEmailConfigured', () => {
+    const envKeys = [
+      'EMAIL_PROVIDER',
+      'EMAIL_API_KEY',
+      'EMAIL_DOMAIN',
+      'MAILGUN_API_KEY',
+      'MAILGUN_DOMAIN',
+    ];
+
+    let savedEnv: Record<string, string | undefined>;
+
+    beforeEach(() => {
+      savedEnv = {};
+      for (const k of envKeys) {
+        savedEnv[k] = process.env[k];
+        delete process.env[k];
+      }
+    });
+
+    afterEach(() => {
+      for (const k of envKeys) {
+        if (savedEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedEnv[k];
+      }
+    });
+
+    it('returns false when no email provider is configured', () => {
+      expect(service.isEmailConfigured()).toBe(false);
+    });
+
+    it('returns true when the unified EMAIL_* scheme is configured', () => {
+      process.env['EMAIL_PROVIDER'] = 'resend';
+      process.env['EMAIL_API_KEY'] = 're_key';
+      expect(service.isEmailConfigured()).toBe(true);
+    });
+
+    it('returns true when legacy Mailgun env vars are configured', () => {
+      process.env['MAILGUN_API_KEY'] = 'key';
+      process.env['MAILGUN_DOMAIN'] = 'mg.example.com';
+      expect(service.isEmailConfigured()).toBe(true);
+    });
+  });
+
+  describe('isMcpEnabled', () => {
+    const envKeys = ['BETTER_AUTH_URL', 'MCP_ENABLED'];
+    let savedEnv: Record<string, string | undefined>;
+
+    beforeEach(() => {
+      savedEnv = {};
+      for (const k of envKeys) {
+        savedEnv[k] = process.env[k];
+        delete process.env[k];
+      }
+      resetMcpAvailability();
+    });
+
+    afterEach(() => {
+      for (const k of envKeys) {
+        if (savedEnv[k] === undefined) delete process.env[k];
+        else process.env[k] = savedEnv[k];
+      }
+      resetMcpAvailability();
+    });
+
+    it('returns true on an HTTPS origin', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://mnfst.example.com';
+      expect(service.isMcpEnabled()).toBe(true);
+    });
+
+    it('returns false on a plain-HTTP non-loopback origin', () => {
+      process.env['BETTER_AUTH_URL'] = 'http://manifest.example.internal';
+      expect(service.isMcpEnabled()).toBe(false);
+    });
+
+    it('returns false when MCP_ENABLED opts out', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://mnfst.example.com';
+      process.env['MCP_ENABLED'] = 'false';
+      expect(service.isMcpEnabled()).toBe(false);
     });
   });
 

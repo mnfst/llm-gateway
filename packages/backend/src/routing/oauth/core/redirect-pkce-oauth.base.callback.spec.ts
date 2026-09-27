@@ -150,6 +150,22 @@ describe('RedirectPkceOauthBaseService — sendDoneResponse', () => {
     });
   });
 
+  it('redirects to the stored [::1] IPv6 loopback backendUrl on error', async () => {
+    const svc = buildSvc();
+    const url = await svc.generateAuthorizationUrl('a', 'u', 'http://[::1]:3001');
+    const state = new URL(url).searchParams.get('state')!;
+
+    const { req, res, done, writeHead } = buildCallbackPair(
+      `/auth/callback?state=${state}&error=access_denied`,
+    );
+    invokeHandler(svc, req, res);
+    await done;
+
+    expect(writeHead).toHaveBeenCalledWith(302, {
+      Location: 'http://[::1]:3001/api/v1/oauth/test-provider/done?ok=0',
+    });
+  });
+
   it('redirects to localhost backendUrl with ok=0 when exchange fails', async () => {
     const svc = buildSvc();
     const originalFetch = global.fetch;

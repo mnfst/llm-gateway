@@ -192,14 +192,49 @@
   margin: 0 auto;
 }
 
+.routing-cards--unified-compact {
+  grid-template-columns: repeat(2, minmax(280px, 340px));
+  justify-content: center;
+}
+
 .routing-cards-backdrop {
   padding: 16px;
   background: hsl(var(--muted) / 0.45);
   border-radius: var(--radius);
 }
 
+/* ── Dashed add-card for unified routing view ────────── */
+.routing-card.routing-unified-add-card {
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1.5px dashed hsl(var(--border));
+  background: transparent;
+  cursor: pointer;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  transition:
+    border-color 0.15s,
+    color 0.15s,
+    background 0.15s;
+}
+
+.dark .routing-card.routing-unified-add-card {
+  background: transparent;
+}
+
+.routing-card.routing-unified-add-card:hover {
+  border-color: hsl(var(--primary));
+  color: hsl(var(--primary));
+  background: hsl(var(--primary) / 0.04);
+}
+
 @media (max-width: 700px) {
-  .routing-cards--centered {
+  .routing-cards--centered,
+  .routing-cards--unified-compact {
+    grid-template-columns: 1fr;
     max-width: 100%;
     min-width: 0;
   }
@@ -870,28 +905,6 @@
   padding-top: 16px;
 }
 
-.model-params__row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 0;
-}
-
-.model-params__row-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.model-params__row-control {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-}
-
 .model-params__default-hint {
   font-size: var(--font-size-xs);
   line-height: 1.4;
@@ -919,14 +932,6 @@
 
 .model-params-modal--empty .modal-card__desc {
   margin-bottom: 18px;
-}
-
-.model-params__group {
-  padding: 0;
-}
-
-.model-params__group + .model-params__group {
-  margin-top: 16px;
 }
 
 .model-params__empty {
@@ -985,32 +990,6 @@
   border-radius: var(--radius-sm);
 }
 
-.model-params__group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 16px 8px;
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: hsl(var(--foreground));
-}
-
-.model-params__group-card {
-  background: hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  padding: 4px 16px;
-}
-
-.model-params__separator {
-  height: 1px;
-  background: hsl(var(--border));
-}
-
-.model-params__group .model-params__row {
-  padding: 12px 0;
-}
-
 /* Loading / "no configurable parameters" placeholder shown while the per-model
    specs are fetched on dialog open, or when the model exposes no params. */
 .model-params__status {
@@ -1021,15 +1000,6 @@
   padding: 24px 0;
   font-size: var(--font-size-sm);
   color: hsl(var(--muted-foreground));
-}
-
-.model-params__label-title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
 }
 
 .model-params__param-key {
@@ -1084,12 +1054,6 @@
 .model-params__help:hover .model-params__help-tooltip,
 .model-params__help:focus-visible .model-params__help-tooltip {
   display: block;
-}
-
-.model-params__label-hint {
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-  color: hsl(var(--muted-foreground));
 }
 
 .model-params__toggle {
@@ -1891,7 +1855,8 @@
   padding: 48px 24px;
   gap: 24px;
   width: 100%;
-  background: hsl(var(--muted) / 0.45);
+  background: hsl(var(--muted) / 0.34);
+  border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
 }
 
@@ -1913,6 +1878,7 @@
   font-size: var(--font-size-sm);
   color: hsl(var(--muted-foreground));
   line-height: 1.5;
+  max-width: 360px;
 }
 
 .no-connections-prompt__cards {
@@ -1921,7 +1887,7 @@
   justify-content: center;
   gap: 12px;
   width: 100%;
-  max-width: 1400px;
+  max-width: 1040px;
 }
 
 .no-connections-prompt__cards > * {
@@ -1935,7 +1901,7 @@
   text-align: left;
   gap: 4px;
   padding: 16px 20px;
-  background: #ffffff73;
+  background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
   transition:
@@ -1946,9 +1912,21 @@
 }
 
 .no-connections-prompt__card:hover {
-  background: #ffffffa6;
+  background: hsl(var(--accent));
   border-color: hsl(var(--foreground) / 0.2);
   box-shadow: 0 2px 8px hsl(var(--foreground) / 0.06);
+}
+
+.dark .no-connections-prompt {
+  background: hsl(var(--muted) / 0.24);
+}
+
+.dark .no-connections-prompt__card {
+  background: hsl(var(--card));
+}
+
+.dark .no-connections-prompt__card:hover {
+  background: hsl(var(--muted) / 0.55);
 }
 
 .no-connections-prompt__card-icon {
@@ -2021,5 +1999,40 @@
 @media (max-width: 600px) {
   .routing-cards {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .routing-cards:not(.routing-cards--wide),
+  .routing-cards--centered,
+  .routing-cards--unified-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .container--lg > div:not([class])[style*='space-between'] {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .container--lg > div:not([class])[style*='space-between'] > div {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .routing-providers-info {
+    flex-shrink: 0;
+  }
+
+  .routing-providers-info__label {
+    white-space: nowrap;
+  }
+
+  .routing-footer {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .routing-footer .btn {
+    white-space: nowrap;
   }
 }

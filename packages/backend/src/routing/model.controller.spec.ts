@@ -7,6 +7,7 @@ import { OllamaSyncService } from '../database/ollama-sync.service';
 import { PricingSyncService } from '../database/pricing-sync.service';
 import { ModelsDevSyncService } from '../database/models-dev-sync.service';
 import { ProviderParamSpecService } from './routing-core/provider-param-spec.service';
+import { RoutingCacheService } from './routing-core/routing-cache.service';
 import { DiscoveredModel } from '../model-discovery/model-fetcher';
 import { Agent } from '../entities/agent.entity';
 
@@ -31,6 +32,7 @@ function makeDiscovered(overrides: Partial<DiscoveredModel> = {}): DiscoveredMod
 }
 
 describe('ModelController', () => {
+  const previousMode = process.env['MANIFEST_MODE'];
   let controller: ModelController;
   let mockDiscoveryService: Record<string, jest.Mock>;
   let mockOllamaSync: Record<string, jest.Mock>;
@@ -40,9 +42,11 @@ describe('ModelController', () => {
   let mockProviderParamSpecs: Record<string, jest.Mock>;
   let mockModelsDevSync: Record<string, jest.Mock>;
   let mockOpencodeGoCatalog: Record<string, jest.Mock>;
+  let routingCache: RoutingCacheService;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env['MANIFEST_MODE'] = 'selfhosted';
     mockDiscoveryService = {
       getModelsForAgent: jest.fn().mockResolvedValue([]),
       discoverAllForAgent: jest.fn().mockResolvedValue(undefined),
@@ -75,11 +79,14 @@ describe('ModelController', () => {
       getCapabilities: jest.fn().mockResolvedValue(null),
     };
     mockModelsDevSync = {
-      lookupModel: jest.fn().mockReturnValue(null),
+      lookupModelCapabilities: jest.fn().mockReturnValue(null),
+      getModelsForProvider: jest.fn().mockReturnValue([]),
     };
     mockOpencodeGoCatalog = {
       resolveCostPerRequest: jest.fn().mockResolvedValue(null),
+      list: jest.fn().mockResolvedValue([]),
     };
+    routingCache = new RoutingCacheService();
 
     controller = new ModelController(
       mockDiscoveryService as unknown as ModelDiscoveryService,
@@ -90,7 +97,13 @@ describe('ModelController', () => {
       mockProviderParamSpecs as unknown as ProviderParamSpecService,
       mockModelsDevSync as unknown as ModelsDevSyncService,
       mockOpencodeGoCatalog as unknown as OpencodeGoCatalogService,
+      routingCache,
     );
+  });
+
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env['MANIFEST_MODE'];
+    else process.env['MANIFEST_MODE'] = previousMode;
   });
 
   /* ── pricingHealth ── */
@@ -158,17 +171,38 @@ describe('ModelController', () => {
       expect(mockOllamaSync.sync).toHaveBeenCalled();
       expect(result).toEqual({ count: 0 });
     });
+
+    it('rejects Ollama sync in cloud without dialing localhost', async () => {
+      process.env['MANIFEST_MODE'] = 'cloud';
+
+      await expect(controller.syncOllama()).rejects.toThrow(
+        'Built-in local providers are only available in self-hosted Manifest',
+      );
+      expect(mockOllamaSync.sync).not.toHaveBeenCalled();
+    });
   });
 
   /* ── refreshModels ── */
 
   describe('refreshModels', () => {
-    it('should call discoverAllForAgent and return ok', async () => {
+    it('forces provider catalogs to refresh and returns ok', async () => {
       const result = await controller.refreshModels(mockCtx, mockAgentName);
 
       expect(mockResolveAgent.resolve).toHaveBeenCalledWith('tenant-1', 'test-agent');
-      expect(mockDiscoveryService.discoverAllForAgent).toHaveBeenCalledWith('tenant-1');
+      expect(mockDiscoveryService.discoverAllForAgent).toHaveBeenCalledWith('tenant-1', {
+        forceRefresh: true,
+      });
       expect(result).toEqual({ ok: true });
+    });
+
+    it('clears agent and tenant caches after refreshing all providers', async () => {
+      routingCache.setModelParams(TEST_AGENT_ID, []);
+      routingCache.setProviders(TEST_TENANT_ID, []);
+
+      await controller.refreshModels(mockCtx, mockAgentName);
+
+      expect(routingCache.getModelParams(TEST_AGENT_ID)).toBeNull();
+      expect(routingCache.getProviders(TEST_TENANT_ID)).toBeNull();
     });
   });
 
@@ -221,6 +255,22 @@ describe('ModelController', () => {
 
       expect(result.ok).toBe(false);
       expect(result.error).toBe('Provider returned no models');
+    });
+
+    it('clears agent and tenant caches after refreshing one provider', async () => {
+      mockDiscoveryService.refreshProvider.mockResolvedValue({
+        ok: true,
+        model_count: 3,
+        last_fetched_at: '2026-04-12T12:00:00.000Z',
+        error: null,
+      });
+      routingCache.setModelParams(TEST_AGENT_ID, []);
+      routingCache.setProviders(TEST_TENANT_ID, []);
+
+      await controller.refreshProviderModels(mockCtx, mockParams, {});
+
+      expect(routingCache.getModelParams(TEST_AGENT_ID)).toBeNull();
+      expect(routingCache.getProviders(TEST_TENANT_ID)).toBeNull();
     });
   });
 
@@ -284,6 +334,16 @@ describe('ModelController', () => {
       });
     });
 
+    it('surfaces curated known modalities in the picker payload when discovery has none', async () => {
+      mockDiscoveryService.getModelsForAgent.mockResolvedValue([
+        makeDiscovered({ id: 'gpt-5.4-mini', provider: 'openai', authType: 'subscription' }),
+      ]);
+
+      const result = await controller.getAvailableModels(mockCtx, mockAgentName);
+
+      expect(result[0].input_modalities).toEqual(['text', 'image']);
+    });
+
     it('includes the per-request cost for OpenCode Go subscription models', async () => {
       mockDiscoveryService.getModelsForAgent.mockResolvedValue([
         makeDiscovered({
@@ -315,6 +375,58 @@ describe('ModelController', () => {
       const result = await controller.getAvailableModels(mockCtx, mockAgentName);
 
       expect(result[0]).not.toHaveProperty('cost_per_request');
+    });
+
+    it('hides an unpublished OpenCode Go id a published one already stands for', async () => {
+      mockDiscoveryService.getModelsForAgent.mockResolvedValue([
+        makeDiscovered({
+          id: 'opencode-go/deepseek-v4.1-flash',
+          displayName: 'DeepSeek V4.1 Flash',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+        // DeepSeek's native alias for the same model. OpenCode serves it but
+        // documents neither it nor a quota for it, and it resolves to the very
+        // same name, so the picker would offer one model twice.
+        makeDiscovered({
+          id: 'opencode-go/deepseek-flash',
+          displayName: 'DeepSeek V4.1 Flash',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+      ]);
+      mockOpencodeGoCatalog.list.mockResolvedValue([{ id: 'deepseek-v4.1-flash' }]);
+
+      const result = await controller.getAvailableModels(mockCtx, mockAgentName);
+
+      expect(result.map((m) => m.model_name)).toEqual(['opencode-go/deepseek-v4.1-flash']);
+    });
+
+    it('keeps an unpublished OpenCode Go model that nothing shadows', async () => {
+      mockDiscoveryService.getModelsForAgent.mockResolvedValue([
+        makeDiscovered({
+          id: 'opencode-go/hy3',
+          displayName: 'Hy3',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+        // Its own model, not an alias of hy3 — OpenCode serves it and it has a
+        // name of its own, so it stays selectable.
+        makeDiscovered({
+          id: 'opencode-go/hy3-preview',
+          displayName: 'Hy3 Preview',
+          provider: 'opencode-go',
+          authType: 'subscription',
+        }),
+      ]);
+      mockOpencodeGoCatalog.list.mockResolvedValue([{ id: 'hy3' }]);
+
+      const result = await controller.getAvailableModels(mockCtx, mockAgentName);
+
+      expect(result.map((m) => m.model_name)).toEqual([
+        'opencode-go/hy3',
+        'opencode-go/hy3-preview',
+      ]);
     });
 
     it('does not query OpenCode Go cost for non-gateway providers', async () => {
@@ -356,7 +468,7 @@ describe('ModelController', () => {
       mockDiscoveryService.getModelsForAgent.mockResolvedValue([
         makeDiscovered({ id: 'gpt-4o', provider: 'openai' }),
       ]);
-      mockModelsDevSync.lookupModel.mockReturnValue({
+      mockModelsDevSync.lookupModelCapabilities.mockReturnValue({
         capabilities: ['text', 'image', 'tools', 'stream'],
         inputModalities: ['text', 'image'],
         outputModalities: ['text', 'image'],
@@ -377,7 +489,7 @@ describe('ModelController', () => {
           authType: 'subscription',
         }),
       ]);
-      mockModelsDevSync.lookupModel.mockReturnValue({
+      mockModelsDevSync.lookupModelCapabilities.mockReturnValue({
         capabilities: ['text', 'tools', 'stream'],
       });
 
@@ -385,7 +497,7 @@ describe('ModelController', () => {
 
       // The gateway prefix is stripped and the provider inferred from the
       // underlying id, so models.dev is queried as the real provider.
-      expect(mockModelsDevSync.lookupModel).toHaveBeenCalledWith('zai', 'glm-5.1');
+      expect(mockModelsDevSync.lookupModelCapabilities).toHaveBeenCalledWith('zai', 'glm-5.1');
       expect(result[0].capabilities).toEqual(['text', 'tools', 'stream']);
     });
 
@@ -402,7 +514,7 @@ describe('ModelController', () => {
 
       // Unknown underlying ids keep the gateway provider rather than passing
       // `undefined`.
-      expect(mockModelsDevSync.lookupModel).toHaveBeenCalledWith(
+      expect(mockModelsDevSync.lookupModelCapabilities).toHaveBeenCalledWith(
         'opencode-go',
         'unknown-route-model',
       );
@@ -426,13 +538,16 @@ describe('ModelController', () => {
           displayName: 'mistral.magistral-small-2509',
         }),
       ]);
-      mockModelsDevSync.lookupModel.mockReturnValue({
+      mockModelsDevSync.lookupModelCapabilities.mockReturnValue({
         name: 'Magistral Small',
       });
 
       const result = await controller.getAvailableModels(mockCtx, mockAgentName);
 
-      expect(mockModelsDevSync.lookupModel).toHaveBeenCalledWith('mistral', 'magistral-small-2509');
+      expect(mockModelsDevSync.lookupModelCapabilities).toHaveBeenCalledWith(
+        'mistral',
+        'magistral-small-2509',
+      );
       expect(result[0].model_name).toBe('mistral.magistral-small-2509');
       expect(result[0].display_name).toBe('Magistral Small');
     });

@@ -1,4 +1,5 @@
 import { createResource, createSignal, Index, Show, type Component } from 'solid-js';
+import { deriveCustomProviderAlias, normalizeCustomProviderAlias } from 'manifest-shared';
 import {
   createCustomProvider,
   deleteCustomProvider,
@@ -67,6 +68,16 @@ const CustomProviderForm: Component<Props> = (props) => {
   };
 
   const [name, setName] = createSignal(props.initialData?.name ?? props.prefill?.name ?? '');
+  // The alias follows the name while creating, until the user edits it by
+  // hand. In edit mode it is the stored value: a rename must never rewrite
+  // the model ids clients already use.
+  const [alias, setAlias] = createSignal(
+    props.initialData ? (props.initialData.alias ?? '') : (deriveCustomProviderAlias(name()) ?? ''),
+  );
+  const [aliasTouched, setAliasTouched] = createSignal(isEdit());
+  const normalizedAlias = () => normalizeCustomProviderAlias(alias());
+  const modelIdPreview = () =>
+    normalizedAlias() ? `${normalizedAlias()}/<model>` : 'custom:<provider-id>/<model>';
   const [baseUrl, setBaseUrl] = createSignal(
     props.initialData?.base_url ?? props.prefill?.baseUrl ?? '',
   );
@@ -162,6 +173,7 @@ const CustomProviderForm: Component<Props> = (props) => {
     try {
       await createCustomProvider(props.agentName, {
         name: name().trim(),
+        alias: normalizedAlias(),
         base_url: baseUrl().trim(),
         api_kind: apiKind(),
         apiKey: apiKey().trim() || undefined,
@@ -180,6 +192,7 @@ const CustomProviderForm: Component<Props> = (props) => {
     setError(null);
     const data: Record<string, unknown> = {
       name: name().trim(),
+      alias: normalizedAlias(),
       base_url: baseUrl().trim(),
       models: buildModels(),
     };
@@ -263,9 +276,32 @@ const CustomProviderForm: Component<Props> = (props) => {
             value={name()}
             onInput={(e) => {
               setName(e.currentTarget.value);
+              if (!aliasTouched()) setAlias(deriveCustomProviderAlias(e.currentTarget.value) ?? '');
               setError(null);
             }}
           />
+        </div>
+
+        <div class="provider-detail__field">
+          <label class="provider-detail__label" for="cp-alias">
+            Alias
+          </label>
+          <input
+            id="cp-alias"
+            class="provider-detail__input"
+            type="text"
+            placeholder="e.g. vercel-ai-gateway"
+            value={alias()}
+            onInput={(e) => {
+              setAlias(e.currentTarget.value);
+              setAliasTouched(true);
+              setError(null);
+            }}
+          />
+          <div class="provider-detail__hint" data-testid="cp-alias-hint">
+            Models are listed as <code>{modelIdPreview()}</code> in <code>/v1/models</code>.
+            <Show when={isEdit()}> Changing the alias changes the model ids your clients use.</Show>
+          </div>
         </div>
 
         <fieldset

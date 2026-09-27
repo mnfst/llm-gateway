@@ -13,7 +13,7 @@ vi.mock('../../src/services/setup-status.js', () => ({
 }));
 
 vi.mock('../../src/components/message-table-types.js', () => ({
-  COMPACT_COLUMNS: ['timestamp', 'model', 'cost', 'feedback'],
+  COMPACT_COLUMNS: ['status', 'trigger', 'date', 'model'],
 }));
 
 describe('use-overview-range', () => {
@@ -34,10 +34,12 @@ describe('use-overview-range', () => {
   });
 
   describe('VALID_RANGES', () => {
-    it('contains 24h, 7d, and 30d', () => {
+    it('contains the supported dashboard ranges', () => {
       expect(VALID_RANGES.has('24h')).toBe(true);
       expect(VALID_RANGES.has('7d')).toBe(true);
       expect(VALID_RANGES.has('30d')).toBe(true);
+      expect(VALID_RANGES.has('90d')).toBe(true);
+      expect(VALID_RANGES.has('365d')).toBe(true);
     });
 
     it('does not contain invalid values', () => {
@@ -59,14 +61,14 @@ describe('use-overview-range', () => {
     });
 
     it('reads saved range from localStorage when valid', () => {
-      localStorage.setItem(RANGE_STORAGE_KEY, '7d');
+      localStorage.setItem(RANGE_STORAGE_KEY, '365d');
       let rangeValue: string | undefined;
       const dispose = createRoot((d) => {
         const { range } = useOverviewRange();
         rangeValue = range();
         return d;
       });
-      expect(rangeValue).toBe('7d');
+      expect(rangeValue).toBe('365d');
       dispose();
     });
 
@@ -143,60 +145,14 @@ describe('use-overview-range', () => {
   });
 
   describe('useOverviewColumns', () => {
-    it('initially returns all COMPACT_COLUMNS (isSelfHosted defaults false)', () => {
+    it('returns COMPACT_COLUMNS (the same set everywhere now that feedback is gone)', () => {
       let cols: (() => string[]) | undefined;
       const dispose = createRoot((d) => {
         const { columns } = useOverviewColumns();
         cols = columns;
         return d;
       });
-      // Before the async check resolves, isSelfHosted is false → full columns
-      expect(cols!()).toEqual(['timestamp', 'model', 'cost', 'feedback']);
-      dispose();
-    });
-
-    it('filters out feedback column when isSelfHosted resolves to true', async () => {
-      mockCheckIsSelfHosted.mockResolvedValue(true);
-      let cols: (() => string[]) | undefined;
-      const dispose = createRoot((d) => {
-        const { columns } = useOverviewColumns();
-        cols = columns;
-        return d;
-      });
-
-      await vi.waitFor(() => {
-        expect(cols!()).not.toContain('feedback');
-      });
-      dispose();
-    });
-
-    it('keeps feedback column when isSelfHosted resolves to false', async () => {
-      mockCheckIsSelfHosted.mockResolvedValue(false);
-      let cols: (() => string[]) | undefined;
-      const dispose = createRoot((d) => {
-        const { columns } = useOverviewColumns();
-        cols = columns;
-        return d;
-      });
-
-      await vi.waitFor(() => {
-        expect(cols!()).toContain('feedback');
-      });
-      dispose();
-    });
-
-    it('exposes the isSelfHosted signal', async () => {
-      mockCheckIsSelfHosted.mockResolvedValue(true);
-      let selfHosted: (() => boolean) | undefined;
-      const dispose = createRoot((d) => {
-        const { isSelfHosted } = useOverviewColumns();
-        selfHosted = isSelfHosted;
-        return d;
-      });
-
-      await vi.waitFor(() => {
-        expect(selfHosted!()).toBe(true);
-      });
+      expect(cols!()).toEqual(['status', 'trigger', 'date', 'model']);
       dispose();
     });
   });

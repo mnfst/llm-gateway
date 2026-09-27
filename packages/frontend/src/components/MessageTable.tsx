@@ -12,13 +12,16 @@ export interface MessageTableProps {
     name: string,
   ) => { platform: string | null; category: string | null } | undefined;
   onFallbackErrorClick?: (model: string) => void;
-  onFeedbackLike?: (id: string) => void;
-  onFeedbackDislike?: (id: string) => void;
-  onFeedbackClear?: (id: string) => void;
-  onOpenRecording?: (id: string) => void;
+  onTriggerClick?: (id: string) => void;
+  /** Open a linked message (Autofix sibling) from an expanded row's detail. */
+  onOpenMessage?: (id: string) => void;
   rowIdPrefix?: string;
   showHeaderTooltips?: boolean;
   expandable?: boolean;
+  /** When set, clicking a row calls this instead of expanding inline (drawer mode). */
+  onRowSelect?: (id: string) => void;
+  /** The currently selected row ID (for focus highlight in drawer mode). */
+  selectedRowId?: string | null;
 }
 
 function ChevronIcon(): JSX.Element {
@@ -40,26 +43,6 @@ function ChevronIcon(): JSX.Element {
   );
 }
 
-function EyeIcon(): JSX.Element {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="2"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
-      <circle cx="12" cy="12" r="3" />
-    </svg>
-  );
-}
-
 function ExpandableRow(props: {
   item: MessageRow;
   columns: MessageColumnKey[];
@@ -73,19 +56,16 @@ function ExpandableRow(props: {
     customProviderName: props.tableProps.customProviderName,
     agentPlatformLookup: props.tableProps.agentPlatformLookup,
     onFallbackErrorClick: props.tableProps.onFallbackErrorClick,
-    onFeedbackLike: props.tableProps.onFeedbackLike,
-    onFeedbackDislike: props.tableProps.onFeedbackDislike,
-    onFeedbackClear: props.tableProps.onFeedbackClear,
-    onOpenRecording: props.tableProps.onOpenRecording,
+    onTriggerClick: props.tableProps.onTriggerClick,
   };
 
-  const isRecorded = () => props.item.recorded && !!props.tableProps.onOpenRecording;
+  const useDrawer = () => !!props.tableProps.onRowSelect;
 
   const handleRowClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
     if (target.closest('button, a, [role="button"]')) return;
-    if (isRecorded()) {
-      props.tableProps.onOpenRecording!(props.item.id);
+    if (useDrawer()) {
+      props.tableProps.onRowSelect!(props.item.id);
     } else {
       setExpanded(!expanded());
     }
@@ -95,38 +75,34 @@ function ExpandableRow(props: {
     <>
       <tr
         id={props.rowId}
-        class={`msg-row--clickable${expanded() ? ' msg-row--expanded' : ''}`}
+        class={`msg-row--clickable${expanded() ? ' msg-row--expanded' : ''}${useDrawer() && props.tableProps.selectedRowId === props.item.id ? ' msg-row--selected' : ''}`}
         onClick={handleRowClick}
       >
         <For each={props.columns}>{(col) => renderCell(col, props.item, ctx)}</For>
-        <td class="msg-detail__chevron-cell">
-          <Show
-            when={isRecorded()}
-            fallback={
-              <button
-                class={`msg-detail__chevron-btn${expanded() ? ' msg-detail__chevron-btn--open' : ''}`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setExpanded(!expanded());
-                }}
-                aria-expanded={expanded()}
-                aria-label={expanded() ? 'Collapse details' : 'Expand details'}
-                title={expanded() ? 'Collapse details' : 'Expand details'}
-              >
-                <ChevronIcon />
-              </button>
-            }
-          >
-            <span class="msg-detail__eye-btn" title="View log details">
-              <EyeIcon />
-            </span>
-          </Show>
-        </td>
+        <Show when={!useDrawer()}>
+          <td class="msg-detail__chevron-cell">
+            <button
+              class={`msg-detail__chevron-btn${expanded() ? ' msg-detail__chevron-btn--open' : ''}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                setExpanded(!expanded());
+              }}
+              aria-expanded={expanded()}
+              aria-label={expanded() ? 'Collapse details' : 'Expand details'}
+              title={expanded() ? 'Collapse details' : 'Expand details'}
+            >
+              <ChevronIcon />
+            </button>
+          </td>
+        </Show>
       </tr>
-      <Show when={expanded() && !isRecorded()}>
+      <Show when={expanded() && !useDrawer()}>
         <tr class="msg-detail__row">
           <td colspan={colSpan()} class="msg-detail__cell">
-            <MessageDetails messageId={props.item.id} />
+            <MessageDetails
+              messageId={props.item.id}
+              onOpenMessage={props.tableProps.onOpenMessage}
+            />
           </td>
         </tr>
       </Show>
@@ -145,10 +121,7 @@ function PlainRow(props: {
     customProviderName: props.tableProps.customProviderName,
     agentPlatformLookup: props.tableProps.agentPlatformLookup,
     onFallbackErrorClick: props.tableProps.onFallbackErrorClick,
-    onFeedbackLike: props.tableProps.onFeedbackLike,
-    onFeedbackDislike: props.tableProps.onFeedbackDislike,
-    onFeedbackClear: props.tableProps.onFeedbackClear,
-    onOpenRecording: props.tableProps.onOpenRecording,
+    onTriggerClick: props.tableProps.onTriggerClick,
   };
   return (
     <tr id={props.rowId}>
@@ -163,7 +136,7 @@ export default function MessageTable(props: MessageTableProps): JSX.Element {
       <thead>
         <tr>
           <For each={props.columns}>
-            {(col) => <th>{columnHeader(col, props.showHeaderTooltips)}</th>}
+            {(col) => <th data-col={col}>{columnHeader(col, props.showHeaderTooltips)}</th>}
           </For>
           <Show when={props.expandable}>
             <th class="msg-detail__chevron-th" />

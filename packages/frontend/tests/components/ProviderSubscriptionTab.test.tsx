@@ -45,7 +45,7 @@ describe('ProviderSubscriptionTab', () => {
       'subscription',
     );
     const link = container.querySelector('.provider-modal__add-custom-chip') as HTMLAnchorElement;
-    expect(link.getAttribute('href')).toBe('https://github.com/mnfst/manifest/discussions/973');
+    expect(link.getAttribute('href')).toBe('https://github.com/mnfst/llm-gateway/discussions/973');
     expect(link.getAttribute('rel')).toContain('noopener');
     expect(link.getAttribute('target')).toBe('_blank');
     expect(container.querySelector('.provider-toggle__name')?.textContent).toBe('Provider One');

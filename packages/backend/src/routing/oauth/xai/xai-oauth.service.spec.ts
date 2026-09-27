@@ -2,6 +2,7 @@ import { ConfigService } from '@nestjs/config';
 import type { ServerResponse } from 'http';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 import { XaiOauthService } from './xai-oauth.service';
 
 const mockHttpControl: {
@@ -69,12 +70,20 @@ function createProviderService() {
       recalculateTiersForUser,
       nextOAuthLabel,
       getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+        getFreshSubscriptionCredential,
+        upsertProvider,
+      }),
     } as unknown as ProviderService,
     upsertProvider,
     recalculateTiers,
     recalculateTiersForUser,
     nextOAuthLabel,
     getFreshSubscriptionCredential,
+    withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+      getFreshSubscriptionCredential,
+      upsertProvider,
+    }),
   };
 }
 
@@ -235,7 +244,7 @@ describe('XaiOauthService', () => {
       expect.objectContaining({ method: 'POST' }),
     );
     expect(providerService.upsertProvider).toHaveBeenCalledWith(
-      'agent-1',
+      null,
       'user-1',
       'xai',
       expect.stringContaining('"t":"new-access"'),

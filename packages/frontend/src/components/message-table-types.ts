@@ -18,6 +18,13 @@ export interface MessageRow {
   cost: number | null;
   status: string;
   error_message?: string | null;
+  error_http_status?: number | null;
+  /** Documented Manifest error code ('M100', 'M300', …). Null for provider failures. */
+  error_code?: string | null;
+  /** WHO caused a failure: provider | transport | config | policy | internal | request. */
+  error_origin?: string | null;
+  /** WHAT kind of failure it was (rate_limit, auth, billing, no_provider_key, timeout, …). */
+  error_class?: string | null;
   auth_type?: string | null;
   fallback_from_model?: string | null;
   fallback_index?: number | null;
@@ -25,7 +32,14 @@ export interface MessageRow {
   cache_creation_tokens?: number | null;
   duration_ms?: number | null;
   feedback_rating?: string | null;
-  recorded?: boolean | null;
+  autofix_applied?: boolean;
+  autofix_role?: string | null;
+  attempt_count?: number;
+}
+
+export function routingTierLabel(tier: string | null | undefined): string | undefined {
+  if (!tier) return undefined;
+  return tier === 'direct' ? 'DIRECT' : tier;
 }
 
 export type MessageColumnKey =
@@ -39,24 +53,32 @@ export type MessageColumnKey =
   | 'cache'
   | 'duration'
   | 'status'
-  | 'feedback'
+  | 'attempts'
+  | 'selfheal'
   | 'agent';
 
+// Reading order: identity first (status, when, who, what), THEN the
+// mechanics (attempts, recovery attempts), then payload and usage. The global
+// Requests page inserts the harness column before 'model'.
 export const COMPACT_COLUMNS: MessageColumnKey[] = [
-  'feedback',
-  'date',
   'status',
+  'date',
   'model',
+  'attempts',
+  'selfheal',
   'message',
   'cost',
   'totalTokens',
+  'cache',
+  'duration',
 ];
 
 export const DETAILED_COLUMNS: MessageColumnKey[] = [
-  'feedback',
-  'date',
   'status',
+  'date',
   'model',
+  'attempts',
+  'selfheal',
   'message',
   'cost',
   'totalTokens',

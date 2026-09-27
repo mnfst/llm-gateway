@@ -11,6 +11,13 @@ interface Tab {
 export interface RoutingTabsProps {
   specificityEnabled: () => boolean;
   customEnabled: () => boolean;
+  /**
+   * Gate for the deprecated Task-specific tab. When this returns false the tab
+   * is not rendered at all — used to hide task-specific routing from agents that
+   * never configured it (see `legacySpecificityVisible` in Routing.tsx).
+   * Defaults to shown so existing callers/tests are unaffected.
+   */
+  showSpecificity?: () => boolean;
   pipelineHelp?: () => JSX.Element | null;
   /** Slot rendered to the right of the tabs (e.g. response mode toggle). */
   headerRight?: JSX.Element;
@@ -27,9 +34,19 @@ const RoutingTabs: Component<RoutingTabsProps> = (props) => {
   const [activeTab, setActiveTab] = createSignal<RoutingTabId>('default');
   const [helpOpen, setHelpOpen] = createSignal(false);
 
-  const tabs: Tab[] = [
+  const showSpecificity = () => props.showSpecificity?.() ?? true;
+
+  const tabs = (): Tab[] => [
     { id: 'default', label: 'Default', dot: () => true },
-    { id: 'specificity', label: 'Task-specific', dot: () => props.specificityEnabled() },
+    ...(showSpecificity()
+      ? [
+          {
+            id: 'specificity' as RoutingTabId,
+            label: 'Task-specific',
+            dot: () => props.specificityEnabled(),
+          },
+        ]
+      : []),
     { id: 'custom', label: 'Custom', dot: () => props.customEnabled() },
   ];
 
@@ -37,7 +54,7 @@ const RoutingTabs: Component<RoutingTabsProps> = (props) => {
     <div class="routing-tabs">
       <div class="routing-tabs__header">
         <div class="panel__tabs" role="tablist" aria-label="Routing layers">
-          {tabs.map((tab) => (
+          {tabs().map((tab) => (
             <button
               class="panel__tab"
               classList={{ 'panel__tab--active': activeTab() === tab.id }}
@@ -71,7 +88,9 @@ const RoutingTabs: Component<RoutingTabsProps> = (props) => {
         aria-labelledby={`routing-tab-${activeTab()}`}
       >
         <Show when={activeTab() === 'default'}>{props.children.default}</Show>
-        <Show when={activeTab() === 'specificity'}>{props.children.specificity}</Show>
+        <Show when={activeTab() === 'specificity' && showSpecificity()}>
+          {props.children.specificity}
+        </Show>
         <Show when={activeTab() === 'custom'}>{props.children.custom}</Show>
       </div>
     </div>

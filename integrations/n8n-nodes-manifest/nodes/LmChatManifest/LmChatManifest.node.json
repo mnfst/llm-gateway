@@ -1,0 +1,18 @@
+{
+	"node": "n8n-nodes-manifest.lmChatManifest",
+	"nodeVersion": "1.0",
+	"codexVersion": "1.0",
+	"categories": ["Development"],
+	"resources": {
+		"credentialDocumentation": [
+			{
+				"url": "https://github.com/mnfst/llm-gateway/tree/main/integrations/n8n-nodes-manifest#credentials"
+			}
+		],
+		"primaryDocumentation": [
+			{
+				"url": "https://github.com/mnfst/llm-gateway/tree/main/integrations/n8n-nodes-manifest"
+			}
+		]
+	}
+}

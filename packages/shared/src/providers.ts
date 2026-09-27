@@ -33,6 +33,8 @@ export interface SharedProviderEntry {
   minKeyLength: number;
   /** Placeholder shown in the UI's API-key input. */
   keyPlaceholder: string;
+  /** Whether Manifest provisions this provider through its managed free-provider flow. */
+  managedFree?: boolean;
   /**
    * Tiles that deep-link users into the local-server detail view (LM
    * Studio today). They do not have a fixed proxy endpoint — once
@@ -42,6 +44,26 @@ export interface SharedProviderEntry {
    */
   tileOnly?: boolean;
 }
+
+export interface MetaModelApiModel {
+  id: string;
+  displayName: string;
+}
+
+export const META_MODEL_API_CONTEXT_WINDOW = 1_048_576;
+
+export const META_MODEL_API_MODELS: readonly MetaModelApiModel[] = [
+  { id: 'muse-spark-1.2', displayName: 'Muse Spark 1.2' },
+  {
+    id: 'muse-spark-1.2-contributor',
+    displayName: 'Muse Spark 1.2 Contributor (inputs and outputs may train Meta)',
+  },
+  { id: 'muse-spark-1.1', displayName: 'Muse Spark 1.1' },
+];
+
+export const META_MODEL_API_MODEL_BY_ID: ReadonlyMap<string, MetaModelApiModel> = new Map(
+  META_MODEL_API_MODELS.map((model) => [model.id, model]),
+);
 
 export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
   {
@@ -81,6 +103,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPlaceholder: 'ABSK...',
   },
   {
+    id: 'vertex',
+    displayName: 'Google Vertex AI',
+    aliases: ['google-vertex', 'google vertex', 'vertex-ai', 'vertex ai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#4285f4',
+    keyPrefix: 'AQ.',
+    minKeyLength: 40,
+    keyPlaceholder: 'AQ...',
+  },
+  {
     id: 'byteplus',
     displayName: 'BytePlus',
     aliases: ['byteplus-plan', 'byteplus plan', 'modelark', 'modelark-coding-plan'],
@@ -91,6 +125,30 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: '',
     minKeyLength: 10,
     keyPlaceholder: 'ModelArk Coding Plan API key',
+  },
+  {
+    id: 'cline-pass',
+    displayName: 'ClinePass',
+    aliases: ['cline'],
+    openRouterPrefixes: [],
+    requiresApiKey: false,
+    localOnly: false,
+    color: '#9D4EDD',
+    keyPrefix: 'sk_',
+    minKeyLength: 20,
+    keyPlaceholder: 'sk_...',
+  },
+  {
+    id: 'cerebras',
+    displayName: 'Cerebras',
+    aliases: [],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#F1592A',
+    keyPrefix: '',
+    minKeyLength: 20,
+    keyPlaceholder: 'Cerebras API key',
   },
   {
     id: 'deepseek',
@@ -134,6 +192,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: 'gsk_',
     minKeyLength: 50,
     keyPlaceholder: 'gsk_...',
+  },
+  {
+    id: 'huggingface',
+    displayName: 'Hugging Face',
+    aliases: ['hugging-face', 'hugging face', 'hf'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#FFD21E',
+    keyPrefix: 'hf_',
+    minKeyLength: 20,
+    keyPlaceholder: 'hf_...',
   },
   {
     id: 'kilo',
@@ -184,6 +254,19 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPlaceholder: 'API key',
   },
   {
+    id: 'gemini-free',
+    displayName: 'Gemini Free',
+    aliases: ['gemini free'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#4285f4',
+    keyPrefix: 'sk-',
+    minKeyLength: 10,
+    keyPlaceholder: 'sk-...',
+    managedFree: true,
+  },
+  {
     id: 'kiro',
     displayName: 'Kiro',
     aliases: [],
@@ -206,6 +289,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: 'sk-',
     minKeyLength: 30,
     keyPlaceholder: 'sk-...',
+  },
+  {
+    id: 'meta',
+    displayName: 'Meta',
+    aliases: [],
+    openRouterPrefixes: ['meta'],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#0668E1',
+    keyPrefix: 'LLM_',
+    minKeyLength: 20,
+    keyPlaceholder: 'LLM_...',
   },
   {
     id: 'xiaomi',
@@ -242,6 +337,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: 'sk-',
     minKeyLength: 30,
     keyPlaceholder: 'sk-...',
+  },
+  {
+    id: 'nous',
+    displayName: 'NousResearch',
+    aliases: ['nousresearch', 'nous-research', 'nous research'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#101820',
+    keyPrefix: '',
+    minKeyLength: 10,
+    keyPlaceholder: 'NousResearch API key',
   },
   {
     id: 'nvidia',
@@ -316,6 +423,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: 'sk-',
     minKeyLength: 50,
     keyPlaceholder: 'sk-...',
+  },
+  {
+    id: 'pioneer',
+    displayName: 'Pioneer',
+    aliases: ['pioneer-ai', 'pioneer ai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#EA580C',
+    keyPrefix: 'pio_sk_',
+    minKeyLength: 20,
+    keyPlaceholder: 'pio_sk_...',
   },
   {
     id: 'opencode-go',

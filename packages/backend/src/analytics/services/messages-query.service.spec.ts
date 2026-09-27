@@ -4,18 +4,46 @@ import { Brackets, In } from 'typeorm';
 import { MessagesQueryService } from './messages-query.service';
 import { AgentMessage } from '../../entities/agent-message.entity';
 import { CustomProvider } from '../../entities/custom-provider.entity';
-import type { MessageStatusFilter } from '../dto/messages-query.dto';
+import { HeaderTier } from '../../entities/header-tier.entity';
+import { MANIFEST_ORIGIN_PREDICATE } from './query-helpers';
+import type { MessageStatusFilter, MessageTriggerFilter } from '../dto/messages-query.dto';
 
 describe('MessagesQueryService', () => {
   let service: MessagesQueryService;
   let mockGetRawOne: jest.Mock;
   let mockGetRawMany: jest.Mock;
+  let mockQuery: jest.Mock;
   let mockCustomProviderFind: jest.Mock;
+  let mockHeaderTierRows: jest.Mock;
+  let mockHeaderTierQb: Record<string, jest.Mock>;
+  let mockQbRef: Record<string, jest.Mock>;
+
+  // The tenant-global distinct-models/providers path runs two raw recursive
+  // skip-scans via turnRepo.query (models first, providers second). This helper
+  // queues their return values so tests can express the distinct sets directly.
+  const skipScan = (models: string[], providers: string[] = []): void => {
+    mockQuery
+      .mockResolvedValueOnce(models.map((m) => ({ model: m })))
+      .mockResolvedValueOnce(providers.map((p) => ({ provider: p })));
+  };
 
   beforeEach(async () => {
     mockGetRawOne = jest.fn().mockResolvedValue({ total: 0 });
     mockGetRawMany = jest.fn().mockResolvedValue([]);
+    mockQuery = jest.fn().mockResolvedValue([]);
     mockCustomProviderFind = jest.fn().mockResolvedValue([]);
+    mockHeaderTierRows = jest.fn().mockResolvedValue([]);
+    mockHeaderTierQb = {
+      select: jest.fn(),
+      addSelect: jest.fn(),
+      where: jest.fn(),
+      andWhere: jest.fn(),
+      orderBy: jest.fn(),
+      getRawMany: mockHeaderTierRows,
+    };
+    for (const method of ['select', 'addSelect', 'where', 'andWhere', 'orderBy']) {
+      mockHeaderTierQb[method].mockImplementation(() => mockHeaderTierQb);
+    }
 
     const mockQb: Record<string, jest.Mock> = {
       select: jest.fn(),
@@ -58,16 +86,22 @@ describe('MessagesQueryService', () => {
       });
     }
 
+    mockQbRef = mockQb;
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         MessagesQueryService,
         {
           provide: getRepositoryToken(AgentMessage),
-          useValue: { createQueryBuilder: jest.fn().mockReturnValue(mockQb) },
+          useValue: { createQueryBuilder: jest.fn().mockReturnValue(mockQb), query: mockQuery },
         },
         {
           provide: getRepositoryToken(CustomProvider),
           useValue: { find: mockCustomProviderFind },
+        },
+        {
+          provide: getRepositoryToken(HeaderTier),
+          useValue: { createQueryBuilder: jest.fn().mockReturnValue(mockHeaderTierQb) },
         },
       ],
     }).compile();
@@ -110,7 +144,7 @@ describe('MessagesQueryService', () => {
     mockGetRawMany.mockResolvedValueOnce([
       { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'custom:u-1/m', cost: 0 },
     ]);
-    mockGetRawMany.mockResolvedValueOnce([{ model: 'custom:u-1/m', provider: 'custom:u-1' }]);
+    skipScan(['custom:u-1/m'], ['custom:u-1']);
     mockCustomProviderFind.mockResolvedValueOnce([{ id: 'u-1', name: 'MyLLM' }]);
 
     const result = await service.getMessages({ range: '24h', tenantId: 'labels-user', limit: 10 });
@@ -123,10 +157,7 @@ describe('MessagesQueryService', () => {
   });
 
   it('returns message filter metadata independently from row pagination', async () => {
-    mockGetRawMany.mockResolvedValueOnce([
-      { model: 'custom:u-1/m', provider: 'custom:u-1' },
-      { model: 'gpt-4o', provider: 'openai' },
-    ]);
+    skipScan(['custom:u-1/m', 'gpt-4o'], ['custom:u-1', 'openai']);
     mockCustomProviderFind.mockResolvedValueOnce([{ id: 'u-1', name: 'MyLLM' }]);
 
     const result = await service.getMessageFilterOptions({
@@ -138,10 +169,73 @@ describe('MessagesQueryService', () => {
     expect(result.provider_labels).toEqual({ 'custom:u-1': 'MyLLM' });
   });
 
+  it('offers every harness custom tier when the log is not scoped to one', async () => {
+    skipScan(['gpt-4o'], ['openai']);
+    // Two harnesses each define a "Premium" tier; a third name stands alone.
+    mockHeaderTierRows.mockResolvedValueOnce([
+      { id: 'ht-a', name: 'Premium' },
+      { id: 'ht-b', name: 'premium' },
+      { id: 'ht-c', name: 'Batch' },
+    ]);
+
+    const result = await service.getMessageFilterOptions({ range: '24h', tenantId: 'tenant-1' });
+
+    // One option per name, carrying every id it covers, so picking "Premium"
+    // on the tenant-wide log means "any harness's Premium tier".
+    expect(result.header_tiers).toEqual([
+      { name: 'Premium', ids: ['ht-a', 'ht-b'] },
+      { name: 'Batch', ids: ['ht-c'] },
+    ]);
+    expect(mockHeaderTierQb.where).toHaveBeenCalledWith('ht.tenant_id = :headerTierTenant', {
+      headerTierTenant: 'tenant-1',
+    });
+    expect(mockHeaderTierQb.andWhere).not.toHaveBeenCalled();
+  });
+
+  it('offers only the selected harness custom tiers when one is picked', async () => {
+    skipScan(['gpt-4o'], ['openai']);
+    mockHeaderTierRows.mockResolvedValueOnce([{ id: 'ht-a', name: 'Premium' }]);
+
+    const result = await service.getMessageFilterOptions({
+      range: '24h',
+      tenantId: 'tenant-1',
+      agent_name: 'agent-alpha',
+    });
+
+    expect(result.header_tiers).toEqual([{ name: 'Premium', ids: ['ht-a'] }]);
+    const agentScope = mockHeaderTierQb.andWhere.mock.calls[0];
+    expect(String(agentScope[0])).toContain('ht.agent_id = (');
+    expect(String(agentScope[0])).toContain('WHERE tenant_id = :headerTierTenant');
+    expect(agentScope[1]).toEqual({ headerTierAgent: 'agent-alpha' });
+  });
+
+  it('offers no custom tiers to a caller without a tenant', async () => {
+    skipScan([], []);
+
+    const result = await service.getMessageFilterOptions({ range: '24h', tenantId: null });
+
+    expect(result.header_tiers).toEqual([]);
+    expect(mockHeaderTierRows).not.toHaveBeenCalled();
+  });
+
+  it('offers no custom tiers when the header-tier repository is not wired', async () => {
+    const bare = new MessagesQueryService(
+      {
+        createQueryBuilder: jest.fn(() => mockQbRef),
+        query: jest.fn().mockResolvedValue([]),
+      } as never,
+      { find: jest.fn().mockResolvedValue([]) } as never,
+    );
+
+    const result = await bare.getMessageFilterOptions({ range: '24h', tenantId: 'tenant-1' });
+
+    expect(result.header_tiers).toEqual([]);
+  });
+
   it('returns empty provider_labels without querying when no custom providers appear', async () => {
     mockGetRawOne.mockResolvedValueOnce({ total: 0 });
     mockGetRawMany.mockResolvedValueOnce([]);
-    mockGetRawMany.mockResolvedValueOnce([{ model: 'gpt-4o', provider: 'openai' }]);
+    skipScan(['gpt-4o'], ['openai']);
 
     const result = await service.getMessages({
       range: '24h',
@@ -159,7 +253,7 @@ describe('MessagesQueryService', () => {
       { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o', cost: 0.01 },
       { id: 'msg-2', timestamp: '2026-02-16 09:00:00', model: 'claude-opus-4-6', cost: 0.05 },
     ]);
-    mockGetRawMany.mockResolvedValueOnce([{ model: 'claude-opus-4-6' }, { model: 'gpt-4o' }]);
+    skipScan(['claude-opus-4-6', 'gpt-4o']);
 
     const result = await service.getMessages({
       range: '24h',
@@ -330,9 +424,10 @@ describe('MessagesQueryService', () => {
 
   it('should query without range cutoff when range is omitted', async () => {
     mockGetRawOne.mockResolvedValueOnce({ total: 5 });
-    mockGetRawMany
-      .mockResolvedValueOnce([{ id: 'msg-1', timestamp: '2026-01-01 00:00:00', model: 'gpt-4o' }])
-      .mockResolvedValueOnce([{ model: 'gpt-4o' }]);
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-01-01 00:00:00', model: 'gpt-4o' },
+    ]);
+    skipScan(['gpt-4o']);
 
     const result = await service.getMessages({
       tenantId: 'test-user',
@@ -418,9 +513,10 @@ describe('MessagesQueryService', () => {
   it('models cache returns cached value on second call', async () => {
     // First call
     mockGetRawOne.mockResolvedValueOnce({ total: 1 });
-    mockGetRawMany
-      .mockResolvedValueOnce([{ id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' }])
-      .mockResolvedValueOnce([{ model: 'gpt-4o' }, { model: 'claude-opus-4-6' }]);
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' },
+    ]);
+    skipScan(['claude-opus-4-6', 'gpt-4o']);
 
     const result1 = await service.getMessages({
       range: '24h',
@@ -429,12 +525,11 @@ describe('MessagesQueryService', () => {
     });
     expect(result1.providers).toEqual(['anthropic', 'openai']);
 
-    // Second call — models query should NOT be called again
+    // Second call — the distinct skip-scan should NOT run again
     mockGetRawOne.mockResolvedValueOnce({ total: 1 });
     mockGetRawMany.mockResolvedValueOnce([
       { id: 'msg-2', timestamp: '2026-02-16 11:00:00', model: 'gpt-4o' },
     ]);
-    // Note: no mockResolvedValueOnce for models query — if it runs, it would return []
 
     const result2 = await service.getMessages({
       range: '24h',
@@ -444,9 +539,10 @@ describe('MessagesQueryService', () => {
 
     // Should still return cached providers from first call
     expect(result2.providers).toEqual(['anthropic', 'openai']);
-    // getRawMany should have been called 3 times total:
-    // call 1: data rows + models = 2, call 2: data rows only = 1
-    expect(mockGetRawMany).toHaveBeenCalledTimes(3);
+    // The skip-scan (turnRepo.query x2) ran only on the first call; the second
+    // served distinct models/providers from cache.
+    expect(mockQuery).toHaveBeenCalledTimes(2);
+    expect(mockGetRawMany).toHaveBeenCalledTimes(2);
   });
 
   it('models cache deletes expired entry before fetching fresh data', async () => {
@@ -522,9 +618,10 @@ describe('MessagesQueryService', () => {
 
     // First call
     mockGetRawOne.mockResolvedValueOnce({ total: 1 });
-    mockGetRawMany
-      .mockResolvedValueOnce([{ id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' }])
-      .mockResolvedValueOnce([{ model: 'gpt-4o' }]);
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' },
+    ]);
+    skipScan(['gpt-4o']);
 
     await service.getMessages({
       range: '24h',
@@ -532,16 +629,17 @@ describe('MessagesQueryService', () => {
       limit: 20,
     });
 
-    expect(mockGetRawMany).toHaveBeenCalledTimes(2);
+    expect(mockQuery).toHaveBeenCalledTimes(2);
 
     // Advance past the models cache TTL (5 min)
     jest.advanceTimersByTime(5 * 60_000 + 1);
 
-    // Second call — models query should run again
+    // Second call — the distinct skip-scan should run again
     mockGetRawOne.mockResolvedValueOnce({ total: 1 });
-    mockGetRawMany
-      .mockResolvedValueOnce([{ id: 'msg-2', timestamp: '2026-02-16 11:00:00', model: 'gpt-4o' }])
-      .mockResolvedValueOnce([{ model: 'gpt-4o' }, { model: 'claude-opus-4-6' }]);
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-2', timestamp: '2026-02-16 11:00:00', model: 'gpt-4o' },
+    ]);
+    skipScan(['claude-opus-4-6', 'gpt-4o']);
 
     const result = await service.getMessages({
       range: '24h',
@@ -550,8 +648,8 @@ describe('MessagesQueryService', () => {
     });
 
     expect(result.providers).toEqual(['anthropic', 'openai']);
-    // 2 from first call + 2 from second call = 4
-    expect(mockGetRawMany).toHaveBeenCalledTimes(4);
+    // 2 skip-scans from first call + 2 from second call = 4
+    expect(mockQuery).toHaveBeenCalledTimes(4);
   });
 
   it('count cache hit returns cached value on paginated call', async () => {
@@ -591,20 +689,23 @@ describe('MessagesQueryService', () => {
     expect(mockGetRawOne).toHaveBeenCalledTimes(1);
   });
 
-  it('first page always runs fresh count even when cache exists', async () => {
-    // First call — populates cache
+  it('first page always runs a fresh count even when one is cached', async () => {
+    // First call — populates the count cache.
     mockGetRawOne.mockResolvedValueOnce({ total: 42 });
-    mockGetRawMany
-      .mockResolvedValueOnce([{ id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' }])
-      .mockResolvedValueOnce([{ model: 'gpt-4o' }]);
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' },
+    ]);
+    skipScan(['gpt-4o']);
 
     await service.getMessages({ range: '24h', tenantId: 'test-user', limit: 20 });
 
-    // Second call without cursor — should still run fresh count
+    // Second first-page call — the count must stay fresh (not served from cache)
+    // so clients that poll total_count always see the current value.
     mockGetRawOne.mockResolvedValueOnce({ total: 45 });
     mockGetRawMany.mockResolvedValueOnce([
       { id: 'msg-2', timestamp: '2026-02-16 11:00:00', model: 'gpt-4o' },
     ]);
+    skipScan(['gpt-4o']);
 
     const result = await service.getMessages({ range: '24h', tenantId: 'test-user', limit: 20 });
     expect(result.total_count).toBe(45);
@@ -691,13 +792,18 @@ describe('MessagesQueryService', () => {
     expect(tierCall?.[1]).toEqual({ tierFilter: 'playground' });
   });
 
-  it.each<[MessageStatusFilter, string, Record<string, unknown>]>([
+  it.each<[MessageStatusFilter, string, Record<string, unknown> | undefined]>([
+    [
+      'failed',
+      'at.status IN (:...failedStatuses)',
+      { failedStatuses: ['error', 'fallback_error', 'rate_limited', 'auto_fixed', 'failed'] },
+    ],
     [
       'errors',
       'at.status IN (:...errorStatuses)',
-      { errorStatuses: ['error', 'fallback_error', 'rate_limited'] },
+      { errorStatuses: ['error', 'fallback_error', 'rate_limited', 'auto_fixed', 'failed'] },
     ],
-    ['ok', 'at.status = :statusFilter', { statusFilter: 'ok' }],
+    ['ok', "at.status IN ('ok', 'success')", undefined],
   ])('passes %s status filter through to the query builder', async (status, clause, bindings) => {
     mockGetRawOne.mockResolvedValueOnce({ total: 1 });
     mockGetRawMany
@@ -720,9 +826,145 @@ describe('MessagesQueryService', () => {
     });
 
     expect(result.total_count).toBe(1);
-    const statusCall = andWhereSpy.mock.calls.find(([candidate]) => candidate === clause);
+    const statusCall = andWhereSpy.mock.calls.find(
+      ([candidate]) => typeof candidate === 'string' && candidate.includes(clause),
+    );
     expect(statusCall).toBeDefined();
     expect(statusCall?.[1]).toEqual(bindings);
+  });
+
+  async function runWithTrigger(trigger: MessageTriggerFilter): Promise<jest.Mock> {
+    mockGetRawOne.mockResolvedValueOnce({ total: 1 });
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-04-24 10:00:00', model: 'gpt-4o-mini', cost: 0 },
+    ]);
+    const mockQb = (
+      service as unknown as { turnRepo: { createQueryBuilder: jest.Mock } }
+    ).turnRepo.createQueryBuilder();
+    const andWhereSpy = mockQb.andWhere as jest.Mock;
+    andWhereSpy.mockClear();
+
+    await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      triggers: trigger ? [trigger] : undefined,
+      include_filter_options: false,
+    });
+
+    return andWhereSpy;
+  }
+
+  it('filters autofix trigger rows by retry role', async () => {
+    const andWhereSpy = await runWithTrigger('autofix');
+    const triggerCall = andWhereSpy.mock.calls.find(
+      ([clause]) => clause === 'at.autofix_role = :triggerAutofixRole',
+    );
+    expect(triggerCall).toBeDefined();
+    expect(triggerCall?.[1]).toEqual({ triggerAutofixRole: 'retry' });
+  });
+
+  it('filters fallback trigger rows while preserving autofix precedence', async () => {
+    const andWhereSpy = await runWithTrigger('fallback');
+    expect(
+      andWhereSpy.mock.calls.find(
+        ([clause]) =>
+          clause === '(at.autofix_role IS NULL OR at.autofix_role != :triggerAutofixRole)',
+      )?.[1],
+    ).toEqual({ triggerAutofixRole: 'retry' });
+    expect(
+      andWhereSpy.mock.calls.find(
+        ([clause]) =>
+          clause === "at.fallback_from_model IS NOT NULL AND at.fallback_from_model != ''",
+      ),
+    ).toBeDefined();
+  });
+
+  it('filters ordinary rows with no trigger badge', async () => {
+    const andWhereSpy = await runWithTrigger('none');
+    expect(
+      andWhereSpy.mock.calls.find(
+        ([clause]) =>
+          clause === '(at.autofix_role IS NULL OR at.autofix_role != :triggerAutofixRole)',
+      )?.[1],
+    ).toEqual({ triggerAutofixRole: 'retry' });
+    expect(
+      andWhereSpy.mock.calls.find(
+        ([clause]) => clause === "(at.fallback_from_model IS NULL OR at.fallback_from_model = '')",
+      ),
+    ).toBeDefined();
+  });
+
+  function runWithOrigin(params: {
+    origin?: 'manifest' | 'provider' | 'transport' | 'config' | 'policy' | 'internal' | 'request';
+    error_class?: string;
+  }): Promise<jest.Mock> {
+    mockGetRawOne.mockResolvedValueOnce({ total: 0 });
+    mockGetRawMany.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+    const mockQb = (
+      service as unknown as { turnRepo: { createQueryBuilder: jest.Mock } }
+    ).turnRepo.createQueryBuilder();
+    const andWhereSpy = mockQb.andWhere as jest.Mock;
+    andWhereSpy.mockClear();
+    return service
+      .getMessages({ range: '24h', tenantId: 'test-user', limit: 20, ...params })
+      .then(() => andWhereSpy);
+  }
+
+  it('hides no origin from the log by default — a setup error is a message', async () => {
+    const andWhereSpy = await runWithOrigin({});
+    // No origin predicate of any kind: the log is the complete event listing.
+    expect(
+      andWhereSpy.mock.calls.find(([clause]) => clause === MANIFEST_ORIGIN_PREDICATE),
+    ).toBeUndefined();
+    expect(
+      andWhereSpy.mock.calls.find(([clause]) => clause === 'at.error_origin = :originFilter'),
+    ).toBeUndefined();
+    expect(
+      andWhereSpy.mock.calls.find(
+        ([clause]) => typeof clause === 'string' && clause.includes('error_origin NOT IN'),
+      ),
+    ).toBeUndefined();
+  });
+
+  it('shows only Manifest-originated errors when origin=manifest', async () => {
+    const andWhereSpy = await runWithOrigin({ origin: 'manifest' });
+    expect(
+      andWhereSpy.mock.calls.find(([clause]) => clause === MANIFEST_ORIGIN_PREDICATE),
+    ).toBeDefined();
+  });
+
+  it('filters to the request origin (caller sent a malformed body)', async () => {
+    const andWhereSpy = await runWithOrigin({ origin: 'request' });
+    const originCall = andWhereSpy.mock.calls.find(
+      ([clause]) => clause === 'at.error_origin = :originFilter',
+    );
+    expect(originCall?.[1]).toEqual({ originFilter: 'request' });
+  });
+
+  it('filters to a specific error_origin when one is requested', async () => {
+    const andWhereSpy = await runWithOrigin({ origin: 'provider' });
+    const originCall = andWhereSpy.mock.calls.find(
+      ([clause]) => clause === 'at.error_origin = :originFilter',
+    );
+    expect(originCall).toBeDefined();
+    expect(originCall?.[1]).toEqual({ originFilter: 'provider' });
+  });
+
+  it('filters by error_class when requested', async () => {
+    const andWhereSpy = await runWithOrigin({ error_class: 'rate_limit' });
+    const classCall = andWhereSpy.mock.calls.find(
+      ([clause]) => clause === 'at.error_class = :errorClassFilter',
+    );
+    expect(classCall).toBeDefined();
+    expect(classCall?.[1]).toEqual({ errorClassFilter: 'rate_limit' });
+  });
+
+  it('reaches config classes by error_class alone', async () => {
+    const andWhereSpy = await runWithOrigin({ error_class: 'no_provider_key' });
+    expect(
+      andWhereSpy.mock.calls.find(([clause]) => clause === 'at.error_class = :errorClassFilter'),
+    ).toBeDefined();
   });
 
   it('passes specificity_category filter through to the query builder', async () => {
@@ -780,7 +1022,35 @@ describe('MessagesQueryService', () => {
       ([clause]) => typeof clause === 'string' && clause.includes('header_tier_id'),
     );
     expect(headerTierCall).toBeDefined();
-    expect(headerTierCall?.[1]).toEqual({ headerTierFilter: 'ht-premium' });
+    expect(headerTierCall?.[1]).toEqual({ headerTierFilter: ['ht-premium'] });
+  });
+
+  it('matches every id when one filter option covers a custom tier on several harnesses', async () => {
+    mockGetRawOne.mockResolvedValueOnce({ total: 1 });
+    mockGetRawMany
+      .mockResolvedValueOnce([
+        { id: 'msg-1', timestamp: '2026-04-24 10:00:00', model: 'gpt-4o-mini', cost: 0 },
+      ])
+      .mockResolvedValueOnce([{ model: 'gpt-4o-mini' }]);
+
+    const mockQb = (
+      service as unknown as { turnRepo: { createQueryBuilder: jest.Mock } }
+    ).turnRepo.createQueryBuilder();
+    const andWhereSpy = mockQb.andWhere as jest.Mock;
+    andWhereSpy.mockClear();
+
+    await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      header_tier_id: 'ht-alpha, ht-beta,ht-alpha,',
+    });
+
+    const headerTierCall = andWhereSpy.mock.calls.find(
+      ([clause]) => typeof clause === 'string' && clause.includes('header_tier_id'),
+    );
+    expect(headerTierCall?.[0]).toContain('IN (:...headerTierFilter)');
+    expect(headerTierCall?.[1]).toEqual({ headerTierFilter: ['ht-alpha', 'ht-beta'] });
   });
 
   it('different routing_tier values produce different count cache keys', async () => {
@@ -838,6 +1108,38 @@ describe('MessagesQueryService', () => {
     expect(mockGetRawOne).toHaveBeenCalledTimes(2);
   });
 
+  it('different trigger filters produce different count cache keys', async () => {
+    mockGetRawOne.mockResolvedValueOnce({ total: 10 });
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' },
+    ]);
+
+    await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      triggers: ['fallback'],
+      include_filter_options: false,
+    });
+
+    mockGetRawOne.mockResolvedValueOnce({ total: 5 });
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-2', timestamp: '2026-02-16 11:00:00', model: 'gpt-4o' },
+    ]);
+
+    const result = await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      triggers: ['autofix'],
+      cursor: '2026-02-16 10:00:00|msg-1',
+      include_filter_options: false,
+    });
+
+    expect(result.total_count).toBe(5);
+    expect(mockGetRawOne).toHaveBeenCalledTimes(2);
+  });
+
   it('count cache evicts oldest entry at capacity', async () => {
     const cache = (service as any).countCache;
     for (let i = 0; i < 5_000; i++) {
@@ -870,8 +1172,9 @@ describe('MessagesQueryService', () => {
   });
 
   it('provider filter returns empty result when no models match', async () => {
-    // getDistinctModels returns models that don't match the requested provider
-    mockGetRawMany.mockResolvedValueOnce([{ model: 'gpt-4o' }]);
+    // applyProviderFilter resolves the tenant's distinct models via skip-scan;
+    // none of them infer to the requested provider.
+    skipScan(['gpt-4o']);
 
     const result = await service.getMessages({
       range: '24h',
@@ -886,23 +1189,14 @@ describe('MessagesQueryService', () => {
   });
 
   it('provider filter applies IN clause for matching models', async () => {
-    // getDistinctModels for provider filter resolution
-    mockGetRawMany.mockResolvedValueOnce([
-      { model: 'gpt-4o' },
-      { model: 'gpt-4.1' },
-      { model: 'claude-opus-4-6' },
-    ]);
+    // Skip-scan resolves the distinct models for provider-filter resolution
+    // (cached, so the response-side getDistinctModels reuses it).
+    skipScan(['claude-opus-4-6', 'gpt-4.1', 'gpt-4o']);
     mockGetRawOne.mockResolvedValueOnce({ total: 2 });
-    mockGetRawMany
-      .mockResolvedValueOnce([
-        { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o', cost: 0.01 },
-        { id: 'msg-2', timestamp: '2026-02-16 09:00:00', model: 'gpt-4.1', cost: 0.02 },
-      ])
-      .mockResolvedValueOnce([
-        { model: 'gpt-4o' },
-        { model: 'gpt-4.1' },
-        { model: 'claude-opus-4-6' },
-      ]);
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o', cost: 0.01 },
+      { id: 'msg-2', timestamp: '2026-02-16 09:00:00', model: 'gpt-4.1', cost: 0.02 },
+    ]);
 
     const result = await service.getMessages({
       range: '24h',
@@ -918,17 +1212,12 @@ describe('MessagesQueryService', () => {
 
   it('derives providers from multiple model types', async () => {
     mockGetRawOne.mockResolvedValueOnce({ total: 3 });
-    mockGetRawMany
-      .mockResolvedValueOnce([
-        { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' },
-        { id: 'msg-2', timestamp: '2026-02-16 09:00:00', model: 'claude-opus-4-6' },
-        { id: 'msg-3', timestamp: '2026-02-16 08:00:00', model: 'gemini-2.0-flash' },
-      ])
-      .mockResolvedValueOnce([
-        { model: 'claude-opus-4-6' },
-        { model: 'gemini-2.0-flash' },
-        { model: 'gpt-4o' },
-      ]);
+    mockGetRawMany.mockResolvedValueOnce([
+      { id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' },
+      { id: 'msg-2', timestamp: '2026-02-16 09:00:00', model: 'claude-opus-4-6' },
+      { id: 'msg-3', timestamp: '2026-02-16 08:00:00', model: 'gemini-2.0-flash' },
+    ]);
+    skipScan(['claude-opus-4-6', 'gemini-2.0-flash', 'gpt-4o']);
 
     const result = await service.getMessages({
       range: '24h',
@@ -948,16 +1237,15 @@ describe('MessagesQueryService', () => {
   describe('stored provider column', () => {
     it('derives provider from the stored provider column when present', async () => {
       mockGetRawOne.mockResolvedValueOnce({ total: 1 });
-      mockGetRawMany
-        .mockResolvedValueOnce([
-          {
-            id: 'msg-1',
-            timestamp: '2026-02-16 10:00:00',
-            model: 'gemma4:31b',
-            provider: 'ollama-cloud',
-          },
-        ])
-        .mockResolvedValueOnce([{ model: 'gemma4:31b', provider: 'ollama-cloud' }]);
+      mockGetRawMany.mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          timestamp: '2026-02-16 10:00:00',
+          model: 'gemma4:31b',
+          provider: 'ollama-cloud',
+        },
+      ]);
+      skipScan(['gemma4:31b'], ['ollama-cloud']);
 
       const result = await service.getMessages({
         range: '24h',
@@ -974,25 +1262,23 @@ describe('MessagesQueryService', () => {
 
     it('merges stored providers with providers inferred from legacy rows', async () => {
       mockGetRawOne.mockResolvedValueOnce({ total: 2 });
-      mockGetRawMany
-        .mockResolvedValueOnce([
-          {
-            id: 'msg-1',
-            timestamp: '2026-02-16 10:00:00',
-            model: 'deepseek-v3.2',
-            provider: 'ollama-cloud',
-          },
-          {
-            id: 'msg-2',
-            timestamp: '2026-02-16 09:00:00',
-            model: 'gpt-4o',
-            provider: null,
-          },
-        ])
-        .mockResolvedValueOnce([
-          { model: 'deepseek-v3.2', provider: 'ollama-cloud' },
-          { model: 'gpt-4o', provider: null },
-        ]);
+      mockGetRawMany.mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          timestamp: '2026-02-16 10:00:00',
+          model: 'deepseek-v3.2',
+          provider: 'ollama-cloud',
+        },
+        {
+          id: 'msg-2',
+          timestamp: '2026-02-16 09:00:00',
+          model: 'gpt-4o',
+          provider: null,
+        },
+      ]);
+      // Skip-scan: distinct models include both; the only stored provider is
+      // ollama-cloud (gpt-4o's rows carried a NULL provider, filtered out).
+      skipScan(['deepseek-v3.2', 'gpt-4o'], ['ollama-cloud']);
 
       const result = await service.getMessages({
         range: '24h',
@@ -1005,29 +1291,32 @@ describe('MessagesQueryService', () => {
       expect(result.providers.sort()).toEqual(['deepseek', 'ollama-cloud', 'openai']);
     });
 
-    it('skips null and empty provider values in distinct rows', async () => {
+    it('skips null and empty model/provider values in distinct scan rows', async () => {
+      // Force the scan path (agent filter) so the JS guards in
+      // getDistinctModelsViaScan run against null/'' model and provider values.
       mockGetRawOne.mockResolvedValueOnce({ total: 1 });
       mockGetRawMany
         .mockResolvedValueOnce([{ id: 'msg-1', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o' }])
-        // Include rows with null and empty-string provider values to cover
-        // the `providerValue != null && providerValue !== ''` branch.
         .mockResolvedValueOnce([
-          { model: 'gpt-4o', provider: null },
-          { model: 'claude-opus-4-6', provider: '' },
-          { model: 'deepseek-v3.2', provider: 'ollama-cloud' },
+          { model: 'gpt-4o', provider: null }, // model kept, provider skipped
+          { model: 'claude-opus-4-6', provider: '' }, // model kept, provider skipped
+          { model: '', provider: 'p-empty-model' }, // model skipped, provider kept
+          { model: null, provider: 'p-null-model' }, // model skipped, provider kept
+          { model: 'deepseek-v3.2', provider: 'ollama-cloud' }, // both kept
         ]);
 
       const result = await service.getMessages({
         range: '24h',
         tenantId: 'test-user',
         limit: 20,
+        agent_name: 'a',
       });
 
-      // The null and '' providers must not create spurious entries; only the
-      // real ollama-cloud entry plus the model-name-inferred ones.
+      // Valid stored providers + providers inferred from the kept models.
       expect(result.providers).toContain('ollama-cloud');
-      expect(result.providers).toContain('openai');
-      expect(result.providers).toContain('anthropic');
+      expect(result.providers).toContain('openai'); // inferred from gpt-4o
+      expect(result.providers).toContain('anthropic'); // inferred from claude-opus-4-6
+      expect(result.providers).toContain('deepseek'); // inferred from deepseek-v3.2
       expect(result.providers).not.toContain('');
     });
 
@@ -1054,32 +1343,23 @@ describe('MessagesQueryService', () => {
       // getDistinctModels returns a mix of models and providers.
       // `matching` will include gpt-4o (inferred as openai), so the OR branch
       // with at.provider IS NULL AND at.model IN (...) is built.
-      mockGetRawMany.mockResolvedValueOnce([
-        { model: 'gpt-4o', provider: 'openai' },
-        { model: 'gpt-4.1', provider: null },
-        { model: 'claude-opus-4-6', provider: null },
-      ]);
+      // Skip-scan resolves distinct models + the one stored provider (openai).
+      skipScan(['claude-opus-4-6', 'gpt-4.1', 'gpt-4o'], ['openai']);
       mockGetRawOne.mockResolvedValueOnce({ total: 2 });
-      mockGetRawMany
-        .mockResolvedValueOnce([
-          {
-            id: 'msg-1',
-            timestamp: '2026-02-16 10:00:00',
-            model: 'gpt-4o',
-            provider: 'openai',
-          },
-          {
-            id: 'msg-2',
-            timestamp: '2026-02-16 09:00:00',
-            model: 'gpt-4.1',
-            provider: null,
-          },
-        ])
-        .mockResolvedValueOnce([
-          { model: 'gpt-4o', provider: 'openai' },
-          { model: 'gpt-4.1', provider: null },
-          { model: 'claude-opus-4-6', provider: null },
-        ]);
+      mockGetRawMany.mockResolvedValueOnce([
+        {
+          id: 'msg-1',
+          timestamp: '2026-02-16 10:00:00',
+          model: 'gpt-4o',
+          provider: 'openai',
+        },
+        {
+          id: 'msg-2',
+          timestamp: '2026-02-16 09:00:00',
+          model: 'gpt-4.1',
+          provider: null,
+        },
+      ]);
 
       const result = await service.getMessages({
         range: '24h',
@@ -1095,11 +1375,9 @@ describe('MessagesQueryService', () => {
     it('provider filter: uses only the stored provider branch when no legacy models match', async () => {
       // All distinct models map to something other than the requested provider
       // (e.g. the legacy OR branch would be empty), exercising the matching.length === 0 path.
-      mockGetRawMany.mockResolvedValueOnce([{ model: 'gpt-4o', provider: 'openai' }]);
+      skipScan(['gpt-4o'], ['openai']);
       mockGetRawOne.mockResolvedValueOnce({ total: 0 });
-      mockGetRawMany
-        .mockResolvedValueOnce([])
-        .mockResolvedValueOnce([{ model: 'gpt-4o', provider: 'openai' }]);
+      mockGetRawMany.mockResolvedValueOnce([]);
 
       const result = await service.getMessages({
         range: '24h',
@@ -1140,40 +1418,5 @@ describe('MessagesQueryService', () => {
     });
 
     expect(result.items[0]).toHaveProperty('specificity_category', 'coding');
-  });
-
-  describe('recorded filter', () => {
-    it('adds a recorded = true where clause when the flag is set', async () => {
-      const repo = (
-        service as unknown as {
-          turnRepo: { createQueryBuilder: jest.Mock };
-        }
-      ).turnRepo;
-      const qb = repo.createQueryBuilder();
-      const andWhereCalls = () => qb.andWhere.mock.calls.map((c: unknown[]) => c[0]);
-
-      await service.getMessages({
-        tenantId: 'test-user',
-        limit: 10,
-        recorded: true,
-      });
-
-      expect(andWhereCalls()).toContain('at.recorded = true');
-    });
-
-    it('does not apply the recorded filter when the flag is omitted', async () => {
-      const repo = (
-        service as unknown as {
-          turnRepo: { createQueryBuilder: jest.Mock };
-        }
-      ).turnRepo;
-      const qb = repo.createQueryBuilder();
-
-      await service.getMessages({ tenantId: 'test-user', limit: 10 });
-
-      expect(qb.andWhere.mock.calls.map((c: unknown[]) => c[0])).not.toContain(
-        'at.recorded = true',
-      );
-    });
   });
 });

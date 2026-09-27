@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { OpenaiOauthService } from './openai-oauth.service';
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 
 const originalFetch = global.fetch;
@@ -38,12 +39,20 @@ function createProviderService() {
       recalculateTiersForUser,
       nextOAuthLabel,
       getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+        getFreshSubscriptionCredential,
+        upsertProvider,
+      }),
     } as unknown as ProviderService,
     upsertProvider,
     recalculateTiers,
     recalculateTiersForUser,
     nextOAuthLabel,
     getFreshSubscriptionCredential,
+    withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+      getFreshSubscriptionCredential,
+      upsertProvider,
+    }),
   };
 }
 
@@ -278,7 +287,7 @@ describe('OpenaiOauthService', () => {
       const token = await svc.unwrapToken(JSON.stringify(blob), 'agent-1', 'user-1', 'Work');
       expect(token).toBe('new');
       expect(providerService.upsertProvider).toHaveBeenCalledWith(
-        'agent-1',
+        null,
         'user-1',
         'openai',
         expect.stringContaining('"t":"new"'),

@@ -116,22 +116,26 @@ export function formatLegendTokens(_u: uPlot, val: number): string {
 
 const RANGE_MAP: Record<string, number> = {
   '1h': 3600,
+  '6h': 21600,
   '24h': 86400,
   '7d': 604800,
   '30d': 2592000,
+  '90d': 7776000,
+  '365d': 31536000,
 };
 
-const MULTI_DAY_RANGES = new Set(['7d', '30d']);
-const INTRADAY_RANGES = new Set(['1h', '24h']);
+const MULTI_DAY_RANGES = new Set(['7d', '30d', '90d', '365d']);
+const INTRADAY_RANGES = new Set(['1h', '6h', '24h']);
+const MAX_MULTIDAY_AXIS_LABELS = 10;
 
-const RANGE_DAYS: Record<string, number> = { '7d': 7, '30d': 30 };
-const RANGE_HOURS: Record<string, number> = { '24h': 24 };
+const RANGE_DAYS: Record<string, number> = { '7d': 7, '30d': 30, '90d': 90, '365d': 365 };
+const RANGE_HOURS: Record<string, number> = { '6h': 6, '24h': 24 };
 
 export function rangeToSeconds(range: string): number {
   return RANGE_MAP[range] ?? 86400;
 }
 
-/** Slot width in seconds. Daily for 7d/30d, hourly otherwise. */
+/** Slot width in seconds. Daily for multi-day ranges, hourly otherwise. */
 export function binWidthSeconds(range: string | undefined): number {
   return MULTI_DAY_RANGES.has(range ?? '') ? 86400 : 3600;
 }
@@ -139,8 +143,8 @@ export function binWidthSeconds(range: string | undefined): number {
 /**
  * Fill missing days/hours in sparse backend data so charts have
  * evenly spaced data points. For multi-day ranges, fills one point per
- * calendar day. For the 24h range, fills one point per hour up to the
- * current hour.
+ * calendar day. For hourly ranges, fills one point per hour up to the current
+ * hour.
  */
 export function fillDailyGaps<T extends Record<string, unknown>>(
   data: T[],
@@ -248,7 +252,10 @@ export function createBaseAxes(axisColor: string, gridColor: string, range?: str
       // Thin labels for multi-day ranges so they don't overlap
       if (multiDay) {
         const uniqueLabels = deduped.filter((l) => l !== '');
-        const step = uniqueLabels.length > 20 ? 5 : uniqueLabels.length > 14 ? 3 : 1;
+        const step =
+          uniqueLabels.length > MAX_MULTIDAY_AXIS_LABELS
+            ? Math.ceil(uniqueLabels.length / MAX_MULTIDAY_AXIS_LABELS)
+            : 1;
         if (step > 1) {
           let count = 0;
           return deduped.map((l) => {

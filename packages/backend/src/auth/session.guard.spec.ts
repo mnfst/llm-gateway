@@ -21,9 +21,8 @@ function createMockContext(overrides: { ip?: string; headers?: Record<string, st
   context: ExecutionContext;
   request: Record<string, unknown>;
 } {
-  // The guard reads request.socket.remoteAddress (the actual TCP peer) for
-  // its loopback decision. Mirror the test's `ip` field onto the socket so
-  // existing assertions still describe the scenario they intend to.
+  // The guard no longer looks at the peer address at all. `ip` is kept so the
+  // tests can still describe whether a request came from loopback or not.
   const peerIp = overrides.ip ?? '127.0.0.1';
   const request: Record<string, unknown> = {
     ip: peerIp,
@@ -232,7 +231,7 @@ describe('SessionGuard', () => {
     });
   });
 
-  describe('self-hosted loopback fallback', () => {
+  describe('self-hosted mode — no loopback auto-login', () => {
     const originalEnv = process.env['MANIFEST_MODE'];
 
     beforeEach(() => {
@@ -259,39 +258,35 @@ describe('SessionGuard', () => {
       expect(request['authMethod']).toBe('session');
     });
 
-    it('falls back to synthetic user when no session on loopback', async () => {
+    it('leaves a loopback request without a session unauthenticated', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
       (auth.api.getSession as jest.Mock).mockResolvedValue(null);
       const { context, request } = createMockContext({ ip: '127.0.0.1' });
 
-      await guard.canActivate(context);
+      // Still returns true so ApiKeyGuard gets to reject the request.
+      const result = await guard.canActivate(context);
 
-      expect(request['user']).toEqual({
-        id: 'local',
-        name: 'Local User',
-        email: 'local@localhost',
-      });
-      expect(request['authMethod']).toBe('session');
-      expect(tenantCache.resolve).toHaveBeenCalledWith('local');
-      expect(request['tenantContext']).toEqual({ tenantId: 'tenant-1', userId: 'local' });
+      expect(result).toBe(true);
+      expect(request['user']).toBeUndefined();
+      expect(request['authMethod']).toBeUndefined();
+      expect(request['tenantContext']).toBeUndefined();
+      expect(tenantCache.resolve).not.toHaveBeenCalled();
     });
 
-    it('falls back to synthetic user when getSession throws on loopback', async () => {
+    it('leaves a loopback request unauthenticated when getSession throws', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
       (auth.api.getSession as jest.Mock).mockRejectedValue(new Error('DB error'));
       const { context, request } = createMockContext({ ip: '127.0.0.1' });
 
-      await guard.canActivate(context);
+      const result = await guard.canActivate(context);
 
-      expect(request['user']).toEqual({
-        id: 'local',
-        name: 'Local User',
-        email: 'local@localhost',
-      });
-      expect(request['authMethod']).toBe('session');
+      expect(result).toBe(true);
+      expect(request['user']).toBeUndefined();
+      expect(request['authMethod']).toBeUndefined();
+      expect(tenantCache.resolve).not.toHaveBeenCalled();
     });
 
-    it('does not apply loopback fallback for non-loopback IPs', async () => {
+    it('leaves a non-loopback request unauthenticated', async () => {
       jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
       (auth.api.getSession as jest.Mock).mockResolvedValue(null);
       const { context, request } = createMockContext({ ip: '203.0.113.1' });

@@ -1,10 +1,8 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
-import { Subscription } from 'rxjs';
+import { Injectable, Logger } from '@nestjs/common';
 import { NotificationRulesService } from './notification-rules.service';
 import { NotificationEmailService } from './notification-email.service';
 import { EmailProviderConfigService } from './email-provider-config.service';
 import { NotificationLogService, formatNotificationTimestamp } from './notification-log.service';
-import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
 import { ManifestRuntimeService } from '../../common/services/manifest-runtime.service';
 import { computePeriodBoundaries, computePeriodResetDate } from '../../common/utils/period.util';
 
@@ -25,59 +23,40 @@ export interface LimitExceeded {
   period: string;
 }
 
-interface CacheEntry<T> {
-  data: T;
-  expiresAt: number;
-}
-
-const CACHE_TTL_MS = 60_000;
-const MAX_CACHE_SIZE = 10_000;
-
 @Injectable()
-export class LimitCheckService implements OnModuleInit, OnModuleDestroy {
+export class LimitCheckService {
   private readonly logger = new Logger(LimitCheckService.name);
-  private readonly rulesCache = new Map<string, CacheEntry<BlockRule[]>>();
-  // Consumption is cached per-tenant (outer key) so an ingest event — which
-  // carries the tenantId of the agent that just wrote a message — can evict
-  // just that tenant's buckets instead of nuking every tenant's cached
-  // consumption. The inner key keeps the agent/metric/period granularity.
-  private readonly consumptionCache = new Map<string, Map<string, CacheEntry<number>>>();
-  private ingestSub?: Subscription;
 
   constructor(
     private readonly rulesService: NotificationRulesService,
     private readonly emailService: NotificationEmailService,
     private readonly emailProviderConfig: EmailProviderConfigService,
-    private readonly ingestBus: IngestEventBusService,
     private readonly runtime: ManifestRuntimeService,
     private readonly notificationLog: NotificationLogService,
   ) {}
 
-  onModuleInit(): void {
-    this.ingestSub = this.ingestBus.all().subscribe((event) => {
-      // Surgical eviction: only the writing tenant's consumption is now stale.
-      // Other tenants' cached entries keep serving from cache for the TTL.
-      this.consumptionCache.delete(event.tenantId);
-    });
-  }
-
-  onModuleDestroy(): void {
-    this.ingestSub?.unsubscribe();
-  }
-
   async checkLimits(tenantId: string, agentName: string): Promise<LimitExceeded | null> {
-    const rules = await this.getCachedRules(tenantId, agentName);
+    // Hard limits are an enforcement boundary. Read both the rules and their
+    // current consumption for every provider request so changes made through a
+    // different backend replica take effect on the next request.
+    const rules = await this.rulesService.getActiveBlockRules(tenantId, agentName);
     if (rules.length === 0) return null;
 
+    const consumptionByMetricAndPeriod = new Map<string, number>();
     for (const rule of rules) {
       const { periodStart, periodEnd } = computePeriodBoundaries(rule.period);
-      const actual = await this.getCachedConsumption(
-        tenantId,
-        agentName,
-        rule.metric_type,
-        periodStart,
-        periodEnd,
-      );
+      const consumptionKey = `${rule.metric_type}:${periodStart}:${periodEnd}`;
+      let actual = consumptionByMetricAndPeriod.get(consumptionKey);
+      if (actual === undefined) {
+        actual = await this.rulesService.getConsumption(
+          tenantId,
+          agentName,
+          rule.metric_type,
+          periodStart,
+          periodEnd,
+        );
+        consumptionByMetricAndPeriod.set(consumptionKey, actual);
+      }
 
       if (actual >= rule.threshold) {
         this.notifyLimitExceeded(rule, actual, periodStart, periodEnd).catch((err) => {
@@ -95,18 +74,6 @@ export class LimitCheckService implements OnModuleInit, OnModuleDestroy {
     }
 
     return null;
-  }
-
-  invalidateCache(tenantId: string, agentName: string): void {
-    this.rulesCache.delete(`${tenantId}:${agentName}`);
-    // Drop only this agent's inner entries from the tenant's bucket.
-    const inner = this.consumptionCache.get(tenantId);
-    if (!inner) return;
-    const innerPrefix = `${agentName}:`;
-    for (const innerKey of inner.keys()) {
-      if (innerKey.startsWith(innerPrefix)) inner.delete(innerKey);
-    }
-    if (inner.size === 0) this.consumptionCache.delete(tenantId);
   }
 
   private async notifyLimitExceeded(
@@ -151,85 +118,5 @@ export class LimitCheckService implements OnModuleInit, OnModuleDestroy {
         providerConfig ?? undefined,
       );
     }
-  }
-
-  private async getCachedRules(tenantId: string, agentName: string): Promise<BlockRule[]> {
-    const key = `${tenantId}:${agentName}`;
-    const now = Date.now();
-    const cached = this.rulesCache.get(key);
-    if (cached && cached.expiresAt > now) return cached.data;
-
-    this.evictExpired(this.rulesCache, now);
-    this.evictOldestIfFull(this.rulesCache);
-    const rules = await this.rulesService.getActiveBlockRules(tenantId, agentName);
-    this.rulesCache.set(key, { data: rules, expiresAt: now + CACHE_TTL_MS });
-    return rules;
-  }
-
-  private async getCachedConsumption(
-    tenantId: string,
-    agentName: string,
-    metricType: 'tokens' | 'cost',
-    periodStart: string,
-    periodEnd: string,
-  ): Promise<number> {
-    const innerKey = `${agentName}:${metricType}:${periodStart}`;
-    const now = Date.now();
-    const cached = this.consumptionCache.get(tenantId)?.get(innerKey);
-    if (cached && cached.expiresAt > now) return cached.data;
-
-    this.evictExpiredConsumption(now);
-    this.evictOldestConsumptionIfFull();
-    const actual = await this.rulesService.getConsumption(
-      tenantId,
-      agentName,
-      metricType,
-      periodStart,
-      periodEnd,
-    );
-    let bucket = this.consumptionCache.get(tenantId);
-    if (!bucket) {
-      bucket = new Map<string, CacheEntry<number>>();
-      this.consumptionCache.set(tenantId, bucket);
-    }
-    bucket.set(innerKey, { data: actual, expiresAt: now + CACHE_TTL_MS });
-    return actual;
-  }
-
-  private evictExpired<T>(cache: Map<string, CacheEntry<T>>, now: number): void {
-    for (const [k, v] of cache) {
-      if (v.expiresAt <= now) cache.delete(k);
-    }
-  }
-
-  private evictOldestIfFull<T>(cache: Map<string, CacheEntry<T>>): void {
-    if (cache.size >= MAX_CACHE_SIZE) {
-      const firstKey = cache.keys().next().value;
-      if (firstKey) cache.delete(firstKey);
-    }
-  }
-
-  private evictExpiredConsumption(now: number): void {
-    for (const [tenantId, inner] of this.consumptionCache) {
-      this.evictExpired(inner, now);
-      if (inner.size === 0) this.consumptionCache.delete(tenantId);
-    }
-  }
-
-  private evictOldestConsumptionIfFull(): void {
-    let total = 0;
-    for (const inner of this.consumptionCache.values()) total += inner.size;
-    if (total < MAX_CACHE_SIZE) return;
-
-    // total >= MAX_CACHE_SIZE guarantees the first bucket exists and is
-    // non-empty (empty buckets are dropped eagerly elsewhere). Evict its oldest
-    // inner entry, removing the bucket if that was its last entry.
-    const [tenantId, inner] = this.consumptionCache.entries().next().value as [
-      string,
-      Map<string, CacheEntry<number>>,
-    ];
-    const firstInnerKey = inner.keys().next().value as string;
-    inner.delete(firstInnerKey);
-    if (inner.size === 0) this.consumptionCache.delete(tenantId);
   }
 }

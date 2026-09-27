@@ -1,0 +1,43 @@
+# Template Fly.io config for Manifest.
+#
+# Replace `manifest-example` with your Fly app name, or run
+# `deploy/fly/deploy.sh` from the repository root to generate a temporary
+# config automatically.
+
+app = "manifest-example"
+primary_region = "cdg"
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+[build]
+  image = "docker.io/manifestdotbuild/manifest:6"
+
+[env]
+  PORT = "2099"
+  BIND_ADDRESS = "0.0.0.0"
+  BETTER_AUTH_URL = "https://manifest-example.fly.dev"
+  MANIFEST_MODE = "selfhosted"
+  NODE_ENV = "production"
+  SEED_DATA = "false"
+  DB_POOL_MAX = "8"
+  AUTH_DB_POOL_MAX = "4"
+  REQUEST_RECORDING_STORAGE = "s3"
+  REQUEST_RECORDING_S3_BUCKET = "manifest-recordings-bucket"
+  REQUEST_RECORDING_S3_ENDPOINT = "https://fly.storage.tigris.dev"
+  REQUEST_RECORDING_S3_REGION = "auto"
+  REQUEST_RECORDING_S3_FORCE_PATH_STYLE = "false"
+
+[http_service]
+  internal_port = 2099
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "90s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/v1/health"
+    timeout = "5s"

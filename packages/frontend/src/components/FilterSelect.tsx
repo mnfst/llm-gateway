@@ -98,6 +98,7 @@ const FilterSelect: Component<FilterSelectProps> = (props) => {
                   class="agent-filter-select__item"
                   onClick={() => props.onToggle(item)}
                   type="button"
+                  disabled={props.items.length <= 1}
                 >
                   <span
                     class="agent-filter-select__swatch"

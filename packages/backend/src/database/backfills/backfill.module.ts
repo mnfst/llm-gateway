@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { BackfillState } from '../../entities/backfill-state.entity';
 import { MessageProviderBackfillBootService } from './message-provider-backfill.boot.service';
+import { RequestBackfillBootService } from './request-backfill.boot.service';
 
 /**
  * Wires the post-deploy backfill boot task. The DataSource is provided globally
@@ -10,6 +11,6 @@ import { MessageProviderBackfillBootService } from './message-provider-backfill.
  */
 @Module({
   imports: [TypeOrmModule.forFeature([BackfillState])],
-  providers: [MessageProviderBackfillBootService],
+  providers: [MessageProviderBackfillBootService, RequestBackfillBootService],
 })
 export class BackfillModule {}

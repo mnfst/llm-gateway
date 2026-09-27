@@ -41,14 +41,15 @@ describe('First-run setup wizard', () => {
       expect(res.body).toHaveProperty('isSelfHosted');
       expect(res.body).toHaveProperty('localLlmHost');
       expect(res.body).toHaveProperty('ollamaAvailable');
+      expect(res.body).toHaveProperty('emailConfigured');
     });
 
     it('returns needsSetup=false after a user has been inserted', async () => {
       const ds = app.get(DataSource);
-      await ds.query(
-        `INSERT INTO "user" (id, email, "emailVerified") VALUES ($1, $2, true)`,
-        ['test-user-id', 'founder@example.com'],
-      );
+      await ds.query(`INSERT INTO "user" (id, email, "emailVerified") VALUES ($1, $2, true)`, [
+        'test-user-id',
+        'founder@example.com',
+      ]);
 
       const res = await request(app.getHttpServer()).get('/api/v1/setup/status').expect(200);
       expect(res.body).toMatchObject({ needsSetup: false });
@@ -63,18 +64,16 @@ describe('First-run setup wizard', () => {
   describe('POST /api/v1/setup/admin', () => {
     it('rejects with 409 when a user already exists', async () => {
       const ds = app.get(DataSource);
-      await ds.query(
-        `INSERT INTO "user" (id, email, "emailVerified") VALUES ($1, $2, true)`,
-        ['existing-admin', 'admin@example.com'],
-      );
+      await ds.query(`INSERT INTO "user" (id, email, "emailVerified") VALUES ($1, $2, true)`, [
+        'existing-admin',
+        'admin@example.com',
+      ]);
 
-      const res = await request(app.getHttpServer())
-        .post('/api/v1/setup/admin')
-        .send({
-          email: 'founder@example.com',
-          name: 'Founder',
-          password: 'secret-password',
-        });
+      const res = await request(app.getHttpServer()).post('/api/v1/setup/admin').send({
+        email: 'founder@example.com',
+        name: 'Founder',
+        password: 'secret-password',
+      });
 
       expect(res.status).toBe(409);
     });
@@ -146,10 +145,10 @@ describe('First-run setup wizard', () => {
       ['founder.tag@sub.example.co.uk', 'dotted local + multi-label TLD'],
     ])('accepts valid email %p (%s) past DTO validation', async (email) => {
       const ds = app.get(DataSource);
-      await ds.query(
-        `INSERT INTO "user" (id, email, "emailVerified") VALUES ($1, $2, true)`,
-        ['blocking-admin', 'admin@example.com'],
-      );
+      await ds.query(`INSERT INTO "user" (id, email, "emailVerified") VALUES ($1, $2, true)`, [
+        'blocking-admin',
+        'admin@example.com',
+      ]);
 
       const res = await request(app.getHttpServer())
         .post('/api/v1/setup/admin')
@@ -164,6 +163,23 @@ describe('First-run setup wizard', () => {
       const res = await request(app.getHttpServer())
         .post('/api/v1/setup/admin')
         .send({ email: 'founder@example.com', password: 'secret-password' })
+        .expect(400);
+      expect(res.body.message).toBeDefined();
+    });
+
+    it('rejects an unknown field with 400 (forbidNonWhitelisted)', async () => {
+      // With the global ValidationPipe's forbidNonWhitelisted, a body carrying
+      // a property that isn't on the DTO is rejected outright rather than
+      // silently stripped — the user table is empty here, so a non-strict pipe
+      // would otherwise let this reach the service.
+      const res = await request(app.getHttpServer())
+        .post('/api/v1/setup/admin')
+        .send({
+          email: 'founder@example.com',
+          name: 'Founder',
+          password: 'secret-password',
+          role: 'superadmin',
+        })
         .expect(400);
       expect(res.body.message).toBeDefined();
     });

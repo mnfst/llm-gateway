@@ -1,14 +1,14 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { AuthType } from 'manifest-shared';
+import type { AuthType, ModelRoute } from 'manifest-shared';
 import { TenantProvider } from '../../entities/tenant-provider.entity';
 import { AgentEnabledProvider } from '../../entities/agent-enabled-provider.entity';
 import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
 import { ModelDiscoveryService } from '../../model-discovery/model-discovery.service';
 import { CachedProviderKey, RoutingCacheService } from './routing-cache.service';
 import { ProviderService } from './provider.service';
-import { decrypt, getEncryptionSecret } from '../../common/utils/crypto.util';
+import { decryptWithAny, getDecryptionSecrets } from '../../common/utils/crypto.util';
 import {
   expandProviderNames,
   inferProviderFromModelName,
@@ -23,9 +23,32 @@ import { isManifestUsableProvider } from '../../common/utils/subscription-suppor
  */
 export const SYNTHETIC_OLLAMA_PROVIDER_ID = 'ollama';
 
+/** Longest connection label echoed into a log line. */
+const MAX_LOGGED_LABEL_LENGTH = 64;
+const STALE_PIN_WARN_WINDOW_MS = 60_000;
+const MAX_STALE_PIN_WARNING_KEYS = 256;
+
+/**
+ * Connection labels are user-authored text. Strip control characters (a
+ * newline would let a label forge extra log lines) and cap the length before
+ * interpolating one into a log message.
+ */
+function forLog(label: string): string {
+  const cleaned = [...label]
+    .map((c) => {
+      const code = c.codePointAt(0) ?? 0;
+      return code < 0x20 || code === 0x7f ? ' ' : c;
+    })
+    .join('');
+  return cleaned.length > MAX_LOGGED_LABEL_LENGTH
+    ? `${cleaned.slice(0, MAX_LOGGED_LABEL_LENGTH)}…`
+    : cleaned;
+}
+
 @Injectable()
 export class ProviderKeyService {
   private readonly logger = new Logger(ProviderKeyService.name);
+  private readonly stalePinWarnings = new Map<string, number>();
 
   constructor(
     @InjectRepository(TenantProvider)
@@ -105,8 +128,47 @@ export class ProviderKeyService {
     if (label) {
       const match = keys.find((k) => k.label.toLowerCase() === label.toLowerCase());
       if (match) return match;
+      // A pin that names no connection is a stale route (the key was renamed
+      // or deleted). Serving the default keeps traffic flowing, but it silently
+      // bills a connection the operator did not choose. Throttle identical
+      // warnings so subscription re-reads and fallback retries stay diagnosable
+      // without producing one log line per lookup.
+      const warningKey = [tenantId, agentId ?? '', provider.toLowerCase(), authType ?? '', label]
+        .join('\0')
+        .toLowerCase();
+      const now = Date.now();
+      const warnedAt = this.stalePinWarnings.get(warningKey);
+      if (warnedAt === undefined || now - warnedAt >= STALE_PIN_WARN_WINDOW_MS) {
+        this.stalePinWarnings.delete(warningKey);
+        this.stalePinWarnings.set(warningKey, now);
+        if (this.stalePinWarnings.size > MAX_STALE_PIN_WARNING_KEYS) {
+          const oldest = this.stalePinWarnings.keys().next().value as string | undefined;
+          if (oldest !== undefined) this.stalePinWarnings.delete(oldest);
+        }
+        this.logger.warn(
+          `Key label "${forLog(label)}" matches no ${provider} connection for tenant=${tenantId} ` +
+            `authType=${authType ?? 'any'} — falling back to "${forLog(keys[0].label)}"`,
+        );
+      }
     }
     return keys[0];
+  }
+
+  /**
+   * Cheap gateway-path check for a persisted route. This deliberately reuses
+   * the provider-key cache instead of assembling the full discovered-model
+   * list: the proxy must resolve the same key before forwarding anyway, so a
+   * successful check makes that later lookup a cache hit and adds no separate
+   * discovery query to automatic routing.
+   */
+  async hasRouteCredentials(
+    tenantId: string,
+    route: ModelRoute,
+    agentId?: string,
+  ): Promise<boolean> {
+    if (!route.provider) return false;
+    const keys = await this.getProviderKeys(tenantId, route.provider, route.authType, agentId);
+    return keys.length > 0;
   }
 
   async getProviderApiKey(
@@ -290,7 +352,7 @@ export class ProviderKeyService {
           id: record.id,
           label: record.label,
           priority: record.priority,
-          apiKey: decrypt(record.api_key_encrypted, getEncryptionSecret()),
+          apiKey: decryptWithAny(record.api_key_encrypted, getDecryptionSecrets()).plaintext,
           region: record.region,
         },
       ];
@@ -339,6 +401,53 @@ export class ProviderKeyService {
       if (records.find((r) => prefixNames.has(r.provider.toLowerCase()))) return true;
     }
     return false;
+  }
+
+  /**
+   * Availability check for an explicit ModelRoute. isModelAvailable() resolves
+   * the model by name alone, and getModelForAgent() deliberately refuses
+   * provider-less lookups once two connections expose the same model id — so a
+   * pinned override like {model: gpt-5.5, provider: openai, authType:
+   * subscription} would be reported unavailable the moment the tenant also
+   * connects an openai api_key. A route carries the (provider, authType) pin,
+   * so honor it: filter the discovered list down to the pinned pair instead of
+   * asking the ambiguous question. Routes without a provider pin keep the
+   * legacy name-only behavior.
+   */
+  async isRouteAvailable(tenantId: string, route: ModelRoute, agentId?: string): Promise<boolean> {
+    if (!route.provider) {
+      return this.isModelAvailable(tenantId, route.model, agentId);
+    }
+    const providerNames = expandProviderNames([route.provider]);
+    const discovered = await this.discoveryService.getModelsForAgent(tenantId, agentId);
+    const connectionModels = discovered.filter(
+      (m) =>
+        providerNames.has(m.provider.toLowerCase()) &&
+        (!route.authType || !m.authType || m.authType === route.authType),
+    );
+    if (connectionModels.some((m) => m.id === route.model)) return true;
+    if (connectionModels.length > 0) return false;
+
+    // Qwen/Alibaba model IDs must come from native discovery. The provider has
+    // region-specific routable names, so an active key alone is not enough.
+    if (providerNames.has('qwen') || providerNames.has('alibaba')) return false;
+
+    // Discovery can be cold for a connection; fall back to "an active, usable
+    // record for the pinned provider exists" only when discovery returned no
+    // model evidence for that pinned provider/authType.
+    const records = (
+      await this.filterProvidersForAgent(
+        await this.providerRepo.find({
+          where: { tenant_id: tenantId, is_active: true },
+        }),
+        agentId,
+      )
+    ).filter(isManifestUsableProvider);
+    return records.some(
+      (r) =>
+        providerNames.has(r.provider.toLowerCase()) &&
+        (!route.authType || r.auth_type === route.authType),
+    );
   }
 
   /**

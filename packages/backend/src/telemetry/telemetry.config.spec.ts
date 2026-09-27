@@ -41,6 +41,26 @@ describe('buildTelemetryConfig', () => {
     expect(cfg.endpoint).toBe('http://127.0.0.1:9999/ingest');
   });
 
+  it('falls back to the default endpoint when TELEMETRY_ENDPOINT is blank', () => {
+    // docker-compose forwards unset optional vars as an empty string
+    // (`- TELEMETRY_ENDPOINT=${TELEMETRY_ENDPOINT:-}`). Treating `''` as a
+    // deliberate override would silently POST every report to nowhere.
+    for (const blank of ['', '   ']) {
+      expect(
+        buildTelemetryConfig({ NODE_ENV: 'production', TELEMETRY_ENDPOINT: blank }).endpoint,
+      ).toBe(DEFAULT_TELEMETRY_ENDPOINT);
+    }
+  });
+
+  it('trims a padded TELEMETRY_ENDPOINT', () => {
+    expect(
+      buildTelemetryConfig({
+        NODE_ENV: 'production',
+        TELEMETRY_ENDPOINT: '  http://127.0.0.1:9999/ingest  ',
+      }).endpoint,
+    ).toBe('http://127.0.0.1:9999/ingest');
+  });
+
   it('is disabled when the Manifest version cannot be read', () => {
     // Simulates a misconfigured image that ships without
     // packages/manifest/package.json. readManifestVersion() falls back to

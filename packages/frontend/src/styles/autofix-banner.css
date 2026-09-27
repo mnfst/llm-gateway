@@ -1,0 +1,81 @@
+/* ── Autofix banner (AutofixBanner.tsx) ─────
+   Compact banner for Autofix promotion with gradient background.
+   Positioned above page title, width of content. */
+
+.autofix-banner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: fit-content;
+  margin: 0 auto var(--gap-lg);
+  padding: 8px 14px;
+  background: url('/banner-autofix-gradient.png') center / 180% no-repeat;
+  border-radius: var(--radius);
+  position: relative;
+  overflow: hidden;
+}
+
+.autofix-banner__content {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  position: relative;
+  z-index: 1;
+}
+
+.autofix-banner__text {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: #000;
+  white-space: nowrap;
+}
+
+.autofix-banner__btn {
+  flex-shrink: 0;
+  padding: 4px 12px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border: none;
+  border-radius: var(--radius-sm, 4px);
+  cursor: pointer;
+  text-decoration: none;
+  transition: opacity var(--transition-fast);
+  position: relative;
+  z-index: 2;
+}
+
+.autofix-banner__btn:hover {
+  opacity: 0.9;
+}
+
+.autofix-banner__btn:focus-visible {
+  outline: 2px solid #000;
+  outline-offset: 1px;
+}
+
+.autofix-banner__close {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: #000;
+  background: none;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+  position: relative;
+  z-index: 2;
+}
+
+.autofix-banner__close:hover,
+.autofix-banner__close:focus-visible {
+  background: rgba(0, 0, 0, 0.1);
+}

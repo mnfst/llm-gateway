@@ -20,6 +20,12 @@ export const QUALITY_OVERRIDES: ReadonlyMap<string, number> = new Map([
   ['gpt-4o', 3],
   ['mistral-large-latest', 3],
   ['kimi-k2', 3],
+  // Kimi Coding Plan wire id: models.dev only knows the platform alias
+  // (kimi-k3), so the formula sees a zero-price model with no capability
+  // flags and would score Moonshot's flagship as ultra-low.
+  ['k3', 3],
+  // Same zero-price/no-flag profile as k3 — the 256k sibling of the flagship.
+  ['k3-256k', 3],
   // Meta-router — computed score from price data doesn't reflect frontier capability
   ['openrouter/auto', 5],
   // Free meta-router — mid-range quality

@@ -13,6 +13,10 @@ vi.mock("@solidjs/meta", () => ({
 
 let mockRules: any[] = [];
 let mockRoutingStatus = { enabled: false };
+let mockIsSelfHosted = false;
+let mockEmailProvider: any = null;
+let mockRemoveFails = false;
+let mockProviderFetchFails = false;
 
 vi.mock("../../src/services/api.js", () => ({
   getNotificationRules: vi.fn(() => Promise.resolve(mockRules)),
@@ -20,7 +24,43 @@ vi.mock("../../src/services/api.js", () => ({
   createNotificationRule: vi.fn(() => Promise.resolve({})),
   updateNotificationRule: vi.fn(() => Promise.resolve({})),
   deleteNotificationRule: vi.fn(() => Promise.resolve({})),
+  getEmailProvider: vi.fn(() =>
+    mockProviderFetchFails ? Promise.reject(new Error("fetch boom")) : Promise.resolve(mockEmailProvider),
+  ),
+  removeEmailProvider: vi.fn(() => (mockRemoveFails ? Promise.reject(new Error("boom")) : Promise.resolve({}))),
   getRoutingStatus: vi.fn(() => Promise.resolve(mockRoutingStatus)),
+}));
+
+vi.mock("../../src/services/setup-status.js", () => ({
+  checkIsSelfHosted: vi.fn(() => Promise.resolve(mockIsSelfHosted)),
+  checkEmailConfigured: vi.fn(() => Promise.resolve(true)),
+}));
+
+vi.mock("../../src/components/EmailProviderSection.js", () => ({
+  default: (props: any) => (
+    <div data-testid="email-provider-section" data-has-provider={String(!!props.emailProvider)} data-loading={String(props.loading)}>
+      <button data-testid="section-configured" onClick={() => props.onConfigured()}>configured</button>
+      <button data-testid="section-edit" onClick={() => props.onEdit()}>edit</button>
+      <button data-testid="section-remove" onClick={() => props.onRemove()}>remove</button>
+    </div>
+  ),
+}));
+
+vi.mock("../../src/components/EmailProviderModal.js", () => ({
+  default: (props: any) => (
+    <div
+      data-testid="email-provider-modal"
+      data-open={String(props.open)}
+      data-edit-mode={String(props.editMode)}
+      data-initial={props.initialProvider}
+      data-key-prefix={String(props.existingKeyPrefix)}
+      data-domain={String(props.existingDomain)}
+      data-notification-email={String(props.existingNotificationEmail)}
+    >
+      <button data-testid="modal-close" onClick={() => props.onClose()}>close</button>
+      <button data-testid="modal-saved" onClick={() => props.onSaved()}>saved</button>
+    </div>
+  ),
 }));
 
 vi.mock("../../src/services/toast-store.js", () => ({
@@ -59,6 +99,10 @@ describe("Limits page", () => {
   beforeEach(() => {
     mockRules = [];
     mockRoutingStatus = { enabled: false };
+    mockIsSelfHosted = false;
+    mockEmailProvider = null;
+    mockRemoveFails = false;
+    mockProviderFetchFails = false;
   });
 
   it("does not render a duplicate page heading", () => {
@@ -128,14 +172,20 @@ describe("Limits page", () => {
     });
   });
 
-  it("shows cloud email info", () => {
+  it("shows cloud email info", async () => {
     render(() => <Limits />);
-    expect(screen.getByTestId("cloud-email-info")).toBeDefined();
+    // The email block waits for the deployment mode, so the cloud card only
+    // appears once checkIsSelfHosted() has resolved.
+    await waitFor(() => {
+      expect(screen.getByTestId("cloud-email-info")).toBeDefined();
+    });
   });
 
-  it("passes session email to cloud email info", () => {
+  it("passes session email to cloud email info", async () => {
     const { container } = render(() => <Limits />);
-    expect(container.textContent).toContain("user@example.com");
+    await waitFor(() => {
+      expect(container.textContent).toContain("user@example.com");
+    });
   });
 
   it("renders modal component", async () => {
@@ -530,4 +580,157 @@ describe("Limits page", () => {
     });
   });
 
+
+  it("shows the email provider section instead of the cloud card on self-hosted", async () => {
+    mockIsSelfHosted = true;
+    render(() => <Limits />);
+    await waitFor(() => {
+      expect(screen.getByTestId("email-provider-section")).toBeDefined();
+    });
+    expect(screen.queryByTestId("cloud-email-info")).toBeNull();
+  });
+
+  it("keeps the cloud email card on cloud", async () => {
+    mockIsSelfHosted = false;
+    render(() => <Limits />);
+    await waitFor(() => {
+      expect(screen.getByTestId("cloud-email-info")).toBeDefined();
+    });
+    expect(screen.queryByTestId("email-provider-section")).toBeNull();
+  });
+
+  it("opens the edit modal with the saved provider's details and closes it", async () => {
+    mockIsSelfHosted = true;
+    mockEmailProvider = { provider: "mailgun", keyPrefix: "key-", domain: "mg.example.com", notificationEmail: "ops@example.com" };
+    render(() => <Limits />);
+    await waitFor(() => {
+      expect(screen.getByTestId("email-provider-section").getAttribute("data-has-provider")).toBe("true");
+    });
+    fireEvent.click(screen.getByTestId("section-edit"));
+    const modal = screen.getByTestId("email-provider-modal");
+    expect(modal.getAttribute("data-open")).toBe("true");
+    expect(modal.getAttribute("data-edit-mode")).toBe("true");
+    expect(modal.getAttribute("data-initial")).toBe("mailgun");
+    expect(modal.getAttribute("data-key-prefix")).toBe("key-");
+    expect(modal.getAttribute("data-domain")).toBe("mg.example.com");
+    expect(modal.getAttribute("data-notification-email")).toBe("ops@example.com");
+    fireEvent.click(screen.getByTestId("modal-close"));
+    expect(modal.getAttribute("data-open")).toBe("false");
+  });
+
+  it("refetches the provider after the modal saves or the setup completes", async () => {
+    mockIsSelfHosted = true;
+    render(() => <Limits />);
+    await waitFor(() => {
+      expect(screen.getByTestId("email-provider-section")).toBeDefined();
+    });
+    const api = await import("../../src/services/api.js");
+    const before = (api.getEmailProvider as any).mock.calls.length;
+    fireEvent.click(screen.getByTestId("section-configured"));
+    await waitFor(() => {
+      expect((api.getEmailProvider as any).mock.calls.length).toBeGreaterThanOrEqual(before + 1);
+    });
+    const afterConfigured = (api.getEmailProvider as any).mock.calls.length;
+    fireEvent.click(screen.getByTestId("modal-saved"));
+    await waitFor(() => {
+      expect((api.getEmailProvider as any).mock.calls.length).toBeGreaterThanOrEqual(afterConfigured + 1);
+    });
+  });
+
+  it("removes the provider, warns about email rules, and closes the confirm dialog", async () => {
+    mockIsSelfHosted = true;
+    mockEmailProvider = { provider: "resend" };
+    mockRules = [{ id: "r1", metric_type: "tokens", threshold: 100, period: "day", action: "notify", is_active: true, trigger_count: 0 }];
+    render(() => <Limits />);
+    await waitFor(() => {
+      expect(screen.getByTestId("email-provider-section")).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId("section-remove"));
+    await waitFor(() => {
+      expect(screen.getByText("Remove provider")).toBeDefined();
+    });
+    expect(document.body.textContent).toContain("Email alerts won't be sent until you set up a new one.");
+    fireEvent.click(screen.getByText("Remove"));
+    const api = await import("../../src/services/api.js");
+    await waitFor(() => {
+      expect(api.removeEmailProvider).toHaveBeenCalled();
+    });
+    const { toast } = await import("../../src/services/toast-store.js");
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("Email provider removed");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Remove provider")).toBeNull();
+    });
+  });
+
+  it("keeps the confirm dialog open and recovers when the removal fails", async () => {
+    mockIsSelfHosted = true;
+    mockEmailProvider = { provider: "resend" };
+    mockRemoveFails = true;
+    render(() => <Limits />);
+    await waitFor(() => {
+      expect(screen.getByTestId("email-provider-section")).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId("section-remove"));
+    await waitFor(() => {
+      expect(screen.getByText("Remove provider")).toBeDefined();
+    });
+    fireEvent.click(screen.getByText("Remove"));
+    const api = await import("../../src/services/api.js");
+    await waitFor(() => {
+      expect(api.removeEmailProvider).toHaveBeenCalled();
+    });
+    expect(screen.getByText("Remove provider")).toBeDefined();
+    await waitFor(() => {
+      expect((screen.getByText("Remove") as HTMLButtonElement).disabled).toBe(false);
+    });
+    fireEvent.click(screen.getByText("Cancel"));
+    await waitFor(() => {
+      expect(screen.queryByText("Remove provider")).toBeNull();
+    });
+  });
+  it("keeps the page up when the provider config fails to load", async () => {
+    // Reading an errored Solid resource re-throws. Every read goes through the
+    // guarded accessor, so a failed fetch reads as "no provider saved".
+    mockIsSelfHosted = true;
+    mockProviderFetchFails = true;
+    render(() => <Limits />);
+    // data-has-provider is also "false" while the fetch is still in flight, so
+    // wait for it to settle or the assertion passes on the pre-error render.
+    await waitFor(() => {
+      const section = screen.getByTestId("email-provider-section");
+      expect(section.getAttribute("data-loading")).toBe("false");
+      expect(section.getAttribute("data-has-provider")).toBe("false");
+    });
+    expect(screen.getByText("Create rule")).toBeDefined();
+  });
+
+  it("stays up when the refresh after a successful removal fails", async () => {
+    mockIsSelfHosted = true;
+    mockEmailProvider = { provider: "resend", keyPrefix: "re_abc" };
+    render(() => <Limits />);
+    await waitFor(() => {
+      expect(screen.getByTestId("email-provider-section").getAttribute("data-has-provider")).toBe(
+        "true",
+      );
+    });
+    // The DELETE succeeds, the refetch behind it does not.
+    mockProviderFetchFails = true;
+    fireEvent.click(screen.getByTestId("section-remove"));
+    await waitFor(() => {
+      expect(screen.getByText("Remove provider")).toBeDefined();
+    });
+    fireEvent.click(screen.getByText("Remove"));
+    const { toast } = await import("../../src/services/toast-store.js");
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith("Email provider removed");
+      expect(screen.queryByText("Remove provider")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("email-provider-section").getAttribute("data-has-provider")).toBe(
+        "false",
+      );
+    });
+  });
 });

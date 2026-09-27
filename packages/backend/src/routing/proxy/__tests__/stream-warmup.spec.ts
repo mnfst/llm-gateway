@@ -195,4 +195,17 @@ describe('peekStream', () => {
       await expect(reader.read()).rejects.toThrow('upstream died mid-stream');
     }
   });
+
+  it('peeks an already-peeked stream without waiting for new data', async () => {
+    // The healed Autofix retry is warmed up once, then proxyRequest warms up
+    // the returned stream again: the buffered first chunk must satisfy it.
+    const enc = new TextEncoder();
+    const first = await peekStream(makeStream([enc.encode('a'), enc.encode('b')], 500), 1_000);
+    if (!first.ok) throw new Error('first peek failed');
+
+    const second = await peekStream(first.stream, 10);
+
+    expect(second.ok).toBe(true);
+    if (second.ok) expect(await collectStream(second.stream)).toBe('ab');
+  });
 });

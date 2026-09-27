@@ -10,7 +10,8 @@ import {
   type Accessor,
   type Setter,
 } from 'solid-js';
-import type { ProviderDef } from '../services/providers.js';
+import { MAX_KEYS_PER_PROVIDER as SHARED_MAX_KEYS_PER_PROVIDER } from 'manifest-shared';
+import type { ProviderDef, SubscriptionEndpointRegion } from '../services/providers.js';
 import { validateApiKey, validateSubscriptionKey } from '../services/provider-utils.js';
 import {
   connectProvider,
@@ -27,8 +28,26 @@ import {
 import { suggestNextProviderKeyLabel } from '../services/provider-key-labels.js';
 import { toast } from '../services/toast-store.js';
 
-export const MAX_KEYS_PER_PROVIDER = 5;
+export const MAX_KEYS_PER_PROVIDER = SHARED_MAX_KEYS_PER_PROVIDER;
 const MAX_LABEL_LENGTH = 50;
+const WORKSPACE_ID_PLACEHOLDER = '<workspace-id>';
+
+function baseUrlPlaceholderMatches(
+  placeholder: string | undefined,
+  baseUrl: string | null | undefined,
+): boolean {
+  if (!placeholder || !baseUrl) return false;
+  try {
+    const placeholderUrl = new URL(placeholder.replace(WORKSPACE_ID_PLACEHOLDER, 'workspace'));
+    const baseUrlObject = new URL(baseUrl);
+    const placeholderHostTail = placeholderUrl.hostname.split('.').slice(1).join('.');
+    const baseUrlHostTail = baseUrlObject.hostname.split('.').slice(1).join('.');
+
+    return !!placeholderHostTail && placeholderHostTail === baseUrlHostTail;
+  } catch {
+    return false;
+  }
+}
 
 export interface ProviderKeyFormProps {
   provDef: ProviderDef;
@@ -82,8 +101,18 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
       : (props.provDef.apiKeyEndpointRegions ?? []);
   const hasEndpointRegions = () => endpointRegions().length > 0;
   const defaultEndpointRegion = () => endpointRegions()[0]?.value;
+  const customEndpointOptions = () =>
+    endpointRegions().filter((region) => !!region.baseUrlPlaceholder);
+  const customEndpointOption = () =>
+    customEndpointOptions().find((region) => region.value === 'custom') ??
+    customEndpointOptions()[0];
+  const customEndpointOptionForValue = (value: string | null | undefined) =>
+    customEndpointOptions().find((region) =>
+      baseUrlPlaceholderMatches(region.baseUrlPlaceholder, value),
+    ) ?? customEndpointOption();
   const endpointRegionLabel = (value: string | null | undefined) =>
-    endpointRegions().find((region) => region.value === value)?.label;
+    endpointRegions().find((region) => region.value === value)?.label ??
+    (value ? customEndpointOptionForValue(value)?.label : undefined);
   const whereToGetUrl = () =>
     props.isSubMode()
       ? getSubscriptionProviderKeyUrl(props.provId)
@@ -111,17 +140,28 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
   const isListMode = () => supportsMultiKey() && activeKeys().length > 1;
   const savedEndpointRegion = () => activeKeys()[0]?.region;
   const [selectedEndpointRegion, setSelectedEndpointRegion] = createSignal<string | undefined>();
+  const [customEndpointUrl, setCustomEndpointUrl] = createSignal('');
 
   createEffect(() => {
     if (!hasEndpointRegions()) {
       setSelectedEndpointRegion(undefined);
+      setCustomEndpointUrl('');
       return;
     }
     if (props.connected()) {
       if (activeKeys().length > 0) {
-        setSelectedEndpointRegion(savedEndpointRegion() ?? defaultEndpointRegion());
+        const saved = savedEndpointRegion();
+        const customOption = saved ? customEndpointOptionForValue(saved) : customEndpointOption();
+        if (saved && !endpointRegions().some((region) => region.value === saved) && customOption) {
+          setSelectedEndpointRegion(customOption.value);
+          setCustomEndpointUrl(saved);
+        } else {
+          setSelectedEndpointRegion(saved ?? defaultEndpointRegion());
+          if (saved !== customOption?.value) setCustomEndpointUrl('');
+        }
       } else {
         setSelectedEndpointRegion(undefined);
+        setCustomEndpointUrl('');
       }
       return;
     }
@@ -132,11 +172,22 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
   });
 
   const displayedEndpointRegion = () => selectedEndpointRegion() ?? defaultEndpointRegion();
+  const selectedEndpointRegionOption = () =>
+    endpointRegions().find((region) => region.value === displayedEndpointRegion());
+  const isCustomEndpointSelected = () => !!selectedEndpointRegionOption()?.baseUrlPlaceholder;
   const endpointRegionPayload = () => {
     if (!hasEndpointRegions()) return undefined;
+    if (isCustomEndpointSelected()) return customEndpointUrl().trim() || undefined;
     const selected = selectedEndpointRegion();
     if (selected) return selected;
     return props.connected() ? undefined : defaultEndpointRegion();
+  };
+  const validateEndpointRegion = () => {
+    if (isCustomEndpointSelected() && !customEndpointUrl().trim()) {
+      props.setValidationError('Base URL is required');
+      return false;
+    }
+    return true;
   };
 
   const EndpointRegionSelect = (selectProps: { id: string; disabled?: boolean }) => (
@@ -156,6 +207,36 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
             {(region) => <option value={region.value}>{region.label}</option>}
           </For>
         </select>
+        <Show when={selectedEndpointRegionOption()?.baseUrlPlaceholder}>
+          {(placeholder) => (
+            <>
+              <label
+                class="provider-detail__label"
+                for={`${selectProps.id}-base-url`}
+                style="margin-top: 8px;"
+              >
+                Base URL
+              </label>
+              <input
+                id={`${selectProps.id}-base-url`}
+                class="provider-detail__input"
+                classList={{
+                  'provider-detail__input--error':
+                    props.validationError() === 'Base URL is required',
+                }}
+                type="url"
+                autocomplete="off"
+                placeholder={placeholder()}
+                value={customEndpointUrl()}
+                disabled={selectProps.disabled}
+                onInput={(e) => {
+                  setCustomEndpointUrl(e.currentTarget.value);
+                  props.setValidationError(null);
+                }}
+              />
+            </>
+          )}
+        </Show>
       </div>
     </Show>
   );
@@ -166,6 +247,7 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
   };
 
   const handleConnect = async (label?: string) => {
+    if (!validateEndpointRegion()) return;
     const result = props.isSubMode()
       ? validateSubscriptionKey(props.provDef, props.keyInput())
       : validateApiKey(props.provDef, props.keyInput());
@@ -194,6 +276,7 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
   };
 
   const handleUpdateKey = async (label?: string) => {
+    if (!validateEndpointRegion()) return;
     const result = props.isSubMode()
       ? validateSubscriptionKey(props.provDef, props.keyInput())
       : validateApiKey(props.provDef, props.keyInput());
@@ -506,7 +589,7 @@ export interface AddAnotherKeyActionProps {
   open?: Accessor<boolean>;
   setOpen?: Setter<boolean>;
   isSubscription?: boolean;
-  endpointRegions?: { value: string; label: string }[];
+  endpointRegions?: SubscriptionEndpointRegion[];
   initialEndpointRegion?: string;
 }
 
@@ -522,9 +605,16 @@ export const AddAnotherKeyAction: Component<AddAnotherKeyActionProps> = (props) 
   const [endpointRegion, setEndpointRegion] = createSignal<string | undefined>(
     props.initialEndpointRegion ?? props.endpointRegions?.[0]?.value,
   );
+  const [customEndpointUrl, setCustomEndpointUrl] = createSignal('');
   let apiKeyInputRef: HTMLInputElement | undefined;
 
   const defaultLabel = () => suggestNextProviderKeyLabel(props.existingLabels());
+  const selectedEndpointRegionOption = () =>
+    props.endpointRegions?.find((region) => region.value === endpointRegion());
+  const customEndpointPayload = () => {
+    if (!selectedEndpointRegionOption()?.baseUrlPlaceholder) return endpointRegion();
+    return customEndpointUrl().trim() || undefined;
+  };
 
   // Sync label suggestion when opened externally and auto-focus the API key field.
   // Use `on()` with explicit deps to avoid tracking label/endpointRegion signals,
@@ -545,12 +635,17 @@ export const AddAnotherKeyAction: Component<AddAnotherKeyActionProps> = (props) 
   );
 
   const submit = async () => {
+    if (selectedEndpointRegionOption()?.baseUrlPlaceholder && !customEndpointUrl().trim()) {
+      toast.error('Base URL is required');
+      return;
+    }
     const labelToUse = (label().trim() || defaultLabel()).slice(0, MAX_LABEL_LENGTH);
-    const ok = await props.onAdd(labelToUse, apiKey().trim(), endpointRegion());
+    const ok = await props.onAdd(labelToUse, apiKey().trim(), customEndpointPayload());
     if (ok) {
       setIsOpen(false);
       setLabel('');
       setApiKey('');
+      setCustomEndpointUrl('');
     }
   };
 
@@ -616,6 +711,29 @@ export const AddAnotherKeyAction: Component<AddAnotherKeyActionProps> = (props) 
               {(region) => <option value={region.value}>{region.label}</option>}
             </For>
           </select>
+          <Show when={selectedEndpointRegionOption()?.baseUrlPlaceholder}>
+            {(placeholder) => (
+              <>
+                <label
+                  class="provider-detail__label"
+                  for="add-key-base-url"
+                  style="margin-top: 8px;"
+                >
+                  Base URL
+                </label>
+                <input
+                  id="add-key-base-url"
+                  class="provider-detail__input"
+                  type="url"
+                  autocomplete="off"
+                  placeholder={placeholder()}
+                  value={customEndpointUrl()}
+                  disabled={props.busy()}
+                  onInput={(e) => setCustomEndpointUrl(e.currentTarget.value)}
+                />
+              </>
+            )}
+          </Show>
         </Show>
         <label class="provider-detail__label" for="add-key-value" style="margin-top: 8px;">
           {props.credentialOwnerName()} {props.credentialNoun()}
@@ -683,7 +801,7 @@ interface KeyChainViewProps {
   whereToGetUrl: () => string | undefined;
   addKeyOpen?: Accessor<boolean>;
   setAddKeyOpen?: Setter<boolean>;
-  endpointRegions: { value: string; label: string }[];
+  endpointRegions: SubscriptionEndpointRegion[];
   endpointRegionLabel: (value: string | null | undefined) => string | undefined;
   onUpdate: () => void;
   onDelete: (label: string) => void;

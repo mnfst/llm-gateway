@@ -30,25 +30,34 @@ export function RequestHeadersSection(props: { headers: Record<string, string> }
     Object.entries(props.headers).sort(([a], [b]) => a.localeCompare(b));
   const tableId = `msg-detail-request-headers-${Math.random().toString(36).slice(2, 10)}`;
   return (
-    <div class="msg-detail__section">
-      <button
-        type="button"
-        class="msg-detail__section-title msg-detail__section-title--toggle"
-        aria-expanded={open() ? 'true' : 'false'}
-        aria-controls={tableId}
-        onClick={() => setOpen((v) => !v)}
-        style="font-size: 12px;"
-      >
-        Request Headers
-        <span class="msg-detail__count-badge">{entries().length}</span>
-        <span
-          class="msg-detail__chevron"
-          classList={{ 'msg-detail__chevron--open': open() }}
-          aria-hidden="true"
+    <div class={`toggle-panel${open() ? ' toggle-panel--open' : ''}`}>
+      <div class="toggle-panel__header">
+        <button
+          type="button"
+          class="msg-detail__section-title msg-detail__section-title--toggle"
+          aria-expanded={open() ? 'true' : 'false'}
+          aria-controls={tableId}
+          onClick={() => setOpen((v) => !v)}
         >
-          &#9656;
-        </span>
-      </button>
+          Request Headers
+          <span class="msg-detail__count-badge">{entries().length}</span>
+          <span
+            class="msg-detail__chevron"
+            classList={{ 'msg-detail__chevron--open': open() }}
+            aria-hidden="true"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="10"
+              height="10"
+              fill="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path d="m18.57 11.18-10-7c-.3-.21-.7-.24-1.04-.07-.33.17-.54.51-.54.89v14c0 .37.21.71.54.89.15.08.3.11.46.11.2 0 .4-.06.57-.18l10-7a.997.997 0 0 0 0-1.64Z" />
+            </svg>
+          </span>
+        </button>
+      </div>
       <Show when={open()}>
         <div class="data-table-scroll" id={tableId}>
           <table class="data-table msg-detail__table">
@@ -81,19 +90,14 @@ export function ModelParamsSection(props: { params: Record<string, unknown> }): 
     Object.entries(props.params).sort(([a], [b]) => a.localeCompare(b));
   const tableId = `msg-detail-model-params-${Math.random().toString(36).slice(2, 10)}`;
   return (
-    <div class="msg-detail__section">
-      {/* Toggle button + InfoTooltip live as siblings inside a flex row.
-          Putting the InfoTooltip *inside* the button would nest a focusable
-          element in another (invalid HTML) and clicks would propagate
-          through to toggle the accordion. */}
-      <div class="msg-detail__section-row">
+    <div class={`toggle-panel${open() ? ' toggle-panel--open' : ''}`}>
+      <div class="toggle-panel__header">
         <button
           type="button"
-          class="msg-detail__section-title msg-detail__section-title--toggle msg-detail__section-title--inline"
+          class="msg-detail__section-title msg-detail__section-title--toggle"
           aria-expanded={open() ? 'true' : 'false'}
           aria-controls={tableId}
           onClick={() => setOpen((v) => !v)}
-          style="font-size: 12px;"
         >
           Model Parameters
           <span class="msg-detail__count-badge">{entries().length}</span>
@@ -102,7 +106,15 @@ export function ModelParamsSection(props: { params: Record<string, unknown> }): 
             classList={{ 'msg-detail__chevron--open': open() }}
             aria-hidden="true"
           >
-            &#9656;
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="10"
+              height="10"
+              fill="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path d="m18.57 11.18-10-7c-.3-.21-.7-.24-1.04-.07-.33.17-.54.51-.54.89v14c0 .37.21.71.54.89.15.08.3.11.46.11.2 0 .4-.06.57-.18l10-7a.997.997 0 0 0 0-1.64Z" />
+            </svg>
           </span>
         </button>
         <InfoTooltip text={MODEL_PARAMS_TOOLTIP} />

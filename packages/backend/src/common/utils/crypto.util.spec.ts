@@ -1,4 +1,15 @@
-import { getEncryptionSecret, encrypt, decrypt, isEncrypted } from './crypto.util';
+import {
+  getEncryptionSecret,
+  encrypt,
+  decrypt,
+  decryptBuffer,
+  encryptBuffer,
+  hasBinaryEnvelope,
+  isEncrypted,
+  getDecryptionSecrets,
+  decryptWithAny,
+  timingSafeCompare,
+} from './crypto.util';
 
 describe('getEncryptionSecret', () => {
   const originalEnv = process.env;
@@ -165,5 +176,142 @@ describe('isEncrypted', () => {
     // must be rejected as not-encrypted. This guards the
     // `buf.toString('base64') !== part` branch inside isEncrypted.
     expect(isEncrypted('AB:AB:AB:AB')).toBe(false);
+  });
+});
+
+describe('getDecryptionSecrets', () => {
+  const originalEnv = process.env;
+  const KEY = 'k'.repeat(32);
+  const PREVIOUS = 'p'.repeat(32);
+  const SESSION = 's'.repeat(32);
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env['MANIFEST_ENCRYPTION_KEY'];
+    delete process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'];
+    delete process.env['BETTER_AUTH_SECRET'];
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('lists the dedicated key first, then PREVIOUS, then the session secret', () => {
+    process.env['MANIFEST_ENCRYPTION_KEY'] = KEY;
+    process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'] = PREVIOUS;
+    process.env['BETTER_AUTH_SECRET'] = SESSION;
+    expect(getDecryptionSecrets()).toEqual([KEY, PREVIOUS, SESSION]);
+  });
+
+  it('returns only the session secret when it is the encryption fallback', () => {
+    process.env['BETTER_AUTH_SECRET'] = SESSION;
+    expect(getDecryptionSecrets()).toEqual([SESSION]);
+  });
+
+  it('drops short and duplicate candidates', () => {
+    process.env['MANIFEST_ENCRYPTION_KEY'] = KEY;
+    process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'] = 'too-short';
+    process.env['BETTER_AUTH_SECRET'] = KEY;
+    expect(getDecryptionSecrets()).toEqual([KEY]);
+  });
+
+  it('throws when nothing usable is configured', () => {
+    expect(() => getDecryptionSecrets()).toThrow('Encryption secret required');
+  });
+});
+
+describe('decryptWithAny', () => {
+  const A = 'a'.repeat(32);
+  const B = 'b'.repeat(32);
+
+  it('reports index 0 for the current secret', () => {
+    expect(decryptWithAny(encrypt('v', A), [A, B])).toEqual({ plaintext: 'v', secretIndex: 0 });
+  });
+
+  it('falls through to a later secret and reports its index', () => {
+    expect(decryptWithAny(encrypt('v', B), [A, B])).toEqual({ plaintext: 'v', secretIndex: 1 });
+  });
+
+  it('rethrows the last error when no secret matches', () => {
+    expect(() => decryptWithAny(encrypt('v', 'c'.repeat(32)), [A, B])).toThrow();
+  });
+
+  it('throws when given no secrets', () => {
+    expect(() => decryptWithAny(encrypt('v', A), [])).toThrow('No decryption secret available');
+  });
+});
+
+describe('encryptBuffer / decryptBuffer', () => {
+  const secret = 'buffer-secret-that-is-at-least-32-characters';
+  const plain = Buffer.from('binary payload with a known marker', 'utf8');
+
+  it('round-trips arbitrary bytes', () => {
+    expect(decryptBuffer(encryptBuffer(plain, secret), secret)).toEqual(plain);
+  });
+
+  it('stamps the self-identifying magic prefix', () => {
+    const blob = encryptBuffer(plain, secret);
+    expect(blob.subarray(0, 4).toString('ascii')).toBe('MRE1');
+    expect(hasBinaryEnvelope(blob)).toBe(true);
+    expect(hasBinaryEnvelope(Buffer.from([0x1f, 0x8b, 0x08]))).toBe(false);
+    expect(hasBinaryEnvelope(Buffer.from('MR', 'ascii'))).toBe(false);
+  });
+
+  it('uses a distinct IV for every encryption of the same input', () => {
+    const first = encryptBuffer(plain, secret);
+    const second = encryptBuffer(plain, secret);
+    expect(first.subarray(4, 16).equals(second.subarray(4, 16))).toBe(false);
+    expect(first.equals(second)).toBe(false);
+  });
+
+  it('rejects a tampered ciphertext', () => {
+    const blob = encryptBuffer(plain, secret);
+    blob[blob.length - 1] = blob[blob.length - 1] ^ 0xff;
+    expect(() => decryptBuffer(blob, secret)).toThrow();
+  });
+
+  it('rejects the wrong secret', () => {
+    const blob = encryptBuffer(plain, secret);
+    expect(() => decryptBuffer(blob, 'another-secret-that-is-at-least-32-chars')).toThrow();
+  });
+
+  it('rejects blobs without the magic prefix or with a truncated header', () => {
+    expect(() => decryptBuffer(Buffer.from([0x1f, 0x8b, 0x08, 0x00]), secret)).toThrow(
+      'Invalid encrypted blob format',
+    );
+    expect(() => decryptBuffer(Buffer.from('MRE1short', 'ascii'), secret)).toThrow(
+      'Invalid encrypted blob format',
+    );
+  });
+});
+
+describe('timingSafeCompare', () => {
+  it('accepts identical strings', () => {
+    expect(timingSafeCompare('shared-secret', 'shared-secret')).toBe(true);
+  });
+
+  it('rejects a different string of the same length', () => {
+    expect(timingSafeCompare('aaaaaaaa', 'bbbbbbbb')).toBe(false);
+  });
+
+  it('rejects a length mismatch without throwing', () => {
+    expect(timingSafeCompare('short', 'much-longer-secret')).toBe(false);
+    expect(timingSafeCompare('much-longer-secret', 'short')).toBe(false);
+  });
+
+  it('treats two empty strings as equal', () => {
+    expect(timingSafeCompare('', '')).toBe(true);
+  });
+
+  it('compares by bytes, so multi-byte characters are handled', () => {
+    expect(timingSafeCompare('sécret', 'sécret')).toBe(true);
+    // Byte-length equal but different: the comparison itself has to reject
+    // these, not the length shortcut that catches 'sécret' vs 'secret'.
+    expect(Buffer.byteLength('é')).toBe(Buffer.byteLength('ab'));
+    expect(timingSafeCompare('é', 'ab')).toBe(false);
+    // Equal in characters, unequal in bytes: guarding on `String.length`
+    // instead would reach timingSafeEqual and make it throw.
+    expect(timingSafeCompare('é', 'a')).toBe(false);
+    expect(timingSafeCompare('sécret', 'secret')).toBe(false);
   });
 });

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../../../src/services/api';
 import {
+  connectionUsage,
+  ensureManagedFreeProvider,
   getProviders,
   getProviderUsage,
   mergeUsage,
@@ -45,10 +47,88 @@ describe('providers API client', () => {
     const fetchMock = setupFetch(response);
 
     await expect(getProviders()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain('/api/v1/providers');
     expect(url).not.toContain('/api/v1/providers/usage');
     expect((init as RequestInit).credentials).toBe('include');
+    expect(fetchMock.mock.calls[1][0]).toContain('/api/v1/providers/gemini-free/ensure');
+    expect(fetchMock.mock.calls[1][1]).toMatchObject({
+      method: 'POST',
+      credentials: 'include',
+    });
+  });
+
+  it('does not wait for background managed free-provider provisioning', async () => {
+    const response = { providers: [], model_counts: {} };
+    let resolveEnsure!: (response: unknown) => void;
+    const fetchMock = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        return new Promise((resolve) => {
+          resolveEnsure = resolve;
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => response,
+        text: async () => JSON.stringify(response),
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(getProviders()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/providers/gemini-free/ensure'),
+      expect.objectContaining({ method: 'POST' }),
+    );
+
+    resolveEnsure({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        connected: false,
+        connection_id: null,
+        source: 'none',
+        auto_available: false,
+      }),
+    });
+    await ensureManagedFreeProvider('gemini-free');
+  });
+
+  it('pastes a manually provisioned Gemini Free virtual key', async () => {
+    const response = {
+      connected: true,
+      connection_id: 'conn-1',
+      source: 'manual',
+      auto_available: false,
+    };
+    const fetchMock = setupFetch(response);
+
+    await expect(ensureManagedFreeProvider('gemini-free', 'sk-virtual')).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/providers/gemini-free/ensure',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ apiKey: 'sk-virtual' }),
+      }),
+    );
+  });
+
+  it('surfaces managed free-provider provisioning errors', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ message: 'Invalid gifted key' }),
+      }),
+    );
+
+    await expect(ensureManagedFreeProvider('gemini-free', 'bad-key')).rejects.toThrow(
+      'Invalid gifted key',
+    );
   });
 
   it('GETs provider USAGE from the dedicated endpoint', async () => {
@@ -156,5 +236,37 @@ describe('mergeUsage', () => {
     const merged = mergeUsage(config, usage);
     const openai = merged.find((m) => m.provider === 'openai')!;
     expect(openai.consumption_tokens).toBe(0);
+  });
+});
+
+describe('connectionUsage', () => {
+  it('distinguishes loading from a loaded connection with no usage', () => {
+    expect(connectionUsage(undefined, 'openai', 'api_key', 'Team')).toBeUndefined();
+
+    expect(connectionUsage([], 'openai', 'api_key', 'Team')).toMatchObject({
+      provider: 'openai',
+      auth_type: 'api_key',
+      key_label: 'Team',
+      consumption_tokens: 0,
+      consumption_messages: 0,
+      attempts_30d: 0,
+      succeeded_30d: 0,
+    });
+  });
+
+  it('matches connection labels case-insensitively', () => {
+    const usage = {
+      provider: 'openai',
+      auth_type: 'api_key' as const,
+      key_label: 'Team',
+      consumption_tokens: 10,
+      consumption_messages: 2,
+      consumption_cost: 0.1,
+      attempts_30d: 3,
+      succeeded_30d: 2,
+      last_used_at: null,
+      sparkline_7d: [],
+    };
+    expect(connectionUsage([usage], 'openai', 'api_key', 'team')).toBe(usage);
   });
 });

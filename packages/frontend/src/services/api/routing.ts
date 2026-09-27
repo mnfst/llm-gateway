@@ -33,10 +33,7 @@ export interface RoutingProvider {
 /* -- Routing: Status -- */
 
 export type RoutingStatusReason =
-  | 'no_provider'
-  | 'no_routable_models'
-  | 'pricing_cache_empty'
-  | null;
+  'no_provider' | 'no_routable_models' | 'pricing_cache_empty' | null;
 
 export interface RoutingStatus {
   enabled: boolean;
@@ -61,6 +58,8 @@ export function connectProvider(
     authType?: AuthType;
     label?: string;
     region?: string;
+    baseUrl?: string;
+    base_url?: string;
   },
 ) {
   return fetchMutate<{
@@ -111,6 +110,39 @@ export function renameProviderKey(
       body: JSON.stringify({ newLabel, ...(authType && { authType }) }),
     },
   );
+}
+
+/* -- Tenant-level connection management (no harness required) -- */
+
+export function disconnectConnection(provider: string, authType?: AuthType, label?: string) {
+  const params = new URLSearchParams();
+  if (authType) params.set('authType', authType);
+  if (label) params.set('label', label);
+  const qs = params.toString();
+  const base = `/providers/${encodeURIComponent(provider)}`;
+  return fetchMutate<{ ok: boolean; notifications: string[] }>(qs ? `${base}?${qs}` : base, {
+    method: 'DELETE',
+  });
+}
+
+export function renameConnection(
+  provider: string,
+  currentLabel: string,
+  newLabel: string,
+  authType?: AuthType,
+) {
+  return fetchMutate<{ id: string; label: string; priority: number }>(
+    `/providers/${encodeURIComponent(provider)}/keys/${encodeURIComponent(currentLabel)}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newLabel, ...(authType && { authType }) }),
+    },
+  );
+}
+
+export function refreshConnectionModels() {
+  return fetchMutate<{ ok: boolean }>('/providers/refresh-models', { method: 'POST' });
 }
 
 export function reorderProviderKeys(
@@ -171,6 +203,44 @@ export function getComplexityStatus(agentName: string) {
 export function toggleComplexity(agentName: string) {
   return fetchMutate<ComplexityStatus>(routingPath(agentName, 'complexity/toggle'), {
     method: 'POST',
+  });
+}
+
+/* -- Routing: Autofix -- */
+
+export interface AutofixConfig {
+  enabled: boolean;
+  /** True once the self-hosted install consented (modal hidden thereafter). */
+  consented?: boolean;
+}
+
+export function getAutofix(agentName: string) {
+  return fetchJson<AutofixConfig>(routingPath(agentName, 'autofix'));
+}
+
+export function updateAutofix(agentName: string, body: { enabled?: boolean }) {
+  return fetchMutate<AutofixConfig>(routingPath(agentName, 'autofix'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+/* -- Routing: Message recording -- */
+
+export interface RecordingConfig {
+  enabled: boolean;
+}
+
+export function getRecording(agentName: string) {
+  return fetchJson<RecordingConfig>(routingPath(agentName, 'recording'));
+}
+
+export function updateRecording(agentName: string, body: { enabled?: boolean }) {
+  return fetchMutate<RecordingConfig>(routingPath(agentName, 'recording'), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   });
 }
 
@@ -402,6 +472,8 @@ export interface CustomProviderModel {
 export interface CustomProviderData {
   id: string;
   name: string;
+  /** Public prefix of the provider's model ids (`<alias>/<model>`); null = internal id. */
+  alias: string | null;
   base_url: string;
   api_kind: CustomProviderApiKind;
   has_api_key: boolean;
@@ -447,6 +519,7 @@ export function createCustomProvider(
   agentName: string,
   data: {
     name: string;
+    alias?: string | null;
     base_url: string;
     api_kind?: CustomProviderApiKind;
     apiKey?: string;
@@ -466,6 +539,7 @@ export function updateCustomProvider(
   id: string,
   data: {
     name?: string;
+    alias?: string | null;
     base_url?: string;
     api_kind?: CustomProviderApiKind;
     apiKey?: string;

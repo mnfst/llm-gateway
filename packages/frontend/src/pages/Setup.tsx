@@ -2,7 +2,9 @@ import { useNavigate } from '@solidjs/router';
 import { Title, Meta } from '@solidjs/meta';
 import { type Component, createSignal, onMount, Show } from 'solid-js';
 import { authClient } from '../services/auth-client.js';
-import { checkNeedsSetup, createFirstAdmin } from '../services/setup-status.js';
+import { buildLoginRedirect } from '../services/auth-redirects.js';
+import { checkIsSelfHosted, checkNeedsSetup, createFirstAdmin } from '../services/setup-status.js';
+import { markDiscoveryPending } from '../services/discovery.js';
 
 const Setup: Component = () => {
   const navigate = useNavigate();
@@ -41,16 +43,24 @@ const Setup: Component = () => {
       await createFirstAdmin({ email: email(), name: name(), password: password() });
 
       // Auto sign-in with the credentials just created.
-      const { error: authError } = await authClient.signIn.email({
+      const { data: signInData, error: authError } = await authClient.signIn.email({
         email: email(),
         password: password(),
       });
       if (authError) {
-        // Creation succeeded but sign-in failed — send them to login.
-        navigate('/login', { replace: true });
+        // Creation succeeded but sign-in failed. Preserve the new-account
+        // destination so a later manual login still reaches discovery.
+        navigate(buildLoginRedirect('/discovery', '?next=%2F&signup=1'), { replace: true });
         return;
       }
-      window.location.href = '/';
+      // New self-hosted admins get the one-time discovery step first; the
+      // pending marker lets the guards route them back until it is done.
+      if (await checkIsSelfHosted()) {
+        markDiscoveryPending(signInData?.user?.id ?? '', '/');
+        window.location.href = '/discovery';
+      } else {
+        window.location.href = '/';
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Setup failed');
     } finally {

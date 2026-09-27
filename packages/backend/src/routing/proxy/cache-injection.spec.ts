@@ -1,4 +1,4 @@
-import { injectOpenRouterCacheControl } from './cache-injection';
+import { injectOpenAiMessageCacheControl, injectOpenRouterCacheControl } from './cache-injection';
 
 const EPHEMERAL = { type: 'ephemeral' } as const;
 
@@ -120,5 +120,80 @@ describe('injectOpenRouterCacheControl', () => {
     };
     injectOpenRouterCacheControl(body);
     expect(body.tools).toEqual([]);
+  });
+
+  it('injects message-mode cache_control into the latest user message', () => {
+    const body = {
+      messages: [
+        { role: 'system', content: 'stable instructions' },
+        { role: 'user', content: 'reference text' },
+      ],
+    };
+    injectOpenRouterCacheControl(body, 'message');
+
+    expect(body.messages[0]).toEqual({ role: 'system', content: 'stable instructions' });
+    expect(body.messages[1].content).toEqual([
+      { type: 'text', text: 'reference text', cache_control: EPHEMERAL },
+    ]);
+  });
+
+  it('skips assistant messages in message mode', () => {
+    const body = {
+      messages: [
+        { role: 'user', content: 'cache this' },
+        { role: 'assistant', content: 'not a cache target' },
+      ],
+    };
+    injectOpenRouterCacheControl(body, 'message');
+
+    expect(body.messages[0].content).toEqual([
+      { type: 'text', text: 'cache this', cache_control: EPHEMERAL },
+    ]);
+    expect(body.messages[1]).toEqual({ role: 'assistant', content: 'not a cache target' });
+  });
+
+  it('does nothing in message mode when no cacheable content exists', () => {
+    const body = {
+      messages: [
+        { role: 'assistant', content: 'not a cache target' },
+        { role: 'user', content: [] },
+      ],
+    };
+    injectOpenRouterCacheControl(body, 'message');
+
+    expect(body.messages).toEqual([
+      { role: 'assistant', content: 'not a cache target' },
+      { role: 'user', content: [] },
+    ]);
+  });
+
+  it('skips malformed message-mode content without stamping invalid blocks', () => {
+    const body = {
+      messages: [
+        { role: 'system', content: { type: 'text', text: 'not an array' } },
+        { role: 'user', content: [null, ['nested']] },
+      ],
+    };
+    injectOpenRouterCacheControl(body, 'message');
+
+    expect(body.messages).toEqual([
+      { role: 'system', content: { type: 'text', text: 'not an array' } },
+      { role: 'user', content: [null, ['nested']] },
+    ]);
+  });
+
+  it('exposes message-mode injection for OpenAI-compatible providers', () => {
+    const body = {
+      messages: [
+        { role: 'system', content: 'Static instructions' },
+        { role: 'user', content: 'Large reference block' },
+      ],
+    };
+    injectOpenAiMessageCacheControl(body);
+
+    expect(body.messages[0].content).toBe('Static instructions');
+    expect(body.messages[1].content).toEqual([
+      { type: 'text', text: 'Large reference block', cache_control: EPHEMERAL },
+    ]);
   });
 });

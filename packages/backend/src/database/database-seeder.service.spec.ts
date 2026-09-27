@@ -1,4 +1,12 @@
+const ORIGINAL_ENCRYPTION_KEY = process.env['MANIFEST_ENCRYPTION_KEY'];
+process.env['MANIFEST_ENCRYPTION_KEY'] ??= 'test-recording-secret-at-least-32-characters';
+afterAll(() => {
+  if (ORIGINAL_ENCRYPTION_KEY === undefined) delete process.env['MANIFEST_ENCRYPTION_KEY'];
+  else process.env['MANIFEST_ENCRYPTION_KEY'] = ORIGINAL_ENCRYPTION_KEY;
+});
+
 import { keyPrefix, verifyKey } from '../common/utils/hash.util';
+import { decodeRequestRecording } from '../common/utils/request-recording-codec';
 import { DatabaseSeederService } from './database-seeder.service';
 import { getSeedConnections } from './seed-messages';
 
@@ -17,6 +25,7 @@ function makeMockRepo() {
   return {
     count: jest.fn().mockResolvedValue(0),
     insert: jest.fn().mockResolvedValue({}),
+    update: jest.fn().mockResolvedValue({}),
     findOne: jest.fn().mockResolvedValue(null),
   };
 }
@@ -30,7 +39,16 @@ describe('DatabaseSeederService', () => {
   let mockAgentKeyRepo: ReturnType<typeof makeMockRepo>;
   let mockApiKeyRepo: ReturnType<typeof makeMockRepo>;
   let mockMessageRepo: ReturnType<typeof makeMockRepo>;
+  let mockRequestRepo: ReturnType<typeof makeMockRepo>;
   let mockProviderRepo: ReturnType<typeof makeMockRepo>;
+  let mockEnabledProviderRepo: ReturnType<typeof makeMockRepo>;
+  let mockTierRepo: ReturnType<typeof makeMockRepo>;
+  let mockSpecificityRepo: ReturnType<typeof makeMockRepo>;
+  let mockRecordingStorage: {
+    backend: 'filesystem';
+    objectKey: jest.Mock;
+    put: jest.Mock;
+  };
   let configValues: Record<string, string | undefined>;
 
   beforeEach(() => {
@@ -46,7 +64,21 @@ describe('DatabaseSeederService', () => {
     mockAgentKeyRepo = makeMockRepo();
     mockApiKeyRepo = makeMockRepo();
     mockMessageRepo = makeMockRepo();
+    mockRequestRepo = makeMockRepo();
     mockProviderRepo = makeMockRepo();
+    mockEnabledProviderRepo = makeMockRepo();
+    mockTierRepo = makeMockRepo();
+    mockSpecificityRepo = makeMockRepo();
+    mockRecordingStorage = {
+      backend: 'filesystem',
+      objectKey: jest
+        .fn()
+        .mockReturnValue(
+          'request-recordings/v1/tenants/seed-tenant-001/requests/' +
+            'seed-req-recording-001/attempts/seed-msg-recording-001.json.gz',
+        ),
+      put: jest.fn().mockResolvedValue(undefined),
+    };
 
     service = new DatabaseSeederService(
       mockDataSource as never,
@@ -56,7 +88,12 @@ describe('DatabaseSeederService', () => {
       mockAgentKeyRepo as never,
       mockApiKeyRepo as never,
       mockMessageRepo as never,
+      mockRequestRepo as never,
       mockProviderRepo as never,
+      mockEnabledProviderRepo as never,
+      mockTierRepo as never,
+      mockSpecificityRepo as never,
+      mockRecordingStorage as never,
     );
 
     jest.clearAllMocks();
@@ -68,6 +105,12 @@ describe('DatabaseSeederService', () => {
 
     // Default: admin user exists
     mockDataSource.query.mockResolvedValue([{ id: 'admin-user-id' }]);
+
+    // The routing-cohort seed is keyed on the clean agent already existing;
+    // default it to "already seeded" so the existing seeder tests are
+    // unaffected. The seedDemoCohorts tests below flip this to 0 to exercise
+    // the cohort-seeding path.
+    mockAgentRepo.count.mockResolvedValue(1);
   });
 
   describe('onModuleInit', () => {
@@ -102,6 +145,67 @@ describe('DatabaseSeederService', () => {
       expect(mockApiKeyRepo.count).toHaveBeenCalledWith({
         where: { id: 'seed-api-key-001' },
       });
+    });
+
+    it('seeds a realistic attempt-level recording preview', async () => {
+      await service.onModuleInit();
+
+      expect(mockRequestRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'seed-req-recording-001',
+          status: 'success',
+          requested_model: 'auto',
+        }),
+      );
+      expect(mockMessageRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'seed-msg-recording-001',
+          request_id: 'seed-req-recording-001',
+          attempt_number: 1,
+          model: 'gpt-4o-mini',
+          provider: 'openai',
+          recording_key: null,
+        }),
+      );
+
+      const [storageKey, encoded] = mockRecordingStorage.put.mock.calls[0];
+      expect(storageKey).toContain(
+        'tenants/seed-tenant-001/requests/seed-req-recording-001/attempts/' +
+          'seed-msg-recording-001.json.gz',
+      );
+      await expect(decodeRequestRecording(encoded)).resolves.toEqual(
+        expect.objectContaining({
+          version: 1,
+          wire_format: 'openai_chat_completions',
+          request_body: expect.objectContaining({
+            model: 'gpt-4o-mini',
+            messages: expect.arrayContaining([
+              expect.objectContaining({
+                role: 'user',
+                content: expect.stringContaining('umbrella'),
+              }),
+              expect.objectContaining({ role: 'tool' }),
+            ]),
+            tools: expect.arrayContaining([
+              expect.objectContaining({
+                function: expect.objectContaining({ name: 'get_weather' }),
+              }),
+            ]),
+          }),
+        }),
+      );
+      expect(mockMessageRepo.update).toHaveBeenCalledWith(
+        {
+          id: 'seed-msg-recording-001',
+          tenant_id: 'seed-tenant-001',
+          request_id: 'seed-req-recording-001',
+        },
+        {
+          recording_key:
+            'request-recordings/v1/tenants/seed-tenant-001/requests/' +
+            'seed-req-recording-001/attempts/seed-msg-recording-001.json.gz',
+        },
+      );
     });
 
     it('should NOT seed demo data in production even with SEED_DATA=true (use setup wizard instead)', async () => {
@@ -242,6 +346,7 @@ describe('DatabaseSeederService', () => {
           name: 'demo-agent',
           tenant_id: 'seed-tenant-001',
           is_active: true,
+          record_messages: true,
         }),
       );
       expect(mockAgentKeyRepo.insert).toHaveBeenCalled();
@@ -458,6 +563,42 @@ describe('DatabaseSeederService', () => {
 
       // seedApiKey should skip insert because getAdminUserId returned null
       expect(mockApiKeyRepo.insert).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('seedDemoCohorts', () => {
+    it('seeds the clean + legacy cohorts when the legacy agent does not yet exist', async () => {
+      mockAgentRepo.count.mockResolvedValue(0);
+
+      await service.onModuleInit();
+
+      // The new legacy (olduser) agent is flipped to complexity-on so the
+      // deprecated surfaces stay visible.
+      expect(mockAgentRepo.update).toHaveBeenCalledWith(
+        { id: 'seed-agent-old-001' },
+        { complexity_routing_enabled: true },
+      );
+      // A brand-new legacy "old" user is signed up.
+      expect(auth.api.signUpEmail).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({ email: 'olduser@manifest.build' }),
+        }),
+      );
+      // The legacy cohort tenant is created.
+      expect(mockTenantRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'seed-tenant-old-001' }),
+      );
+    });
+
+    it('skips cohort seeding when the legacy agent already exists', async () => {
+      // mockAgentRepo.count defaults to 1 (set in beforeEach) → cohort is a no-op,
+      // while the normal admin/demo-agent seed still runs.
+      await service.onModuleInit();
+
+      expect(mockAgentRepo.update).not.toHaveBeenCalled();
+      expect(mockTenantRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'seed-tenant-001' }),
+      );
     });
   });
 });

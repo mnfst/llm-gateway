@@ -60,12 +60,11 @@ const ModelParamsAffordance: Component<Props> = (props) => {
   const requestUrl = () => {
     if (!props.provider || !props.authType) return undefined;
     const authTypeLabel = props.authType === 'subscription' ? 'Subscription' : 'API key';
+    const modelLabel = `${props.provider}/${props.model}`;
     const params = new URLSearchParams({
-      template: 'parameter-request.yml',
-      title: `${props.provider}/${props.model}: parameter coverage`,
-      provider: props.provider,
-      model: props.model,
-      'auth-type': authTypeLabel,
+      title: `Parameters: ${modelLabel}`,
+      labels: 'parameters',
+      body: `Model: \`${modelLabel}\`\nAuth type: ${authTypeLabel}\n\nPlease add the configurable request parameters for this model.`,
     });
     return `https://github.com/mnfst/modelparams.dev/issues/new?${params.toString()}`;
   };

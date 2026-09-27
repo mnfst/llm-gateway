@@ -1,6 +1,7 @@
 import { Entity, Column, PrimaryColumn, OneToMany } from 'typeorm';
 import { Agent } from './agent.entity';
 import { timestampType, timestampDefault } from '../common/utils/postgres-sql';
+import type { BillingEmailPreferences } from 'manifest-shared';
 
 @Entity('tenants')
 export class Tenant {
@@ -29,6 +30,17 @@ export class Tenant {
 
   @Column('boolean', { default: true })
   is_active!: boolean;
+
+  /**
+   * Per-tenant plan-limit overrides (support / enterprise escape hatch).
+   * Null = plan defaults apply. When set, the matching fields override the
+   * resolved plan limits. Read by PlanService.getLimits().
+   */
+  @Column('jsonb', { nullable: true })
+  limit_overrides!: { requestsPerMonth?: number } | null;
+
+  @Column('jsonb', { nullable: true })
+  billing_email_preferences!: Partial<BillingEmailPreferences> | null;
 
   @OneToMany(() => Agent, (a) => a.tenant, { cascade: true })
   agents!: Agent[];

@@ -129,6 +129,48 @@ describe('ChatGPT Adapter – transformResponsesStreamChunk', () => {
     expect(json.usage.cache_read_tokens).toBe(42);
   });
 
+  it('extracts cache_write_tokens from completed event usage details', () => {
+    const event =
+      'event: response.completed\ndata: ' +
+      JSON.stringify({
+        response: {
+          output: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 5,
+            total_tokens: 105,
+            input_tokens_details: { cached_tokens: 10, cache_write_tokens: 30 },
+          },
+        },
+      });
+
+    const result = transformResponsesStreamChunk(event, 'gpt-5');
+    const json = JSON.parse(result!.match(/data: (.+)/)![1]);
+
+    expect(json.usage.cache_creation_tokens).toBe(30);
+  });
+
+  it('extracts cache_creation_input_tokens from completed event usage details', () => {
+    const event =
+      'event: response.completed\ndata: ' +
+      JSON.stringify({
+        response: {
+          output: [],
+          usage: {
+            input_tokens: 100,
+            output_tokens: 5,
+            total_tokens: 105,
+            input_tokens_details: { cache_creation_input_tokens: 30 },
+          },
+        },
+      });
+
+    const result = transformResponsesStreamChunk(event, 'gpt-5');
+    const json = JSON.parse(result!.match(/data: (.+)/)![1]);
+
+    expect(json.usage.cache_creation_tokens).toBe(30);
+  });
+
   it('returns null for irrelevant events', () => {
     const chunk = 'event: response.created\ndata: {"id":"resp_123"}';
     const result = transformResponsesStreamChunk(chunk, 'gpt-5');

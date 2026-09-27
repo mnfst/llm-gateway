@@ -1,8 +1,41 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
 import solidPlugin from 'vite-plugin-solid';
 import { codecovVitePlugin } from '@codecov/vite-plugin';
+import { resolveWingmanDrawerUrl, wingmanDevProxy } from './wingman-dev-proxy';
+
+// Dial the backend on 127.0.0.1, not `localhost`. The dev backend binds
+// 127.0.0.1 (IPv4), but on dual-stack machines `localhost` can resolve to
+// ::1 (IPv6) first, so proxied requests intermittently hit a port nothing is
+// listening on. A failed proxy hop returns no CORS headers, which the hosted
+// Wingman SPA (cross-origin, public HTTPS → loopback) then reports as a
+// spurious "CORS error".
+const backendTarget = `http://127.0.0.1:${process.env.VITE_BACKEND_PORT || '3001'}`;
+
+// `nest --watch` restarts the backend on every save, and http-proxy reuses
+// keep-alive sockets that die across a restart. Without this handler Vite
+// answers the blip with a bare 502 carrying no CORS headers, so the
+// cross-origin Wingman drawer surfaces "backend momentarily unreachable" as a
+// misleading CORS failure. Echo the request Origin back on the error response
+// so the failure reads as an honest 502 the moment it happens.
+const configureDevProxy: NonNullable<ProxyOptions['configure']> = (proxy) => {
+  proxy.on('error', (err, req, res) => {
+    // Websocket upgrades hand back a raw socket with no `writeHead`; only
+    // real HTTP responses can carry a status line + headers.
+    if (!('writeHead' in res) || res.headersSent) return;
+    const origin = req.headers.origin;
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (origin) {
+      headers['Access-Control-Allow-Origin'] = origin;
+      headers['Vary'] = 'Origin';
+    }
+    res.writeHead(502, headers);
+    res.end(JSON.stringify({ error: 'dev proxy: backend unreachable', detail: err.message }));
+  });
+};
+
+const devProxyRoute: ProxyOptions = { target: backendTarget, configure: configureDevProxy };
 
 const manifestVersion = (() => {
   try {
@@ -15,6 +48,14 @@ const manifestVersion = (() => {
   }
 })();
 
+// The hosted Wingman SPA, and the loopback port the dev proxy republishes it
+// on. `WINGMAN_PORT` is the same knob the backend reads for its dev CORS
+// allow-list and CSP `frame-src`, so the three stay in step.
+const HOSTED_WINGMAN_URL = 'https://wingman.manifest.build';
+const wingmanUpstream = process.env.VITE_WINGMAN_URL || HOSTED_WINGMAN_URL;
+const wingmanPort = Number(process.env.WINGMAN_PORT || process.env.VITE_WINGMAN_PORT || 3002);
+const wingmanDrawerUrl = resolveWingmanDrawerUrl(wingmanUpstream, wingmanPort);
+
 export default defineConfig(({ command }) => ({
   define: {
     __MANIFEST_VERSION__: JSON.stringify(manifestVersion),
@@ -24,12 +65,16 @@ export default defineConfig(({ command }) => ({
     // cloud, anything else — gets `__DEV_MODE__ = false`, so esbuild
     // dead-code-eliminates the FAB, drawer, and badge.
     __DEV_MODE__: JSON.stringify(command === 'serve'),
-    // Optional build-time override for the Wingman drawer; otherwise it
-    // points at the hosted SPA at https://wingman.manifest.build.
-    __WINGMAN_URL__: JSON.stringify(process.env.VITE_WINGMAN_URL || ''),
+    // Where the drawer's iframe points. In dev this is the loopback origin the
+    // Wingman dev proxy serves on, so the iframe and the gateway share an
+    // address space — a public HTTPS iframe cannot reach a localhost gateway
+    // (see wingman-dev-proxy.ts). Empty in a production build, where the
+    // drawer is dead-code-eliminated anyway.
+    __WINGMAN_URL__: JSON.stringify(command === 'serve' ? wingmanDrawerUrl : ''),
   },
   plugins: [
     solidPlugin(),
+    wingmanDevProxy({ port: wingmanPort, upstream: wingmanUpstream }),
     codecovVitePlugin({
       enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
       bundleName: 'manifest-frontend',
@@ -48,9 +93,9 @@ export default defineConfig(({ command }) => ({
     // Vite's CORS at all.
     cors: false,
     proxy: {
-      '/api': `http://localhost:${process.env.VITE_BACKEND_PORT || '3001'}`,
-      '/otlp': `http://localhost:${process.env.VITE_BACKEND_PORT || '3001'}`,
-      '/v1': `http://localhost:${process.env.VITE_BACKEND_PORT || '3001'}`,
+      '/api': devProxyRoute,
+      '/otlp': devProxyRoute,
+      '/v1': devProxyRoute,
     },
   },
   build: {

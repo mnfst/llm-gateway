@@ -4,7 +4,7 @@
  * stream stalls or dies before producing any data, we can still fall back
  * to another provider instead of sending the client a truncated response.
  *
- * @see https://github.com/mnfst/manifest/issues/1656
+ * @see https://github.com/mnfst/llm-gateway/issues/1656
  */
 
 export const DEFAULT_STREAM_WARMUP_MS = 15_000;

@@ -12,7 +12,7 @@ export const PROVIDER_TIMEOUT_STATUS = 504;
 const GENERIC_FETCH_ERROR_MESSAGE = 'fetch failed';
 
 const TRANSPORT_PATTERN =
-  /(fetch failed|failed to parse url|network|timeout|econnrefused|econnreset|enotfound|ehostunreach|etimedout|und_err_)/i;
+  /(fetch failed|failed to parse url|network|timeout|econnrefused|econnreset|enotfound|ehostunreach|etimedout|und_err_|\bterminated\b)/i;
 
 // ---------------------------------------------------------------------------
 // Error property accessors

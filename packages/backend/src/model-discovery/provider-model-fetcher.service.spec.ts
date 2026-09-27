@@ -1,4 +1,5 @@
 import { ProviderModelFetcherService, PROVIDER_CONFIGS } from './provider-model-fetcher.service';
+import { CODEX_CLI_VERSION } from '../common/constants/subscription-clients';
 
 describe('ProviderModelFetcherService', () => {
   let service: ProviderModelFetcherService;
@@ -20,17 +21,23 @@ describe('ProviderModelFetcherService', () => {
       'openai',
       'openai-subscription',
       'bedrock',
+      'cerebras',
       'deepseek',
       'byteplus',
       'commandcode',
       'fireworks',
       'groq',
+      'huggingface',
       'kilo',
       'mistral',
+      'mistral-subscription',
       'moonshot',
+      'pioneer',
+      'nous',
       'nvidia',
       'xai',
       'minimax',
+      'meta',
       'minimax-subscription',
       'xiaomi',
       'xiaomi-subscription',
@@ -40,6 +47,7 @@ describe('ProviderModelFetcherService', () => {
       'anthropic',
       'gemini',
       'openrouter',
+      'gemini-free',
       'ollama',
       'ollama-cloud',
       'copilot',
@@ -48,6 +56,165 @@ describe('ProviderModelFetcherService', () => {
     for (const id of expected) {
       expect(PROVIDER_CONFIGS[id]).toBeDefined();
     }
+  });
+
+  it('discovers only Gemini models from the Gemini Free LiteLLM catalog', async () => {
+    process.env['CREDITS_BASE_URL'] = 'https://credits.test';
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          { id: 'gpt-5' },
+          { id: 'gemini-2.5-flash' },
+          { id: 'gemini/gemini-2.5-flash' },
+          { id: 'gemini/gemini-2.5-pro' },
+          { id: 'gemini/*' },
+        ],
+      }),
+    });
+
+    const result = await service.fetch('gemini-free', 'sk-virtual');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://credits.test/v1/models',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer sk-virtual',
+        }),
+      }),
+    );
+    expect(result.map((model) => model.id)).toEqual([
+      'gemini/gemini-2.5-flash',
+      'gemini/gemini-2.5-pro',
+    ]);
+  });
+
+  describe('huggingface provider', () => {
+    it('discovers chat models using the fastest live provider metadata', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'Qwen/Qwen3-Coder',
+              architecture: {
+                input_modalities: ['text', 'image', 'unknown'],
+                output_modalities: ['text'],
+              },
+              providers: [
+                {
+                  provider: 'slow-provider',
+                  status: 'live',
+                  context_length: 128000,
+                  pricing: { input: 0.2, output: 0.8 },
+                  supports_tools: false,
+                  throughput: 20,
+                },
+                {
+                  provider: 'fast-provider',
+                  status: 'live',
+                  context_length: 262144,
+                  pricing: { input: 0.5, output: 1.5 },
+                  supports_tools: true,
+                  throughput: 80,
+                },
+              ],
+            },
+            {
+              id: 'unavailable/model',
+              providers: [{ provider: 'down', status: 'error' }],
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('huggingface', 'hf_test_token');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://router.huggingface.co/v1/models',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer hf_test_token' },
+        }),
+      );
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'Qwen/Qwen3-Coder',
+          provider: 'huggingface',
+          contextWindow: 262144,
+          inputPricePerToken: 0.5 / 1_000_000,
+          outputPricePerToken: 1.5 / 1_000_000,
+          capabilityCode: true,
+          capabilities: ['text', 'image', 'stream', 'tools'],
+          inputModalities: ['text', 'image'],
+          outputModalities: ['text'],
+        }),
+      ]);
+    });
+
+    it('uses safe defaults when optional provider metadata is absent', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'openai/gpt-oss-120b', providers: [{ status: 'live' }] }],
+        }),
+      });
+
+      const result = await service.fetch('huggingface', 'hf_test_token');
+
+      expect(result[0]).toMatchObject({
+        contextWindow: 128000,
+        inputPricePerToken: null,
+        outputPricePerToken: null,
+        capabilityCode: false,
+        capabilities: ['stream'],
+      });
+    });
+
+    it('ignores malformed model and provider metadata', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 42, providers: [] },
+            { id: '', providers: [] },
+            { id: 'missing-provider-array', providers: {} },
+            {
+              id: 'mixed/metadata',
+              architecture: {
+                input_modalities: ['text', 42],
+                output_modalities: [],
+              },
+              providers: [
+                null,
+                { status: 'live', throughput: 'unknown' },
+                { status: 'live', throughput: 10 },
+                { status: 'live' },
+              ],
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('huggingface', 'hf_test_token');
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'mixed/metadata',
+          capabilities: ['text', 'stream'],
+          inputModalities: ['text'],
+        }),
+      ]);
+      expect(result[0]).not.toHaveProperty('outputModalities');
+    });
+
+    it('returns no models when the catalog data is malformed', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: {} }),
+      });
+
+      await expect(service.fetch('huggingface', 'hf_test_token')).resolves.toEqual([]);
+    });
   });
 
   it('should fetch AWS Bedrock models from the selected Mantle region', async () => {
@@ -78,6 +245,243 @@ describe('ProviderModelFetcherService', () => {
       }),
     );
     expect(result.map((m) => m.id)).toEqual(['mistral.ministral-3-8b-instruct']);
+  });
+
+  it('should fetch Cerebras models from the OpenAI-compatible models endpoint', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 'gpt-oss-120b' }, { id: 'zai-glm-4.7' }, { id: 'text-embedding-test' }],
+      }),
+    });
+
+    const result = await service.fetch('cerebras', 'cerebras-api-key');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.cerebras.ai/v1/models',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer cerebras-api-key' },
+      }),
+    );
+    expect(result.map((m) => m.id)).toEqual(['gpt-oss-120b', 'zai-glm-4.7']);
+    expect(result[0]).toMatchObject({
+      provider: 'cerebras',
+      contextWindow: 128000,
+      inputPricePerToken: null,
+      outputPricePerToken: null,
+    });
+  });
+
+  it('should fetch Pioneer models from the OpenAI-compatible models endpoint', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'pioneer/auto', display_name: 'Pioneer Auto' },
+            {
+              id: 'claude-sonnet-4-6',
+              display_name: 'Claude Sonnet 4.6',
+              context_length: 1000000,
+            },
+            { id: 'fastino/gliner2-base-v1', display_name: 'GLiNER2 Base' },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          models: [
+            {
+              id: 'claude-sonnet-4-6',
+              label: 'Claude Sonnet 4.6',
+              context_window: 1000000,
+              input_price_per_million: 3,
+              output_price_per_million: 15,
+              supports_image_input: true,
+            },
+            {
+              id: 'fastino/gliner2-base-v1',
+              label: 'GLiNER2 Base',
+              input_price_per_million: 0.15,
+              output_price_per_million: 0.15,
+            },
+          ],
+        }),
+      });
+
+    const result = await service.fetch('pioneer', 'pio_sk_test_key');
+
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      1,
+      'https://api.pioneer.ai/v1/models',
+      expect.objectContaining({
+        headers: { 'X-API-Key': 'pio_sk_test_key' },
+      }),
+    );
+    expect(fetchSpy).toHaveBeenNthCalledWith(
+      2,
+      'https://api.pioneer.ai/base-models',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(result.map((m) => m.id)).toEqual(['pioneer/auto', 'claude-sonnet-4-6']);
+    expect(result[0]).toMatchObject({
+      provider: 'pioneer',
+      displayName: 'Pioneer Auto',
+      contextWindow: 128000,
+      inputPricePerToken: null,
+      outputPricePerToken: null,
+    });
+    expect(result[1]).toMatchObject({
+      displayName: 'Claude Sonnet 4.6',
+      contextWindow: 1000000,
+      inputPricePerToken: 3 / 1_000_000,
+      outputPricePerToken: 15 / 1_000_000,
+      inputModalities: ['text', 'image'],
+    });
+  });
+
+  it('should keep Pioneer model discovery when the pricing catalog is unavailable', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'gpt-4o', display_name: 'GPT-4o' }],
+        }),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const result = await service.fetch('pioneer', 'pio_sk_test_key');
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: 'gpt-4o',
+      displayName: 'GPT-4o',
+      inputPricePerToken: null,
+      outputPricePerToken: null,
+    });
+  });
+
+  it('should keep Pioneer model discovery when the pricing catalog fetch fails', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'gpt-4o', display_name: 'GPT-4o' }],
+        }),
+      })
+      .mockRejectedValueOnce(new Error('catalog down'));
+
+    const result = await service.fetch('pioneer', 'pio_sk_test_key');
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: 'gpt-4o',
+      displayName: 'GPT-4o',
+      inputPricePerToken: null,
+      outputPricePerToken: null,
+    });
+  });
+
+  it('should keep Pioneer model discovery when the pricing catalog is malformed', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'gpt-4o' }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ models: 'not-array' }),
+      });
+
+    const result = await service.fetch('pioneer', 'pio_sk_test_key');
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      id: 'gpt-4o',
+      displayName: 'gpt-4o',
+      inputPricePerToken: null,
+      outputPricePerToken: null,
+    });
+  });
+
+  it('should ignore invalid Pioneer pricing rows and invalid prices', async () => {
+    fetchSpy
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'bare-model' },
+            { id: 'invalid-prices', display_name: 'Invalid Prices', context_length: 64000 },
+            { id: 'label-fallback', display_name: 'Label Fallback', context_length: 32000 },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          models: [
+            { id: '' },
+            { id: 123 },
+            {
+              id: 'invalid-prices',
+              label: 'Invalid Prices',
+              input_price_per_million: -1,
+              output_price_per_million: Number.POSITIVE_INFINITY,
+              is_chat_model: false,
+            },
+            {
+              id: 'label-fallback',
+              label: '',
+              context_window: undefined,
+              input_price_per_million: null,
+              output_price_per_million: undefined,
+              supports_image_input: false,
+            },
+          ],
+        }),
+      });
+
+    const result = await service.fetch('pioneer', 'pio_sk_test_key');
+
+    expect(result.map((m) => m.id)).toEqual(['bare-model', 'invalid-prices', 'label-fallback']);
+    expect(result[0]).toMatchObject({
+      displayName: 'bare-model',
+      contextWindow: 128000,
+    });
+    expect(result[1]).toMatchObject({
+      displayName: 'Invalid Prices',
+      contextWindow: 64000,
+      inputPricePerToken: null,
+      outputPricePerToken: null,
+      capabilityCode: false,
+    });
+    expect(result[2]).toMatchObject({
+      displayName: 'Label Fallback',
+      contextWindow: 32000,
+      inputPricePerToken: null,
+      outputPricePerToken: null,
+    });
+    expect(result[2].inputModalities).toBeUndefined();
+  });
+
+  it('should return [] when Pioneer model discovery is unavailable', async () => {
+    fetchSpy.mockResolvedValueOnce({ ok: false, status: 401 });
+
+    const result = await service.fetch('pioneer', 'pio_sk_test_key');
+
+    expect(result).toEqual([]);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('should return [] when Pioneer model discovery throws', async () => {
+    fetchSpy.mockRejectedValueOnce(new Error('pioneer down'));
+
+    const result = await service.fetch('pioneer', 'pio_sk_test_key');
+
+    expect(result).toEqual([]);
   });
 
   /* ── Unknown provider ── */
@@ -220,6 +624,27 @@ describe('ProviderModelFetcherService', () => {
       expect(result.map((m) => m.id)).toEqual(['gpt-4o', 'gpt-4.1']);
     });
 
+    it('should keep GPT-5.6 models returned by OpenAI', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'gpt-5.6-sol', object: 'model', created: 1782228018, owned_by: 'system' },
+            { id: 'gpt-5.6-terra', object: 'model', created: 1782228459, owned_by: 'system' },
+            { id: 'gpt-5.6-luna', object: 'model', created: 1782228658, owned_by: 'system' },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('openai', 'sk-test');
+
+      expect(result.map((model) => model.id)).toEqual([
+        'gpt-5.6-sol',
+        'gpt-5.6-terra',
+        'gpt-5.6-luna',
+      ]);
+    });
+
     it('should keep Responses-only chat models (Codex/-pro/o1-pro/deep-research) so the proxy can route them to /v1/responses', async () => {
       fetchSpy.mockResolvedValue({
         ok: true,
@@ -349,6 +774,45 @@ describe('ProviderModelFetcherService', () => {
       );
       expect(result.map((m) => m.id)).toEqual(['grok-3', 'grok-4']);
       expect(result.every((m) => m.provider === 'xai')).toBe(true);
+    });
+  });
+
+  describe('meta provider', () => {
+    it('discovers only current Muse Spark models with their native capabilities', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'muse-spark-1.2' },
+            { id: 'muse-spark-1.2-contributor' },
+            { id: 'muse-spark-1.1' },
+            { id: 'retired-or-unrelated-model' },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('meta', 'LLM_test-meta-key-value');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.meta.ai/v1/models',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer LLM_test-meta-key-value' },
+        }),
+      );
+      expect(result.map((model) => model.id)).toEqual([
+        'muse-spark-1.2',
+        'muse-spark-1.2-contributor',
+        'muse-spark-1.1',
+      ]);
+      expect(result[1]).toMatchObject({
+        displayName: 'Muse Spark 1.2 Contributor (inputs and outputs may train Meta)',
+        provider: 'meta',
+        contextWindow: 1_048_576,
+        capabilityReasoning: true,
+        capabilityCode: true,
+        inputModalities: ['text', 'image', 'audio', 'video'],
+        outputModalities: ['text'],
+      });
     });
   });
 
@@ -621,6 +1085,49 @@ describe('ProviderModelFetcherService', () => {
       // deprecated-model filtered by metadata, labs-experimental by regex, voxtral-mini-2602 by blocklist
       expect(result.map((m) => m.id)).toEqual(['mistral-large-latest']);
     });
+  });
+
+  /* ── Nous Portal subscription routing ── */
+
+  it('should fetch Nous Portal models from its OpenAI-compatible catalog', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: 'anthropic/claude-sonnet-4.5',
+            name: 'Anthropic: Claude Sonnet 4.5',
+            context_length: 200000,
+            architecture: { output_modalities: ['text'] },
+            pricing: { prompt: '0.000003', completion: '0.000015' },
+          },
+          {
+            id: 'google/gemini-3-pro-image',
+            name: 'Google: Gemini 3 Pro Image',
+            architecture: { output_modalities: ['image', 'text'] },
+          },
+        ],
+      }),
+    });
+
+    const result = await service.fetch('nous', 'nous-api-key', 'subscription');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://inference-api.nousresearch.com/v1/models',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer nous-api-key' },
+      }),
+    );
+    expect(result).toEqual([
+      expect.objectContaining({
+        id: 'anthropic/claude-sonnet-4.5',
+        displayName: 'Anthropic: Claude Sonnet 4.5',
+        provider: 'nous',
+        contextWindow: 200000,
+        inputPricePerToken: 0.000003,
+        outputPricePerToken: 0.000015,
+      }),
+    ]);
   });
 
   /* ── Z.ai subscription routing ── */
@@ -978,6 +1485,25 @@ describe('ProviderModelFetcherService', () => {
       ]);
     });
 
+    it('should read the modalities Groq publishes on each model', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'allam-2-7b', input_modalities: ['text'], output_modalities: ['text'] },
+            { id: 'openai/gpt-oss-20b' },
+          ],
+        }),
+      });
+
+      const [allam, gptOss] = await service.fetch('groq', 'gsk_test');
+
+      expect(allam.inputModalities).toEqual(['text']);
+      expect(allam.outputModalities).toEqual(['text']);
+      expect(gptOss.inputModalities).toBeUndefined();
+      expect(gptOss.outputModalities).toBeUndefined();
+    });
+
     it('should hit the Groq models endpoint with bearer auth', async () => {
       fetchSpy.mockResolvedValue({
         ok: true,
@@ -1234,6 +1760,27 @@ describe('ProviderModelFetcherService', () => {
     expect(calledUrl).not.toContain('not a url');
     expect(calledUrl).toMatch(/^https:\/\//);
     warnSpy.mockRestore();
+  });
+
+  it('fetches Qwen models from an Alibaba Model Studio compatible-mode base URL', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch(
+      'qwen',
+      'sk-qwen',
+      'api_key',
+      'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+    );
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1/models',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer sk-qwen' },
+      }),
+    );
   });
 
   /* ── Anthropic provider ── */
@@ -1544,6 +2091,80 @@ describe('ProviderModelFetcherService', () => {
       );
     });
 
+    it('should filter out :batch variants (only served via the async Batch API)', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'openai/gpt-5',
+              name: 'GPT-5',
+              context_length: 400000,
+              architecture: { output_modalities: ['text'] },
+            },
+            {
+              id: 'openai/gpt-5:batch',
+              name: 'GPT-5 (batch)',
+              context_length: 400000,
+              architecture: { output_modalities: ['text'] },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('openrouter', '');
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('openai/gpt-5');
+    });
+
+    it('should normalize OpenRouter input and output modalities', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'deepseek/deepseek-v4-flash',
+              architecture: {
+                input_modalities: ['text'],
+                output_modalities: ['text'],
+              },
+            },
+            {
+              id: 'google/gemini-2.5-flash',
+              architecture: {
+                input_modalities: ['file', 'image', 'text', 'audio', 'video'],
+                output_modalities: ['text'],
+              },
+            },
+            {
+              id: 'file-only',
+              architecture: {
+                input_modalities: ['file'],
+                output_modalities: ['text'],
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('openrouter', '');
+
+      expect(result).toEqual([
+        expect.objectContaining({
+          inputModalities: ['text'],
+          outputModalities: ['text'],
+        }),
+        expect.objectContaining({
+          inputModalities: ['text', 'image', 'audio', 'video'],
+          outputModalities: ['text'],
+        }),
+        expect.objectContaining({
+          outputModalities: ['text'],
+        }),
+      ]);
+      expect(result[2]).not.toHaveProperty('inputModalities');
+    });
+
     it('should filter out non-text output modality models', async () => {
       fetchSpy.mockResolvedValue({
         ok: true,
@@ -1737,6 +2358,24 @@ describe('ProviderModelFetcherService', () => {
       expect(result[0].id).toBe('mistral');
     });
 
+    it('should preserve author-prefixed third-party model ids', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          models: [
+            { name: 'mdq100/qwen3.5-flash:35b' },
+            { name: 'hf.co/acon96/Home-Llama-3.2-3B:F16' },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('ollama', '');
+      expect(result.map((model) => model.id)).toEqual([
+        'mdq100/qwen3.5-flash:35b',
+        'hf.co/acon96/Home-Llama-3.2-3B:F16',
+      ]);
+    });
+
     it('should filter out entries without string name', async () => {
       fetchSpy.mockResolvedValue({
         ok: true,
@@ -1871,6 +2510,7 @@ describe('ProviderModelFetcherService', () => {
           displayName: 'GPT-5.5',
           provider: 'openai',
           contextWindow: 192000,
+          contextWindowSource: 'provider',
           inputPricePerToken: 0,
           outputPricePerToken: 0,
           capabilityCode: true,
@@ -1940,6 +2580,7 @@ describe('ProviderModelFetcherService', () => {
 
       const result = await service.fetch('openai', 'token', 'subscription');
       expect(result[0].contextWindow).toBe(200000);
+      expect(result[0].contextWindowSource).toBe('subscription_config');
     });
 
     it('should return [] when models is not an array', async () => {
@@ -1988,7 +2629,7 @@ describe('ProviderModelFetcherService', () => {
       await service.fetch('openai', 'my-oauth-token', 'subscription');
 
       expect(fetchSpy).toHaveBeenCalledWith(
-        'https://chatgpt.com/backend-api/codex/models?client_version=0.128.0',
+        `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLI_VERSION}`,
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: 'Bearer my-oauth-token',
@@ -2032,6 +2673,169 @@ describe('ProviderModelFetcherService', () => {
         }),
       );
       expect(result[1].id).toBe('copilot/gpt-4o');
+    });
+
+    it('should convert Copilot AI-credit prices to USD per token', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'claude-sonnet-4.6',
+              billing: {
+                token_prices: {
+                  batch_size: 1_000_000,
+                  default: {
+                    input_price: 300,
+                    output_price: 1500,
+                    cache_read_price: 30,
+                    cache_write_price: 375,
+                    max_prompt_tokens: 200_000,
+                  },
+                  long_context: {
+                    input_price: 600,
+                    output_price: 2250,
+                    cache_read_price: 60,
+                    cache_write_price: 750,
+                    max_prompt_tokens: 936_000,
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        inputPricePerToken: 3 / 1_000_000,
+        outputPricePerToken: 15 / 1_000_000,
+        cacheReadPricePerToken: 0.3 / 1_000_000,
+        cacheWritePricePerToken: 3.75 / 1_000_000,
+        longContextPricing: {
+          thresholdTokens: 200_000,
+          inputPricePerToken: 6 / 1_000_000,
+          outputPricePerToken: 22.5 / 1_000_000,
+          cacheReadPricePerToken: 0.6 / 1_000_000,
+          cacheWritePricePerToken: 7.5 / 1_000_000,
+        },
+      });
+    });
+
+    it('should preserve Copilot long-context prices and their prompt threshold', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'gpt-5.6-terra',
+              billing: {
+                token_prices: {
+                  default: {
+                    input_price: 200,
+                    output_price: 1200,
+                    cache_price: 20,
+                    cache_write_price: 250,
+                    context_max: 272_000,
+                  },
+                  long_context: {
+                    input_price: 400,
+                    output_price: 1800,
+                    cache_price: 40,
+                    cache_write_price: 500,
+                    context_max: 936_000,
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        contextWindow: 936_000,
+        inputPricePerToken: 2 / 1_000_000,
+        outputPricePerToken: 12 / 1_000_000,
+        cacheReadPricePerToken: 0.2 / 1_000_000,
+        cacheWritePricePerToken: 2.5 / 1_000_000,
+        longContextPricing: {
+          thresholdTokens: 272_000,
+          inputPricePerToken: 4 / 1_000_000,
+          outputPricePerToken: 18 / 1_000_000,
+          cacheReadPricePerToken: 0.4 / 1_000_000,
+          cacheWritePricePerToken: 5 / 1_000_000,
+        },
+      });
+    });
+
+    it('should omit unavailable Copilot cache prices', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'gpt-5-mini',
+              billing: {
+                token_prices: {
+                  batch_size: 1_000_000,
+                  default: { input_price: 25, output_price: 200 },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        inputPricePerToken: 0.25 / 1_000_000,
+        outputPricePerToken: 2 / 1_000_000,
+      });
+      expect(result[0]).not.toHaveProperty('cacheReadPricePerToken');
+      expect(result[0]).not.toHaveProperty('cacheWritePricePerToken');
+    });
+
+    it('should keep subscription pricing at zero when Copilot billing is invalid', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'gpt-4o',
+              billing: {
+                token_prices: {
+                  batch_size: 0,
+                  default: { input_price: 100, output_price: 500 },
+                },
+              },
+            },
+            {
+              id: 'gpt-4.1',
+              billing: {
+                token_prices: {
+                  batch_size: 1_000_000,
+                  default: { input_price: -1, output_price: Number.POSITIVE_INFINITY },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        inputPricePerToken: 0,
+        outputPricePerToken: 0,
+      });
+      expect(result[1]).toMatchObject({
+        inputPricePerToken: 0,
+        outputPricePerToken: 0,
+      });
     });
 
     it('should send correct Copilot headers', async () => {
@@ -2109,38 +2913,144 @@ describe('ProviderModelFetcherService', () => {
   });
 
   describe('opencode-go provider', () => {
-    it('delegates to the catalog service instead of hitting the network', async () => {
+    it('fetches the live OpenCode Go /models catalog and namespaces model ids', async () => {
       const catalog = {
-        list: jest.fn().mockResolvedValue([
-          { id: 'glm-5.1', displayName: 'GLM-5.1', format: 'openai' as const },
-          { id: 'minimax-m2.7', displayName: 'MiniMax M2.7', format: 'anthropic' as const },
-        ]),
+        list: jest.fn().mockResolvedValue([]),
+        refresh: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'glm-5.1', displayName: 'GLM-5.1', format: 'openai' as const },
+          ]),
       };
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'glm-5.2', object: 'model', owned_by: 'opencode' },
+            { id: 'glm-5.1', object: 'model', owned_by: 'opencode' },
+          ],
+        }),
+      });
       const withCatalog = new ProviderModelFetcherService(
         catalog as unknown as ConstructorParameters<typeof ProviderModelFetcherService>[0],
       );
 
       const result = await withCatalog.fetch('opencode-go', 'og-token', 'subscription');
 
-      expect(fetchSpy).not.toHaveBeenCalled();
-      expect(catalog.list).toHaveBeenCalledTimes(1);
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://opencode.ai/zen/go/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer og-token' }),
+        }),
+      );
+      expect(catalog.list).not.toHaveBeenCalled();
+      expect(catalog.refresh).not.toHaveBeenCalled();
       expect(result).toHaveLength(2);
       expect(result[0]).toEqual(
         expect.objectContaining({
-          id: 'opencode-go/glm-5.1',
-          displayName: 'GLM-5.1',
+          id: 'opencode-go/glm-5.2',
+          displayName: 'opencode-go/glm-5.2',
           provider: 'opencode-go',
           inputPricePerToken: 0,
           outputPricePerToken: 0,
         }),
       );
-      expect(result[1].id).toBe('opencode-go/minimax-m2.7');
+      expect(result[1].id).toBe('opencode-go/glm-5.1');
     });
 
-    it('returns [] when no catalog service is wired up', async () => {
+    it('falls back to a refreshed docs catalog when live /models is empty', async () => {
+      const catalog = {
+        list: jest.fn().mockResolvedValue([]),
+        refresh: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'glm-5.2', displayName: 'GLM-5.2', format: 'openai' as const },
+          ]),
+      };
+      const withCatalog = new ProviderModelFetcherService(
+        catalog as unknown as ConstructorParameters<typeof ProviderModelFetcherService>[0],
+      );
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [] }),
+      });
+
+      const result = await withCatalog.fetch('opencode-go', 'og-token', 'subscription', undefined, {
+        forceRefresh: true,
+      });
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://opencode.ai/zen/go/v1/models',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer og-token' }),
+        }),
+      );
+      expect(catalog.refresh).toHaveBeenCalledTimes(1);
+      expect(catalog.list).not.toHaveBeenCalled();
+      expect(result[0]).toEqual(
+        expect.objectContaining({
+          id: 'opencode-go/glm-5.2',
+          displayName: 'GLM-5.2',
+          provider: 'opencode-go',
+        }),
+      );
+    });
+
+    it('falls back to the docs catalog when live /models returns an error', async () => {
+      const catalog = {
+        list: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'glm-5.1', displayName: 'GLM-5.1', format: 'openai' as const },
+          ]),
+        refresh: jest.fn().mockResolvedValue([]),
+      };
+      fetchSpy.mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({}),
+      });
+      const withCatalog = new ProviderModelFetcherService(
+        catalog as unknown as ConstructorParameters<typeof ProviderModelFetcherService>[0],
+      );
+
+      const result = await withCatalog.fetch('opencode-go', 'og-token', 'subscription');
+
+      expect(catalog.list).toHaveBeenCalledTimes(1);
+      expect(catalog.refresh).not.toHaveBeenCalled();
+      expect(result.map((m) => m.id)).toEqual(['opencode-go/glm-5.1']);
+    });
+
+    it('falls back to the docs catalog when live /models throws', async () => {
+      const catalog = {
+        list: jest
+          .fn()
+          .mockResolvedValue([
+            { id: 'glm-5.1', displayName: 'GLM-5.1', format: 'openai' as const },
+          ]),
+        refresh: jest.fn().mockResolvedValue([]),
+      };
+      fetchSpy.mockRejectedValue(new Error('network down'));
+      const withCatalog = new ProviderModelFetcherService(
+        catalog as unknown as ConstructorParameters<typeof ProviderModelFetcherService>[0],
+      );
+
+      const result = await withCatalog.fetch('opencode-go', 'og-token', 'subscription');
+
+      expect(catalog.list).toHaveBeenCalledTimes(1);
+      expect(catalog.refresh).not.toHaveBeenCalled();
+      expect(result.map((m) => m.id)).toEqual(['opencode-go/glm-5.1']);
+    });
+
+    it('uses live models even when no docs catalog service is wired up', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [{ id: 'glm-5.2' }] }),
+      });
+
       const result = await service.fetch('opencode-go', 'og-token', 'subscription');
-      expect(result).toEqual([]);
-      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result.map((m) => m.id)).toEqual(['opencode-go/glm-5.2']);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -2188,6 +3098,26 @@ describe('ProviderModelFetcherService', () => {
           capabilityCode: true,
         }),
       ]);
+    });
+  });
+
+  describe('cline-pass provider', () => {
+    it('returns known subscription models with configured context windows', async () => {
+      const result = await service.fetch('cline-pass', 'cp-token', 'subscription');
+
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(result).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'cline-pass/deepseek-v4-flash',
+            provider: 'cline-pass',
+            contextWindow: 200000,
+            capabilityReasoning: true,
+            capabilityCode: true,
+          }),
+        ]),
+      );
+      expect(result.every((model) => model.contextWindow === 200000)).toBe(true);
     });
   });
 
@@ -2378,6 +3308,31 @@ describe('ProviderModelFetcherService', () => {
       const result = await service.fetch('mistral', 'key');
       // Both pass: pixtral has no "mistral-ocr" prefix, "some-ocr-model" has "ocr" mid-name not prefix
       expect(result).toHaveLength(2);
+    });
+
+    it('filters the Vibe CLI model from API-key discovery and restricts subscription discovery to it', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [{ id: 'mistral-vibe-cli-latest' }, { id: 'mistral-large-latest' }],
+        }),
+      });
+
+      const apiKeyResult = await service.fetch('mistral', 'mistral-api-key', 'api_key');
+      const subscriptionResult = await service.fetch('mistral', 'mistral-vibe-key', 'subscription');
+
+      expect(fetchSpy).toHaveBeenNthCalledWith(
+        1,
+        'https://api.mistral.ai/v1/models',
+        expect.objectContaining({ headers: { Authorization: 'Bearer mistral-api-key' } }),
+      );
+      expect(fetchSpy).toHaveBeenNthCalledWith(
+        2,
+        'https://api.mistral.ai/v1/models',
+        expect.objectContaining({ headers: { Authorization: 'Bearer mistral-vibe-key' } }),
+      );
+      expect(apiKeyResult.map((m) => m.id)).toEqual(['mistral-large-latest']);
+      expect(subscriptionResult.map((m) => m.id)).toEqual(['mistral-vibe-cli-latest']);
     });
   });
 
@@ -2605,9 +3560,28 @@ describe('ProviderModelFetcherService', () => {
 
     await service.fetch('minimax', 'api-key', 'api_key');
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining('api.minimaxi.chat'),
-      expect.anything(),
-    );
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
+  });
+
+  it('should use the endpoint override for MiniMax CN API-key discovery', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch('minimax', 'api-key', 'api_key', 'https://api.minimaxi.com/v1');
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimaxi.com/v1/models', expect.anything());
+  });
+
+  it('should ignore a non-MiniMax endpoint override for MiniMax API-key discovery', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch('minimax', 'api-key', 'api_key', 'https://attacker.example/v1');
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
   });
 });

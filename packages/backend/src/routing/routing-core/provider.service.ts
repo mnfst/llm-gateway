@@ -13,16 +13,28 @@ import { TierAssignment } from '../../entities/tier-assignment.entity';
 import { SpecificityAssignment } from '../../entities/specificity-assignment.entity';
 import { Agent } from '../../entities/agent.entity';
 import { HeaderTier } from '../../entities/header-tier.entity';
+import { AgentMessage } from '../../entities/agent-message.entity';
 import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
 import { RoutingCacheService } from './routing-cache.service';
 import { randomUUID } from 'crypto';
-import { encrypt, decrypt, getEncryptionSecret } from '../../common/utils/crypto.util';
+import {
+  encrypt,
+  decryptWithAny,
+  getEncryptionSecret,
+  getDecryptionSecrets,
+} from '../../common/utils/crypto.util';
 import {
   isManifestUsableProvider,
   isSupportedSubscriptionProvider,
 } from '../../common/utils/subscription-support';
-import type { AuthType, ModelRoute } from 'manifest-shared';
-import { detectQwenRegion, isQwenRegion, isQwenResolvedRegion } from '../qwen-region';
+import { MAX_KEYS_PER_PROVIDER, type AuthType, type ModelRoute } from 'manifest-shared';
+import {
+  QWEN_REGION_VALIDATION_MESSAGE,
+  detectQwenRegion,
+  isQwenRegion,
+  isQwenResolvedEndpoint,
+  normalizeQwenCompatibleBaseUrl,
+} from '../qwen-region';
 import {
   DEFAULT_BEDROCK_REGION,
   detectBedrockRegionFromApiKey,
@@ -33,17 +45,35 @@ import {
   getSubscriptionEndpointRegionConfig,
   SubscriptionEndpointRegionConfig,
 } from '../subscription-region';
+import {
+  MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE,
+  isMinimaxRegion,
+} from '../oauth/minimax/minimax-oauth-helpers';
+import { filterProvidersForDeployment } from '../../common/utils/provider-availability';
+import { getManagedFreeProviderConfig } from '../../common/constants/managed-free-providers';
 
-const MAX_KEYS_PER_PROVIDER = 5;
+const MAX_KEYS_MANAGED_FREE_PROVIDER = 1;
 const MAX_LABEL_LENGTH = 50;
 const DEFAULT_LABEL = 'Default';
+// Bounds for withSubscriptionCredentialLock's critical section (the provider
+// OAuth refresh HTTP call runs inside it). lock_timeout caps a second replica's
+// wait for the row lock; idle_in_transaction caps how long a hung refresh pins
+// the pooled connection.
+const SUBSCRIPTION_LOCK_TIMEOUT = '5s';
+const SUBSCRIPTION_REFRESH_IDLE_TIMEOUT = '20s';
 
 interface ProviderRouteReference {
   agentId: string;
+  agentName: string;
   surface: 'tier' | 'specificity' | 'header';
   name: string;
   model: string;
   position: string;
+}
+
+interface OwnedAgentRouteTarget {
+  id: string;
+  name: string;
 }
 
 @Injectable()
@@ -86,6 +116,12 @@ export class ProviderService {
     return manager ? manager.getRepository(AgentEnabledProvider) : this.enabledProviderRepo;
   }
 
+  private agentMessageRepo(manager?: EntityManager): Repository<AgentMessage> {
+    return manager
+      ? manager.getRepository(AgentMessage)
+      : this.providerRepo.manager.getRepository(AgentMessage);
+  }
+
   /**
    * Back-compat entry point retained for callers that used to refresh automatic
    * routes after provider/model changes. Model routing is now user-controlled,
@@ -109,11 +145,13 @@ export class ProviderService {
 
   async getProviders(tenantId: string): Promise<TenantProvider[]> {
     const cached = this.routingCache.getProviders(tenantId);
-    if (cached) return cached;
+    if (cached) return filterProvidersForDeployment(cached);
 
     await this.cleanupUnsupportedSubscriptionProviders(tenantId);
-    const providers = (await this.providerRepo.find({ where: { tenant_id: tenantId } })).filter(
-      isManifestUsableProvider,
+    const providers = filterProvidersForDeployment(
+      (await this.providerRepo.find({ where: { tenant_id: tenantId } })).filter(
+        isManifestUsableProvider,
+      ),
     );
     this.routingCache.setProviders(tenantId, providers);
     return providers;
@@ -198,10 +236,9 @@ export class ProviderService {
 
   /**
    * Read the freshest persisted subscription credential straight from the DB,
-   * decrypted, bypassing the routing cache. The OAuth refresh coordinator uses
-   * this so a lazy token refresh never rotates based on a stale cached blob
-   * (see issue #2012). Returns the decrypted raw stored value, or null when
-   * there is no row / no stored credential / it cannot be decrypted.
+   * decrypted, bypassing the routing cache. Prefer
+   * {@link withSubscriptionCredentialLock} for OAuth refresh — that path
+   * holds a row lock so multi-replica refreshes cannot collide.
    */
   async getFreshSubscriptionCredential(
     tenantId: string,
@@ -220,10 +257,109 @@ export class ProviderService {
     const row = rows.find((r) => r.label.toLowerCase() === wantedLabel);
     if (!row?.api_key_encrypted) return null;
     try {
-      return decrypt(row.api_key_encrypted, getEncryptionSecret());
+      return decryptWithAny(row.api_key_encrypted, getDecryptionSecrets()).plaintext;
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Run OAuth refresh work while holding a row lock on the subscription
+   * credential (`SELECT … FOR UPDATE`). Multi-replica backends serialize on
+   * this lock so two instances cannot rotate the same refresh token.
+   *
+   * Keep the critical section short: re-read → maybe refresh → write. The
+   * provider refresh HTTP call runs while the lock is held (needed so two
+   * replicas cannot both rotate), so the section is BOUNDED: `lock_timeout`
+   * caps how long a second replica waits for the lock, and
+   * `idle_in_transaction_session_timeout` caps how long a hung refresh can pin
+   * this pooled connection — without them a stuck provider could hold a
+   * connection indefinitely and starve the pool. `SET LOCAL` scopes both to
+   * this transaction (the sanctioned pattern under PgBouncer, which strips the
+   * server defaults).
+   */
+  async withSubscriptionCredentialLock<T>(
+    tenantId: string,
+    provider: string,
+    label: string | undefined,
+    fn: (ops: {
+      readFreshRaw: () => Promise<string | null>;
+      writeRaw: (raw: string) => Promise<void>;
+    }) => Promise<T>,
+  ): Promise<T> {
+    // Trim before lowercasing to match normalizeLabel (which trims at store
+    // time) — a label carrying stray whitespace must still find its stored row,
+    // otherwise the lock misses an existing credential and a rotated token is
+    // discarded (bricking it).
+    const wantedLabel = (label ?? DEFAULT_LABEL).trim().toLowerCase();
+    let didWrite = false;
+    const result = await this.providerRepo.manager.transaction(async (manager) => {
+      const repo = manager.getRepository(TenantProvider);
+      await manager.query(`SET LOCAL lock_timeout = '${SUBSCRIPTION_LOCK_TIMEOUT}'`);
+      await manager.query(
+        `SET LOCAL idle_in_transaction_session_timeout = '${SUBSCRIPTION_REFRESH_IDLE_TIMEOUT}'`,
+      );
+      // Lock the matching subscription row for this tenant/provider/label.
+      // LOWER(label) matches the unique index and pinned-route casing quirks.
+      const row =
+        (await repo
+          .createQueryBuilder('tp')
+          .setLock('pessimistic_write')
+          .where('tp.tenant_id = :tenantId', { tenantId })
+          .andWhere('tp.provider = :provider', { provider })
+          .andWhere(`tp.auth_type = 'subscription'`)
+          .andWhere('LOWER(tp.label) = :label', { label: wantedLabel })
+          .getOne()) ?? null;
+
+      return fn({
+        readFreshRaw: async () => {
+          if (!row?.api_key_encrypted) return null;
+          try {
+            return decryptWithAny(row.api_key_encrypted, getDecryptionSecrets()).plaintext;
+          } catch {
+            return null;
+          }
+        },
+        writeRaw: async (raw: string) => {
+          if (!row) {
+            throw new Error(
+              `No subscription credential row to persist for ${provider}/${wantedLabel}`,
+            );
+          }
+          const encrypted = encrypt(raw, getEncryptionSecret());
+          const keyPrefix = raw.substring(0, 8);
+          const updatedAt = new Date().toISOString();
+          // Write inside a SAVEPOINT (nested transaction) so a transient save
+          // failure rolls back only this statement, not the whole locked
+          // transaction. A bare save on the outer tx would abort it, and the
+          // coordinator's persist retry — running on the same held lock — would
+          // then fail every attempt with "current transaction is aborted",
+          // silently discarding the already-rotated token (a brick).
+          await manager.transaction(async (sub) => {
+            await sub
+              .getRepository(TenantProvider)
+              .update(
+                { id: row.id },
+                { api_key_encrypted: encrypted, key_prefix: keyPrefix, updated_at: updatedAt },
+              );
+          });
+          // Keep the in-memory row consistent for any subsequent readFreshRaw.
+          row.api_key_encrypted = encrypted;
+          row.key_prefix = keyPrefix;
+          row.updated_at = updatedAt;
+          didWrite = true;
+          // Cache invalidation is deferred until AFTER commit (below).
+          // Invalidating here — before COMMIT — opens a window where a
+          // concurrent read re-caches the still-committed pre-rotation blob,
+          // which would then be refreshed again on the next hop.
+        },
+      });
+    });
+    // Post-commit: the rotated blob is durable, so busting the cache now
+    // guarantees the next hop reads the new value and no reader can re-cache the
+    // old one.
+    if (didWrite) this.routingCache.invalidateTenant(tenantId);
+    return result;
   }
 
   async upsertProvider(
@@ -359,9 +495,13 @@ export class ProviderService {
     }
 
     const activeCount = existingRows.filter((r) => r.is_active).length;
-    if (activeCount >= MAX_KEYS_PER_PROVIDER) {
+    const managedFreeConfig = getManagedFreeProviderConfig(provider);
+    const maxKeys = managedFreeConfig ? MAX_KEYS_MANAGED_FREE_PROVIDER : MAX_KEYS_PER_PROVIDER;
+    if (activeCount >= maxKeys) {
       throw new BadRequestException(
-        `You can connect at most ${MAX_KEYS_PER_PROVIDER} keys per provider`,
+        maxKeys === 1
+          ? `You can connect at most 1 key for ${managedFreeConfig!.displayName}`
+          : `You can connect at most ${maxKeys} keys per provider`,
       );
     }
 
@@ -409,7 +549,7 @@ export class ProviderService {
   }
 
   async renameKey(
-    agentId: string,
+    agentId: string | null,
     tenantId: string,
     provider: string,
     authType: AuthType,
@@ -433,7 +573,7 @@ export class ProviderService {
     target.updated_at = new Date().toISOString();
     await this.providerRepo.save(target);
     await this.relabelOverrides(tenantId, provider, authType, previousLabel, trimmed);
-    this.routingCache.invalidateAgent(agentId);
+    if (agentId !== null) this.routingCache.invalidateAgent(agentId);
     this.routingCache.invalidateTenant(tenantId);
     return target;
   }
@@ -492,6 +632,16 @@ export class ProviderService {
   ): Promise<string | null> {
     const lower = provider.toLowerCase();
 
+    if (lower === 'minimax' && authType === 'api_key') {
+      if (requestedRegion === undefined) {
+        return isMinimaxRegion(existing?.region ?? undefined) ? existing!.region : null;
+      }
+      if (!isMinimaxRegion(requestedRegion)) {
+        throw new BadRequestException(MINIMAX_API_KEY_REGION_VALIDATION_MESSAGE);
+      }
+      return requestedRegion;
+    }
+
     const subscriptionRegionConfig = getSubscriptionEndpointRegionConfig(lower, authType);
     if (subscriptionRegionConfig) {
       return this.resolveSubscriptionEndpointRegion(
@@ -521,18 +671,20 @@ export class ProviderService {
       if (apiKey) {
         return this.detectQwenRegionOrThrow(apiKey);
       }
-      return isQwenResolvedRegion(existing?.region) ? existing.region : null;
+      return isQwenResolvedEndpoint(existing?.region) ? existing.region : null;
     }
 
     if (!isQwenRegion(requestedRegion)) {
-      throw new BadRequestException('Qwen region must be one of: auto, singapore, us, beijing');
+      throw new BadRequestException(QWEN_REGION_VALIDATION_MESSAGE);
     }
 
+    const qwenEndpoint = normalizeQwenCompatibleBaseUrl(requestedRegion);
+    if (qwenEndpoint) return qwenEndpoint;
     if (requestedRegion !== 'auto') return requestedRegion;
 
     const keyToProbe = await this.getQwenDetectionKey(apiKey, existing);
     if (!keyToProbe) {
-      return isQwenResolvedRegion(existing?.region) ? existing.region : null;
+      return isQwenResolvedEndpoint(existing?.region) ? existing.region : null;
     }
 
     return this.detectQwenRegionOrThrow(keyToProbe);
@@ -563,7 +715,7 @@ export class ProviderService {
     if (!existing?.api_key_encrypted) return null;
 
     try {
-      return decrypt(existing.api_key_encrypted, getEncryptionSecret());
+      return decryptWithAny(existing.api_key_encrypted, getDecryptionSecrets()).plaintext;
     } catch {
       this.logger.warn('Failed to decrypt API key while auto-detecting Alibaba region');
       return null;
@@ -752,13 +904,24 @@ export class ProviderService {
 
   /** Resolve the ids of every non-deleted agent the tenant owns. */
   async listOwnedAgentIds(tenantId: string): Promise<string[]> {
+    return (await this.listOwnedAgentRouteTargets(tenantId)).map((agent) => agent.id);
+  }
+
+  private async listOwnedAgentRouteTargets(tenantId: string): Promise<OwnedAgentRouteTarget[]> {
     const agents = await this.agentRepo
       .createQueryBuilder('a')
       .where('a.tenant_id = :tenantId', { tenantId })
       .andWhere('a.deleted_at IS NULL')
-      .select('a.id', 'id')
-      .getRawMany<{ id: string }>();
-    return agents.map((a) => a.id);
+      .select(['a.id AS id', 'a.name AS name', 'a.display_name AS display_name'])
+      .getRawMany<{ id: string; name: string | null; display_name: string | null }>();
+    return agents.map((agent) => {
+      const displayName = agent.display_name?.trim();
+      const name = agent.name?.trim();
+      return {
+        id: agent.id,
+        name: displayName || name || agent.id,
+      };
+    });
   }
 
   private async assertProviderRoutesNotUsed(
@@ -767,98 +930,132 @@ export class ProviderService {
   ): Promise<void> {
     if (providerRows.length === 0) return;
 
-    const references: ProviderRouteReference[] = [];
-    for (const agentId of await this.listOwnedAgentIds(tenantId)) {
-      references.push(...(await this.findProviderRouteReferences(agentId, providerRows)));
-    }
-    if (references.length === 0) return;
+    const first = await this.findFirstProviderRouteReference(tenantId, providerRows);
+    if (!first) return;
 
-    const first = references[0];
     throw new ConflictException(
       `Cannot disconnect provider while its models are assigned to routing. ` +
-        `Update routing first (${first.surface} ${first.name}, ${first.position}: ${first.model}).`,
+        `Update routing first (agent "${first.agentName}", ${first.surface} ${first.name}, ` +
+        `${first.position}: ${first.model}).`,
     );
   }
 
-  private async findProviderRouteReferences(
-    agentId: string,
+  private async findFirstProviderRouteReference(
+    tenantId: string,
     providerRows: TenantProvider[],
-  ): Promise<ProviderRouteReference[]> {
-    const references: ProviderRouteReference[] = [];
+  ): Promise<ProviderRouteReference | null> {
+    const agents = await this.listOwnedAgentRouteTargets(tenantId);
+    if (agents.length === 0) return null;
 
-    const tiers = await this.tierRepo.find({ where: { agent_id: agentId } });
+    const agentIds = agents.map((agent) => agent.id);
+    const agentNamesById = new Map(agents.map((agent) => [agent.id, agent.name]));
+    const enabledIdsByAgent = await this.listEnabledProviderIdsByAgent(agentIds);
+    const providerRowsForAgent = (agentId: string) => {
+      if (!enabledIdsByAgent) return providerRows;
+      const enabled = enabledIdsByAgent.get(agentId);
+      if (!enabled || enabled.size === 0) return [];
+      return providerRows.filter((row) => enabled.has(row.id));
+    };
+    const agentName = (agentId: string) => agentNamesById.get(agentId) ?? agentId;
+
+    const tiers = await this.tierRepo.find({ where: { agent_id: In(agentIds) } });
     for (const tier of tiers) {
-      if (this.routeBelongsToProviderRows(tier.override_route, providerRows)) {
-        references.push({
-          agentId,
-          surface: 'tier',
-          name: tier.tier,
-          model: tier.override_route!.model,
-          position: 'primary',
-        });
-      }
-      for (const [i, fallback] of (tier.fallback_routes ?? []).entries()) {
-        if (this.routeBelongsToProviderRows(fallback, providerRows)) {
-          references.push({
-            agentId,
-            surface: 'tier',
-            name: tier.tier,
-            model: fallback.model,
-            position: `fallback ${i + 1}`,
-          });
-        }
-      }
+      const match = this.findProviderRouteReferenceInRoutes(
+        tier.agent_id,
+        agentName(tier.agent_id),
+        'tier',
+        tier.tier,
+        tier.override_route,
+        tier.fallback_routes,
+        providerRowsForAgent(tier.agent_id),
+      );
+      if (match) return match;
     }
 
-    const specificityRows = await this.specificityRepo.find({ where: { agent_id: agentId } });
+    const specificityRows = await this.specificityRepo.find({
+      where: { agent_id: In(agentIds), is_active: true },
+    });
     for (const row of specificityRows) {
-      if (this.routeBelongsToProviderRows(row.override_route, providerRows)) {
-        references.push({
-          agentId,
-          surface: 'specificity',
-          name: row.category,
-          model: row.override_route!.model,
-          position: 'primary',
-        });
-      }
-      for (const [i, fallback] of (row.fallback_routes ?? []).entries()) {
-        if (this.routeBelongsToProviderRows(fallback, providerRows)) {
-          references.push({
-            agentId,
-            surface: 'specificity',
-            name: row.category,
-            model: fallback.model,
-            position: `fallback ${i + 1}`,
-          });
-        }
-      }
+      if (row.is_active === false) continue;
+      const match = this.findProviderRouteReferenceInRoutes(
+        row.agent_id,
+        agentName(row.agent_id),
+        'specificity',
+        row.category,
+        row.override_route,
+        row.fallback_routes,
+        providerRowsForAgent(row.agent_id),
+      );
+      if (match) return match;
     }
 
-    const headerTiers = await this.headerTierRepo.find({ where: { agent_id: agentId } });
+    const headerTiers = await this.headerTierRepo.find({
+      where: { agent_id: In(agentIds), enabled: true },
+    });
     for (const tier of headerTiers) {
-      if (this.routeBelongsToProviderRows(tier.override_route, providerRows)) {
-        references.push({
-          agentId,
-          surface: 'header',
-          name: tier.name,
-          model: tier.override_route!.model,
-          position: 'primary',
-        });
-      }
-      for (const [i, fallback] of (tier.fallback_routes ?? []).entries()) {
-        if (this.routeBelongsToProviderRows(fallback, providerRows)) {
-          references.push({
-            agentId,
-            surface: 'header',
-            name: tier.name,
-            model: fallback.model,
-            position: `fallback ${i + 1}`,
-          });
-        }
-      }
+      if (tier.enabled === false) continue;
+      const match = this.findProviderRouteReferenceInRoutes(
+        tier.agent_id,
+        agentName(tier.agent_id),
+        'header',
+        tier.name,
+        tier.override_route,
+        tier.fallback_routes,
+        providerRowsForAgent(tier.agent_id),
+      );
+      if (match) return match;
     }
 
-    return references;
+    return null;
+  }
+
+  private async listEnabledProviderIdsByAgent(
+    agentIds: string[],
+  ): Promise<Map<string, Set<string>> | null> {
+    if (!this.enabledProviderRepo) return null;
+    const rows = await this.enabledProviderRepo.find({ where: { agent_id: In(agentIds) } });
+    const byAgent = new Map<string, Set<string>>();
+    for (const row of rows) {
+      const enabled = byAgent.get(row.agent_id) ?? new Set<string>();
+      enabled.add(row.tenant_provider_id);
+      byAgent.set(row.agent_id, enabled);
+    }
+    return byAgent;
+  }
+
+  private findProviderRouteReferenceInRoutes(
+    agentId: string,
+    agentName: string,
+    surface: ProviderRouteReference['surface'],
+    name: string,
+    overrideRoute: ModelRoute | null,
+    fallbackRoutes: ModelRoute[] | null,
+    providerRows: TenantProvider[],
+  ): ProviderRouteReference | null {
+    if (providerRows.length === 0) return null;
+    if (this.routeBelongsToProviderRows(overrideRoute, providerRows)) {
+      return {
+        agentId,
+        agentName,
+        surface,
+        name,
+        model: overrideRoute!.model,
+        position: 'primary',
+      };
+    }
+
+    for (const [i, fallback] of (fallbackRoutes ?? []).entries()) {
+      if (!this.routeBelongsToProviderRows(fallback, providerRows)) continue;
+      return {
+        agentId,
+        agentName,
+        surface,
+        name,
+        model: fallback.model,
+        position: `fallback ${i + 1}`,
+      };
+    }
+    return null;
   }
 
   private routeBelongsToProviderRows(route: ModelRoute | null, rows: TenantProvider[]): boolean {
@@ -880,6 +1077,11 @@ export class ProviderService {
       return row.priority === 0;
     }
 
+    if (route.authType && route.authType !== row.auth_type) return false;
+    const routeLabel = route.keyLabel?.toLowerCase();
+    if (routeLabel) return routeLabel === rowLabel;
+    if (row.priority !== 0) return false;
+
     const model = route.model.toLowerCase();
     if (model.startsWith(`${providerName}/`)) return true;
     if (
@@ -895,10 +1097,12 @@ export class ProviderService {
   /**
    * Delete a single labeled key from a provider's chain. If it was the last
    * key for the (agent, provider, auth_type) tuple, falls through to the
-   * existing whole-provider teardown. Routes pinned to this key block deletion.
+   * existing whole-provider teardown. Routes pinned to an active key block
+   * deletion; inactive keys are already disconnected, so deleting them clears
+   * stale label pins and removes the row.
    */
   private async removeKeyByLabel(
-    agentId: string,
+    agentId: string | null,
     tenantId: string,
     provider: string,
     authType: AuthType | undefined,
@@ -914,6 +1118,20 @@ export class ProviderService {
     const target = matching.find((r) => r.label.toLowerCase() === label.toLowerCase());
     if (!target) throw new NotFoundException('Provider key not found');
 
+    if (!target.is_active) {
+      await this.relabelOverrides(tenantId, provider, target.auth_type, target.label, null);
+      await this.agentMessageRepo(manager).delete({
+        tenant_id: tenantId,
+        tenant_provider_id: target.id,
+      });
+      await repo.remove(target);
+      await this.deleteProviderAccess([target.id], manager);
+      await this.renumberPriorities(tenantId, provider, target.auth_type, manager);
+      if (agentId !== null) this.routingCache.invalidateAgent(agentId);
+      this.routingCache.invalidateTenant(tenantId);
+      return { notifications: [] };
+    }
+
     const stillHasOtherKeys = matching.some(
       (r) => r.id !== target.id && r.is_active && isManifestUsableProvider(r),
     );
@@ -928,7 +1146,7 @@ export class ProviderService {
     await repo.remove(target);
     await this.deleteProviderAccess([target.id], manager);
     await this.renumberPriorities(tenantId, provider, target.auth_type, manager);
-    this.routingCache.invalidateAgent(agentId);
+    if (agentId !== null) this.routingCache.invalidateAgent(agentId);
     this.routingCache.invalidateTenant(tenantId);
     return { notifications: [] };
   }
@@ -1172,7 +1390,7 @@ export class ProviderService {
 
   private decryptOrNull(encrypted: string): string | null {
     try {
-      return decrypt(encrypted, getEncryptionSecret());
+      return decryptWithAny(encrypted, getDecryptionSecrets()).plaintext;
     } catch {
       return null;
     }

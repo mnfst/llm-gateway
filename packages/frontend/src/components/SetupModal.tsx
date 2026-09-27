@@ -1,5 +1,6 @@
 import { createResource, Show, type Component } from 'solid-js';
 import { getAgentKey } from '../services/api.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import { platformIcon } from 'manifest-shared';
 import ErrorState from './ErrorState.jsx';
 import SetupStepAddProvider from './SetupStepAddProvider.jsx';
@@ -20,9 +21,7 @@ const SetupModal: Component<{
   );
 
   const baseUrl = () => {
-    const host = window.location.hostname;
-    if (host === 'app.manifest.build') return 'https://app.manifest.build/v1';
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const handleGoToRouting = () => {
@@ -57,7 +56,7 @@ const SetupModal: Component<{
                   alt=""
                   width="28"
                   height="28"
-                  class="setup-modal__platform-icon"
+                  class="platform-icon setup-modal__platform-icon"
                 />
               </Show>
               <span class="setup-modal__title-text">

@@ -8,6 +8,11 @@ import { randomUUID } from 'crypto';
 
 import { OpenAIMessage } from './proxy-types';
 
+// Anthropic rejects tool_use ids outside ^[a-zA-Z0-9_-]+$, but non-Anthropic
+// upstreams mint ids like `Edit:0`; passing one through poisons the client's
+// history and 400s every later turn routed to a real Anthropic upstream.
+const sanitizeToolUseId = (id: string): string => id.replace(/[^a-zA-Z0-9_-]/g, '_');
+
 type JsonRecord = Record<string, unknown>;
 
 const DEFAULT_CUSTOM_TOOL_INPUT_SCHEMA = {
@@ -16,28 +21,8 @@ const DEFAULT_CUSTOM_TOOL_INPUT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-const ANTHROPIC_SERVER_TOOL_PREFIXES = [
-  'bash_',
-  'code_execution_',
-  'computer_',
-  'memory_',
-  'text_editor_',
-  'tool_search_tool_',
-  'web_fetch_',
-  'web_search_',
-] as const;
-
-const ANTHROPIC_SERVER_TOOL_TYPES = ['mcp_toolset'] as const;
-
 function isRecord(value: unknown): value is JsonRecord {
   return !!value && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isAnthropicServerToolType(type: string): boolean {
-  return (
-    ANTHROPIC_SERVER_TOOL_TYPES.includes(type as (typeof ANTHROPIC_SERVER_TOOL_TYPES)[number]) ||
-    ANTHROPIC_SERVER_TOOL_PREFIXES.some((prefix) => type.startsWith(prefix))
-  );
 }
 
 function normalizeOpenAiFunctionSchema(schema: unknown): unknown {
@@ -134,7 +119,42 @@ function buildAssistantMessage(content: unknown): OpenAIMessage[] {
   return [message];
 }
 
-function buildUserMessages(content: unknown): OpenAIMessage[] {
+function splitToolResultContent(content: unknown): {
+  toolContent: string;
+  imageParts: JsonRecord[];
+} {
+  // Tool messages are text-only in chat_completions, so a nested image block
+  // would otherwise ride inside the stringified tool output as raw base64 —
+  // which downstream providers tokenize as TEXT at roughly 1.5 chars/token
+  // (a single screenshot becomes 100K+ input tokens). Pull images out for a
+  // follow-up user message and leave a short placeholder in the tool output.
+  if (!Array.isArray(content)) {
+    return { toolContent: safeJsonStringify(content), imageParts: [] };
+  }
+  const imageParts: JsonRecord[] = [];
+  const sanitized = content.map((block) => {
+    if (!isRecord(block) || block.type !== 'image') return block;
+    const part = imageBlockToImagePart(block);
+    if (!part) return block;
+    imageParts.push(part);
+    return { type: 'text', text: '[image attached below]' };
+  });
+  return { toolContent: safeJsonStringify(sanitized), imageParts };
+}
+
+function flushToolImages(messages: OpenAIMessage[], pendingToolImages: JsonRecord[]): void {
+  if (pendingToolImages.length === 0) return;
+  messages.push({
+    role: 'user',
+    content: [
+      { type: 'text', text: 'Images from the preceding tool result:' },
+      ...pendingToolImages,
+    ],
+  });
+  pendingToolImages.length = 0;
+}
+
+function buildUserMessages(content: unknown, pendingToolImages: JsonRecord[]): OpenAIMessage[] {
   // Walk Anthropic content blocks in input order and emit chat_completions
   // messages without reshuffling. Each `tool_result` becomes a standalone
   // `role: tool` message; intermediate text/image blocks accumulate into a
@@ -142,7 +162,10 @@ function buildUserMessages(content: unknown): OpenAIMessage[] {
   // the end of the turn. Preserves the relative order of tool_result blocks
   // vs. surrounding text in mixed-content user turns.
   if (typeof content === 'string') {
-    return content ? [{ role: 'user', content }] : [];
+    const messages: OpenAIMessage[] = [];
+    flushToolImages(messages, pendingToolImages);
+    if (content) messages.push({ role: 'user', content });
+    return messages;
   }
   if (!Array.isArray(content)) return [];
 
@@ -165,14 +188,18 @@ function buildUserMessages(content: unknown): OpenAIMessage[] {
     if (!isRecord(block)) continue;
     if (block.type === 'tool_result') {
       flushPendingUser();
+      const { toolContent, imageParts } = splitToolResultContent(block.content);
       messages.push({
         role: 'tool',
         tool_call_id: typeof block.tool_use_id === 'string' ? block.tool_use_id : 'unknown',
-        content: safeJsonStringify(block.content),
+        content: toolContent,
       });
+      pendingToolImages.push(...imageParts);
     } else if (block.type === 'text' && typeof block.text === 'string') {
+      flushToolImages(messages, pendingToolImages);
       pendingParts.push({ type: 'text', text: block.text });
     } else if (block.type === 'image') {
+      flushToolImages(messages, pendingToolImages);
       const part = imageBlockToImagePart(block);
       if (part) pendingParts.push(part);
     }
@@ -186,7 +213,19 @@ function buildUserMessages(content: unknown): OpenAIMessage[] {
 // and array length, nothing else. The Anthropic wire body is emitted by
 // `applyAnthropicMessagesMutations` directly from the inbound body, so this
 // translation can lose Anthropic-only tool fields (e.g. server-tool `type`
-// tags, omitted input_schema) without affecting upstream behavior.
+// tags, omitted input_schema) without affecting upstream behavior *when the
+// resolved provider is Anthropic*.
+//
+// But `chatBody.tools` is also the literal wire payload forwarded to
+// non-Anthropic providers reached via the chat-completions wire format (see
+// `ProviderClient.forward`'s `needsChatBody` path) — those providers never
+// see the native Anthropic body. Anthropic server tools (`web_search_*`,
+// `bash_*`, `computer_*`, etc.) have no `input_schema`, and some strict
+// chat-completions providers (e.g. MiniMax) reject any function tool whose
+// `parameters` field is missing entirely — even though the tool itself can't
+// run there regardless. Emitting the same safe empty-object schema used for
+// unrecognized tool types (issue #1897) keeps the request well-formed
+// without pretending the schema is meaningful (fixes #2754).
 function toChatTools(tools: unknown[]): JsonRecord[] {
   return tools.filter(isRecord).map((tool) => ({
     type: 'function',
@@ -195,9 +234,7 @@ function toChatTools(tools: unknown[]): JsonRecord[] {
       ...(typeof tool.description === 'string' && { description: tool.description }),
       ...(tool.input_schema !== undefined
         ? { parameters: normalizeOpenAiFunctionSchema(tool.input_schema) }
-        : typeof tool.type === 'string' &&
-            tool.type !== 'custom' &&
-            !isAnthropicServerToolType(tool.type)
+        : typeof tool.type === 'string' && tool.type !== 'custom'
           ? { parameters: DEFAULT_CUSTOM_TOOL_INPUT_SCHEMA }
           : {}),
     },
@@ -217,6 +254,7 @@ function toChatToolChoice(choice: unknown): unknown {
 /** Anthropic Messages request → chat_completions request (used for routing/forwarding). */
 export function messagesToChatCompletionsRequest(body: JsonRecord): JsonRecord {
   const messages: OpenAIMessage[] = [];
+  const pendingToolImages: JsonRecord[] = [];
 
   const systemText = systemToString(body.system);
   if (systemText) messages.push({ role: 'system', content: systemText });
@@ -225,12 +263,17 @@ export function messagesToChatCompletionsRequest(body: JsonRecord): JsonRecord {
   for (const item of inputMessages) {
     if (!isRecord(item)) continue;
     const role = item.role === 'assistant' ? 'assistant' : 'user';
-    messages.push(
-      ...(role === 'assistant'
-        ? buildAssistantMessage(item.content)
-        : buildUserMessages(item.content)),
-    );
+    if (role === 'assistant') {
+      flushToolImages(messages, pendingToolImages);
+      messages.push(...buildAssistantMessage(item.content));
+    } else {
+      messages.push(...buildUserMessages(item.content, pendingToolImages));
+    }
   }
+  // Anthropic combines consecutive user messages into one logical turn.
+  // Keep extracted images buffered across those message boundaries so all
+  // sibling tool results stay contiguous in the OpenAI-compatible request.
+  flushToolImages(messages, pendingToolImages);
 
   const chatBody: JsonRecord = { messages };
 
@@ -243,7 +286,12 @@ export function messagesToChatCompletionsRequest(body: JsonRecord): JsonRecord {
   if (body.stop_sequences !== undefined) chatBody.stop = body.stop_sequences;
   // Anthropic-native fields with no chat_completions analogue. Carried on
   // chatBody so toAnthropicRequest can forward them when the resolved
-  // provider is Anthropic; harmlessly ignored by other adapters.
+  // provider is Anthropic. Native OpenAI rejects `thinking` as an unknown
+  // parameter, so the forwarding boundary only preserves the lossless case:
+  // `thinking: {type: disabled}` becomes reasoning_effort `none` (and only on a
+  // model that reasons); every other thinking config is dropped and falls back
+  // to the provider's default reasoning (see applyAnthropicThinkingForOpenAi
+  // in provider-client).
   if (body.thinking !== undefined) chatBody.thinking = body.thinking;
   if (body.top_k !== undefined) chatBody.top_k = body.top_k;
 
@@ -276,10 +324,23 @@ function toAnthropicUsage(usage: unknown): JsonRecord {
   const cacheRead =
     typeof u.cache_read_tokens === 'number'
       ? u.cache_read_tokens
-      : typeof promptDetails?.cached_tokens === 'number'
-        ? promptDetails.cached_tokens
-        : 0;
-  const cacheCreation = typeof u.cache_creation_tokens === 'number' ? u.cache_creation_tokens : 0;
+      : typeof u.prompt_cache_hit_tokens === 'number'
+        ? u.prompt_cache_hit_tokens
+        : typeof u.cached_tokens === 'number'
+          ? u.cached_tokens
+          : typeof promptDetails?.cached_tokens === 'number'
+            ? promptDetails.cached_tokens
+            : 0;
+  const cacheCreation =
+    typeof u.cache_creation_tokens === 'number'
+      ? u.cache_creation_tokens
+      : typeof u.cache_creation_input_tokens === 'number'
+        ? u.cache_creation_input_tokens
+        : typeof promptDetails?.cache_write_tokens === 'number'
+          ? promptDetails.cache_write_tokens
+          : typeof promptDetails?.cache_creation_input_tokens === 'number'
+            ? promptDetails.cache_creation_input_tokens
+            : 0;
   // Chat-shape prompt_tokens is the full input total (uncached + cache reads +
   // cache creation). Anthropic Messages' input_tokens is the uncached portion
   // only, with cache_read_input_tokens / cache_creation_input_tokens reported
@@ -333,7 +394,10 @@ export function chatCompletionsResponseToMessages(body: JsonRecord, model: strin
       if (!isRecord(call) || !isRecord(call.function)) continue;
       content.push({
         type: 'tool_use',
-        id: typeof call.id === 'string' ? call.id : `toolu_${randomUUID().replace(/-/g, '')}`,
+        id:
+          typeof call.id === 'string' && call.id !== ''
+            ? sanitizeToolUseId(call.id)
+            : `toolu_${randomUUID().replace(/-/g, '')}`,
         name: typeof call.function.name === 'string' ? call.function.name : '',
         input: safeParseJson(call.function.arguments),
       });
@@ -508,7 +572,10 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
         let entry = state.toolCalls.get(callIndex);
         if (!entry) {
           entry = {
-            id: typeof call.id === 'string' ? call.id : `toolu_${randomUUID().replace(/-/g, '')}`,
+            id:
+              typeof call.id === 'string' && call.id !== ''
+                ? sanitizeToolUseId(call.id)
+                : `toolu_${randomUUID().replace(/-/g, '')}`,
             index: nextBlockIndex(state),
             argBuffer: '',
             opened: false,

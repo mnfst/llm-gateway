@@ -1,0 +1,66 @@
+{
+    "name": "n8n-nodes-manifest",
+    "version": "0.2.3",
+    "description": "Use Manifest's OpenAI-compatible model router from n8n workflows.",
+    "license": "MIT",
+    "homepage": "https://manifest.build",
+    "keywords": [
+        "n8n-community-node-package",
+        "n8n",
+        "manifest",
+        "ai",
+        "llm",
+        "openai-compatible",
+        "model-router"
+    ],
+    "author": {
+        "name": "MNFST Inc.",
+        "email": "support@manifest.build",
+        "url": "https://manifest.build"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/mnfst/llm-gateway.git",
+        "directory": "integrations/n8n-nodes-manifest"
+    },
+    "bugs": {
+        "url": "https://github.com/mnfst/llm-gateway/issues"
+    },
+    "scripts": {
+        "build": "n8n-node build",
+        "build:watch": "tsc --watch",
+        "dev": "n8n-node dev",
+        "lint": "n8n-node lint",
+        "lint:fix": "n8n-node lint --fix",
+        "release": "n8n-node release",
+        "test": "npm run build && node --test",
+        "prepublishOnly": "n8n-node prerelease"
+    },
+    "files": [
+        "dist"
+    ],
+    "n8n": {
+        "n8nNodesApiVersion": 1,
+        "aiNodeSdkVersion": 1,
+        "strict": true,
+        "credentials": [
+            "dist/credentials/ManifestApi.credentials.js"
+        ],
+        "nodes": [
+            "dist/nodes/Manifest/Manifest.node.js",
+            "dist/nodes/LmChatManifest/LmChatManifest.node.js"
+        ]
+    },
+    "devDependencies": {
+        "@n8n/ai-node-sdk": "^0.21.3",
+        "@n8n/node-cli": "^0.38.7",
+        "eslint": "9.32.0",
+        "prettier": "3.6.2",
+        "release-it": "^21.0.0",
+        "typescript": "5.9.2"
+    },
+    "peerDependencies": {
+        "@n8n/ai-node-sdk": "*",
+        "n8n-workflow": "*"
+    }
+}

@@ -5,6 +5,7 @@ import {
   readFallbackRoutes,
   readOverrideRoute,
   routeMatches,
+  subscriptionPreferredRoute,
   unambiguousRoute,
 } from '../route-helpers';
 import type { ModelRoute } from 'manifest-shared';
@@ -123,6 +124,68 @@ describe('route-helpers', () => {
     it('returns null when matched model has no authType', () => {
       const list = [discovered('gpt-4o', 'openai', undefined as never)];
       expect(unambiguousRoute('gpt-4o', list)).toBeNull();
+    });
+  });
+
+  describe('subscriptionPreferredRoute', () => {
+    it('resolves a same-provider subscription + api_key pair to the subscription', () => {
+      const list = [
+        discovered('gpt-4o', 'openai', 'api_key'),
+        discovered('gpt-4o', 'openai', 'subscription'),
+      ];
+      expect(subscriptionPreferredRoute('gpt-4o', list)).toEqual(
+        route('openai', 'subscription', 'gpt-4o'),
+      );
+    });
+    it('matches provider case-insensitively', () => {
+      const list = [
+        discovered('gpt-4o', 'OpenAI', 'subscription'),
+        discovered('gpt-4o', 'openai', 'api_key'),
+      ];
+      expect(subscriptionPreferredRoute('gpt-4o', list)).toEqual(
+        route('OpenAI', 'subscription', 'gpt-4o'),
+      );
+    });
+    it('returns null for a single match', () => {
+      expect(
+        subscriptionPreferredRoute('gpt-4o', [discovered('gpt-4o', 'openai', 'subscription')]),
+      ).toBeNull();
+    });
+    it('returns null for three or more matches', () => {
+      const list = [
+        discovered('gpt-4o', 'openai', 'api_key'),
+        discovered('gpt-4o', 'openai', 'subscription'),
+        discovered('gpt-4o', 'openai', 'local'),
+      ];
+      expect(subscriptionPreferredRoute('gpt-4o', list)).toBeNull();
+    });
+    it('returns null when the pair is not subscription + api_key', () => {
+      const list = [
+        discovered('gpt-4o', 'openai', 'subscription'),
+        discovered('gpt-4o', 'openai', 'local'),
+      ];
+      expect(subscriptionPreferredRoute('gpt-4o', list)).toBeNull();
+    });
+    it('returns null for two matches of the same auth type', () => {
+      const list = [
+        discovered('gpt-4o', 'openai', 'api_key'),
+        discovered('gpt-4o', 'azure', 'api_key'),
+      ];
+      expect(subscriptionPreferredRoute('gpt-4o', list)).toBeNull();
+    });
+    it('returns null for a cross-provider collision', () => {
+      const list = [
+        discovered('gpt-4o', 'openai', 'subscription'),
+        discovered('gpt-4o', 'azure', 'api_key'),
+      ];
+      expect(subscriptionPreferredRoute('gpt-4o', list)).toBeNull();
+    });
+    it('ignores matches without an authType', () => {
+      const list = [
+        discovered('gpt-4o', 'openai', undefined as never),
+        discovered('gpt-4o', 'openai', 'subscription'),
+      ];
+      expect(subscriptionPreferredRoute('gpt-4o', list)).toBeNull();
     });
   });
 

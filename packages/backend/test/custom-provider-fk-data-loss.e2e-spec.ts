@@ -2,6 +2,7 @@ import { DataSource } from 'typeorm';
 import { AddCustomProviderFkToUserProviders1792100000000 } from '../src/database/migrations/1792100000000-AddCustomProviderFkToUserProviders';
 import { TenantProviders1792500000000 } from '../src/database/migrations/1792500000000-TenantProviders';
 import { TenantScopedConfigs1792600000000 } from '../src/database/migrations/1792600000000-TenantScopedConfigs';
+import { AddRequestsAndProviderAttempts1801000000000 } from '../src/database/migrations/1801000000000-AddRequestsAndProviderAttempts';
 
 const DB_URL =
   process.env['DATABASE_URL'] ?? 'postgresql://myuser:mypassword@localhost:5432/manifest_duprepro';
@@ -55,7 +56,11 @@ describe('AddCustomProviderFkToUserProviders deployment data-loss invariant (e2e
   beforeAll(async () => {
     ds = makeDataSource();
     await ds.initialize();
-    await ds.runMigrations();
+    await ds.runMigrations({ transaction: 'each' });
+
+    const requestSchemaQr = ds.createQueryRunner();
+    await new AddRequestsAndProviderAttempts1801000000000().down(requestSchemaQr);
+    await requestSchemaQr.release();
 
     // The tenant-canonical chain (later migrations) renames user_providers →
     // tenant_providers and demotes custom_providers.user_id → created_by_user_id;

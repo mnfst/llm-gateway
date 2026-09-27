@@ -15,7 +15,7 @@ If you already pay for one of the plans below, Manifest can route through that s
 | [Command Code](https://commandcode.ai/studio)               | Command Code subscription   | Subscription token   | Dynamic Provider API catalog                         |
 | [Qwen](https://home.qwencloud.com/api-keys)                 | Qwen Token Plan             | Subscription token   | Dynamic Token Plan catalog                           |
 | [Xiaomi MiMo](https://platform.xiaomimimo.com)              | MiMo Token Plan             | Subscription token   | Fixed MiMo Token Plan model list                     |
-| [Moonshot](https://www.kimi.com/code/console)               | Kimi Coding Plan            | Subscription token   | `kimi-for-coding`                                    |
+| [Moonshot](https://www.kimi.com/code/console)               | Kimi Coding Plan            | Subscription token   | Fixed Kimi Coding Plan model list                    |
 | [Z.ai](https://z.ai)                                        | GLM Coding Plan             | Subscription token   | Fixed GLM Coding Plan model list                     |
 | [Google](https://ai.google.dev)                             | Sign in with Google         | OAuth (browser)      | Fixed Gemini CodeAssist model list                   |
 | [MiniMax](https://www.minimax.io)                           | MiniMax Coding Plan         | Device code or token | Fixed MiniMax Coding Plan model list                 |
@@ -65,7 +65,7 @@ Paste a MiMo Token Plan API key. Token Plan keys use the `tp-` prefix. Manifest 
 
 ### Moonshot
 
-Paste a Kimi Code API key from the Kimi Code console. Requests route through Kimi Code's Anthropic-compatible endpoint for the fixed `kimi-for-coding` model.
+Paste a Kimi Code API key from the Kimi Code console. Requests route through Kimi Code's Anthropic-compatible endpoint for the fixed `k3`, `k3-256k`, `kimi-for-coding`, and `kimi-for-coding-highspeed` model catalog.
 
 ### Z.ai
 

@@ -7,9 +7,11 @@ const KNOWN_PROVIDERS = [
   'anthropic',
   'bedrock',
   'byteplus',
+  'cerebras',
   'copilot',
   'commandcode',
   'gemini',
+  'gemini-free',
   'groq',
   'kiro',
   'deepseek',
@@ -19,8 +21,10 @@ const KNOWN_PROVIDERS = [
   'qwen',
   'moonshot',
   'openrouter',
+  'vertex',
   'ollama',
   'ollama-cloud',
+  'pioneer',
   'minimax',
   'xiaomi',
   'zai',
@@ -45,6 +49,15 @@ describe('providerIcon', () => {
     expect(img?.getAttribute('alt')).toBe('Manifest');
   });
 
+  it('returns the Meta logo image for "meta"', () => {
+    const { container } = render(() => <div>{providerIcon('meta', 24)}</div>);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('src')).toBe('/icons/providers/meta.svg');
+    expect(img?.getAttribute('width')).toBe('24');
+    expect(img?.getAttribute('height')).toBe('24');
+  });
+
   it('returns an SVG for "llamacpp"', () => {
     const { container } = render(() => <div>{providerIcon('llamacpp')}</div>);
     const svg = container.querySelector('svg');
@@ -56,6 +69,33 @@ describe('providerIcon', () => {
     const img = container.querySelector('img');
     expect(img).not.toBeNull();
     expect(img!.getAttribute('src')).toBe('/icons/kilocode.svg');
+    expect(img!.getAttribute('width')).toBe('24');
+    expect(img!.getAttribute('height')).toBe('24');
+  });
+
+  it('returns the Hugging Face logo image for "huggingface"', () => {
+    const { container } = render(() => <div>{providerIcon('huggingface', 24)}</div>);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/huggingface.svg');
+    expect(img!.getAttribute('width')).toBe('24');
+    expect(img!.getAttribute('height')).toBe('24');
+  });
+
+  it('returns the NousResearch logo image for "nous"', () => {
+    const { container } = render(() => <div>{providerIcon('nous', 24)}</div>);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/providers/nousresearch.svg');
+    expect(img!.getAttribute('width')).toBe('24');
+    expect(img!.getAttribute('height')).toBe('24');
+  });
+
+  it('returns the ClinePass logo image for "cline-pass"', () => {
+    const { container } = render(() => <div>{providerIcon('cline-pass', 24)}</div>);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/providers/cline-pass.png');
     expect(img!.getAttribute('width')).toBe('24');
     expect(img!.getAttribute('height')).toBe('24');
   });
@@ -121,6 +161,45 @@ describe('customProviderLogo', () => {
     const img = container.querySelector('img');
     expect(img).not.toBeNull();
     expect(img!.getAttribute('src')).toBe('/icons/cohere.svg');
+  });
+
+  it('resolves Pioneer by base URL when name does not match', () => {
+    const { container } = render(() => (
+      <div>{customProviderLogo('my-provider', 16, 'https://api.pioneer.ai/v1')}</div>
+    ));
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/pioneer.svg');
+  });
+
+  it('resolves Vertex AI by base URL when name does not match', () => {
+    const { container } = render(() => (
+      <div>
+        {customProviderLogo(
+          'my-provider',
+          16,
+          'https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1',
+        )}
+      </div>
+    ));
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/vertex.svg');
+  });
+
+  it.each(['vertex', 'google-vertex', 'vertex-ai', 'Vertex AI'])(
+    'resolves %s to the branded inline Vertex icon via the shared registry',
+    (name: string) => {
+      const { container } = render(() => <div>{customProviderLogo(name)}</div>);
+      expect(container.querySelector('svg')).not.toBeNull();
+    },
+  );
+
+  it('falls back to the Vertex logo image for an unregistered Vertex name', () => {
+    const { container } = render(() => <div>{customProviderLogo('Google Vertex AI')}</div>);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/vertex.svg');
   });
 
   it('resolves Azure by name', () => {

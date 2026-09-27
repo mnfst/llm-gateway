@@ -5,7 +5,7 @@ const OverviewSkeleton = () => (
     <div class="chart-card">
       <div class="chart-card__header">
         <div class="chart-card__stat chart-card__stat--active">
-          <span class="chart-card__label">Messages</span>
+          <span class="chart-card__label">Requests</span>
           <div class="chart-card__value-row">
             <div class="skeleton skeleton--text" style="width: 50px; height: 28px;" />
           </div>
@@ -32,7 +32,7 @@ const OverviewSkeleton = () => (
         class="panel__title"
         style="display: flex; justify-content: space-between; align-items: center;"
       >
-        Recent Messages
+        Recent Requests
         <span class="view-more-link" style="pointer-events: none; opacity: 0.4;">
           View more
         </span>
@@ -41,7 +41,7 @@ const OverviewSkeleton = () => (
         <thead>
           <tr>
             <th>Date</th>
-            <th>Message</th>
+            <th>Request</th>
             <th>Cost</th>
             <th>Model</th>
             <th>Tokens</th>

@@ -226,6 +226,31 @@ describe('filterNonChatModels', () => {
     });
   });
 
+  describe('Gemini Free LiteLLM catalog', () => {
+    it('keeps usable Gemini chat models', () => {
+      const models = [
+        makeModel('gemini/gemini-2.5-flash'),
+        makeModel('gemini/gemini-2.5-pro'),
+        makeModel('gemini/gemini-3-flash-preview'),
+      ];
+      expect(filterNonChatModels(models, 'gemini-free')).toEqual(models);
+    });
+
+    it('filters media-only, retired, and experimental Gemini models', () => {
+      const models = [
+        makeModel('gemini/gemini-2.5-flash'),
+        makeModel('gemini/gemini-2.5-flash-image'),
+        makeModel('gemini/gemini-2.5-flash-native-audio-latest'),
+        makeModel('gemini/gemini-1.5-flash'),
+        makeModel('gemini/gemini-exp-1206'),
+        makeModel('gemini/veo-3.1-generate-001'),
+      ];
+      expect(filterNonChatModels(models, 'gemini-free').map((model) => model.id)).toEqual([
+        'gemini/gemini-2.5-flash',
+      ]);
+    });
+  });
+
   describe('Mistral-specific patterns', () => {
     it('filters mistral-ocr model', () => {
       const models = [makeModel('mistral-ocr'), makeModel('mistral-large-latest')];
@@ -275,6 +300,12 @@ describe('filterNonChatModels', () => {
       ];
       const result = filterNonChatModels(models, 'mistral');
       expect(result.map((m) => m.id)).toEqual(['mistral-large-latest']);
+    });
+
+    it('keeps mistral-vibe-cli models for subscription discovery', () => {
+      const models = [makeModel('mistral-vibe-cli-latest'), makeModel('mistral-large-latest')];
+      const result = filterNonChatModels(models, 'mistral-subscription');
+      expect(result.map((m) => m.id)).toEqual(['mistral-vibe-cli-latest', 'mistral-large-latest']);
     });
 
     it('filters labs-prefixed models', () => {

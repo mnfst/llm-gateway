@@ -3,6 +3,7 @@ import { SeedPlaygroundAgents1791400000000 } from '../src/database/migrations/17
 import { RenameProviderAccessToEnabledProviders1791800000000 } from '../src/database/migrations/1791800000000-RenameProviderAccessToEnabledProviders';
 import { RenameIsSystemToIsPlayground1791900000000 } from '../src/database/migrations/1791900000000-RenameIsSystemToIsPlayground';
 import { TenantProviders1792500000000 } from '../src/database/migrations/1792500000000-TenantProviders';
+import { AddRequestsAndProviderAttempts1801000000000 } from '../src/database/migrations/1801000000000-AddRequestsAndProviderAttempts';
 
 /**
  * Runs the REAL migration chain so SeedPlaygroundAgents executes against
@@ -31,7 +32,11 @@ describe('SeedPlaygroundAgents data transformation (e2e)', () => {
       logging: false,
     });
     await ds.initialize();
-    await ds.runMigrations();
+    await ds.runMigrations({ transaction: 'each' });
+
+    const requestSchemaQr = ds.createQueryRunner();
+    await new AddRequestsAndProviderAttempts1801000000000().down(requestSchemaQr);
+    await requestSchemaQr.release();
 
     // Revert the later tenant re-scope first (newest first) so this historical
     // migration can be replayed against the schema naming it expects

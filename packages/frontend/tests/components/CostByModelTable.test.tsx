@@ -22,6 +22,26 @@ describe('CostByModelTable', () => {
     expect(headers).toEqual(['Model', 'Tokens', '% of total', 'Cost']);
   });
 
+  it('is titled "Model usage" and adds attempt reliability columns when data is provided', () => {
+    const { container } = render(() => (
+      <CostByModelTable
+        rows={[row({ model: 'gpt-4o' })]}
+        reliability={[{ model: 'gpt-4o', attempts: 120, failed: 10, succeeded: 110 }]}
+      />
+    ));
+    expect(container.textContent).toContain('Model usage');
+    const headers = Array.from(container.querySelectorAll('th')).map((h) => h.textContent?.trim());
+    // Attempt world: a model is not healed, it acts. Total attempts counts
+    // every provider call on the model; Success rate is attempt-level.
+    expect(headers).toEqual(['Model', 'Tokens', '% of total', 'Cost', 'Total attempts', 'Success rate']);
+    const cells = Array.from(container.querySelectorAll('tbody td')).map((c) =>
+      c.textContent?.trim(),
+    );
+    expect(cells).toContain('120'); // total attempts
+    expect(cells).toContain('91.7%'); // 110 / 120
+    expect(container.textContent).not.toContain('Healed');
+  });
+
   it('sorts rows by estimated_cost descending', () => {
     const { container } = render(() => (
       <CostByModelTable
@@ -258,5 +278,34 @@ describe('CostByModelTable', () => {
       // Infinity > 0 && Infinity < 0.01 is false, so no sub-penny tooltip.
       expect(cell?.getAttribute('title')).toBeNull();
     });
+  });
+
+  it('words the Total attempts tooltip by Doctor availability', () => {
+    const { container, unmount } = render(() => (
+      <CostByModelTable
+        rows={[row({ model: 'gpt-4o' })]}
+        reliability={[{ model: 'gpt-4o', attempts: 10, failed: 1, succeeded: 9 }]}
+        doctorAvailable
+      />
+    ));
+    const labels = () =>
+      [...container.querySelectorAll('.info-tooltip')].map((e) => e.getAttribute('aria-label'));
+    expect(labels().join(' ')).toContain('including fallback retries and autofixed attempts');
+    unmount();
+
+    const { container: c2 } = render(() => (
+      <CostByModelTable
+        rows={[row({ model: 'gpt-4o' })]}
+        reliability={[{ model: 'gpt-4o', attempts: 10, failed: 1, succeeded: 9 }]}
+      />
+    ));
+    // Without the Doctor version the sentence never mentions Autofix.
+    const labels2 = [...c2.querySelectorAll('.info-tooltip')]
+      .map((e) => e.getAttribute('aria-label'))
+      .join(' ');
+    expect(labels2).toContain('including fallback retries.');
+    expect(labels2).not.toContain('autofixed');
+    // Success rate carries the model-grain definition.
+    expect(labels2).toContain('Successful attempts over all attempts for this model.');
   });
 });

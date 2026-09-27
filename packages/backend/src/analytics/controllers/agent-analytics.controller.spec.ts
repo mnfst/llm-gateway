@@ -24,6 +24,9 @@ describe('AgentAnalyticsController', () => {
       input_tokens: 3000,
       output_tokens: 2000,
       cache_read_tokens: 1000,
+      cache_creation_tokens: 250,
+      cache_read_rate: 1 / 3,
+      cache_write_rate: 1 / 12,
       message_count: 10,
       trend_pct: -15,
     });

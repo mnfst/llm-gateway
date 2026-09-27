@@ -39,7 +39,7 @@ export interface ProviderDetailViewProps {
   validationError: Accessor<string | null>;
   setValidationError: Setter<string | null>;
   onBack: () => void;
-  onUpdate: () => void;
+  onUpdate: () => void | Promise<void>;
   onPollProviders?: () => void | Promise<void>;
   onClose: () => void;
   initialAddKey?: boolean;
@@ -116,8 +116,13 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
     ),
   );
 
+  // Closed providers keep existing connections manageable but take no new ones.
+  const subscriptionClosed = () => isSubMode() && !!provDef.subscriptionClosedNote;
+  const showConnectFlow = () => !subscriptionClosed() || connected();
+
   const showAddKeyButton = () =>
     connected() &&
+    !subscriptionClosed() &&
     supportsMultiKey() &&
     activeKeys().length < MAX_KEYS_PER_PROVIDER &&
     !addKeyOpen();
@@ -140,12 +145,17 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
   };
 
   const [refreshing, setRefreshing] = createSignal(false);
+  const [refreshedModelCount, setRefreshedModelCount] = createSignal<number | null>(null);
+  const [refreshedAt, setRefreshedAt] = createSignal<string | null>(null);
 
   const activeProviderRow = () => getProviderByAuth(props.selectedAuthType());
-  const lastFetchedAgo = () => formatTimeAgo(activeProviderRow()?.models_fetched_at ?? null);
+  const modelCount = () => refreshedModelCount() ?? activeProviderRow()?.cached_model_count ?? 0;
+  const lastFetchedAgo = () =>
+    formatTimeAgo(refreshedAt() ?? activeProviderRow()?.models_fetched_at ?? null);
 
   const handleRefreshModels = async () => {
     setRefreshing(true);
+    let refreshed = false;
     try {
       const result = await refreshProviderModels(
         props.agentName,
@@ -153,13 +163,20 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
         props.selectedAuthType(),
       );
       if (result.ok) {
+        refreshed = true;
+        setRefreshedModelCount(result.model_count);
+        setRefreshedAt(result.last_fetched_at);
         toast.success(
           `${provDef.name}: refreshed ${result.model_count} model${result.model_count === 1 ? '' : 's'}`,
         );
       } else {
         toast.error(result.error ?? `Couldn't refresh ${provDef.name}`);
       }
-      props.onUpdate();
+      await props.onUpdate();
+      if (refreshed) {
+        setRefreshedModelCount(null);
+        setRefreshedAt(null);
+      }
     } catch {
       // network/server error toast already raised by fetchMutate
     } finally {
@@ -261,6 +278,12 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
         </div>
       </div>
 
+      <Show when={subscriptionClosed()}>
+        <p class="provider-detail__hint" role="note">
+          {provDef.subscriptionClosedNote}
+        </p>
+      </Show>
+
       <Show when={isSubMode() && provDef.subscriptionRequirementNote}>
         <p style="font-size: 14px; color: hsl(var(--muted-foreground)); margin: 0 0 12px; line-height: 1.5;">
           {provDef.subscriptionRequirementNote}
@@ -270,9 +293,9 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       <Show when={connected()}>
         <div class="provider-detail__models-bar">
           <span>
-            {activeProviderRow()?.cached_model_count ?? 0} model
-            {(activeProviderRow()?.cached_model_count ?? 0) === 1 ? '' : 's'}
-            <Show when={lastFetchedAgo()}> – last refreshed: {lastFetchedAgo()}</Show>
+            {modelCount()} model
+            {modelCount() === 1 ? '' : 's'}
+            <Show when={lastFetchedAgo()}> - last refreshed: {lastFetchedAgo()}</Show>
           </span>
           <button
             class="btn btn--outline btn--sm provider-detail__refresh-btn"
@@ -302,7 +325,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Subscription sign-in URL instruction (token mode with external sign-in) */}
-      <Show when={isSubMode() && provDef.subscriptionSignInUrl}>
+      <Show when={showConnectFlow() && isSubMode() && provDef.subscriptionSignInUrl}>
         <p class="provider-detail__hint">
           {provDef.subscriptionSignInHint ??
             `Sign in to your ${provDef.name} account to get your API key, then paste it below.`}
@@ -334,7 +357,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Subscription terminal instruction */}
-      <Show when={isSubMode() && provDef.subscriptionCommand}>
+      <Show when={showConnectFlow() && isSubMode() && provDef.subscriptionCommand}>
         <p class="provider-detail__hint">
           {isCommandOnly()
             ? 'Run the command below to log in via your browser.'
@@ -362,7 +385,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Command-only subscription */}
-      <Show when={isCommandOnly()}>
+      <Show when={showConnectFlow() && isCommandOnly()}>
         <p class="provider-detail__hint" style="margin-top: 16px;">
           A browser window will open for you to log in. Once authenticated, the connection will be
           detected automatically.
@@ -386,7 +409,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* OAuth subscription */}
-      <Show when={isPopupOAuthFlow()}>
+      <Show when={showConnectFlow() && isPopupOAuthFlow()}>
         <OAuthDetailView
           provDef={provDef}
           provId={props.provId}
@@ -406,7 +429,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Paste-code OAuth subscription (Anthropic) */}
-      <Show when={isPopupPasteFlow()}>
+      <Show when={showConnectFlow() && isPopupPasteFlow()}>
         <AnthropicOAuthDetailView
           provDef={provDef}
           provId={props.provId}
@@ -425,7 +448,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Device-code subscription */}
-      <Show when={isDeviceCodeFlow()}>
+      <Show when={showConnectFlow() && isDeviceCodeFlow()}>
         <DeviceCodeDetailView
           provDef={provDef}
           provId={props.provId}
@@ -486,6 +509,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       {/* API key / subscription token form (non-Ollama, non-command-only, non-OAuth) */}
       <Show
         when={
+          showConnectFlow() &&
           !isOllama &&
           !isCommandOnly() &&
           !isPopupOAuthFlow() &&

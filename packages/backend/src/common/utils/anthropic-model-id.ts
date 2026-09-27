@@ -32,3 +32,12 @@ export function buildAnthropicShortModelIdVariants(model: string): string[] {
   variants.add(`${prefix}${bare.replace(DASHED_MINOR_RE, '-$1.$2')}`);
   return [...variants];
 }
+
+/**
+ * The model id the proxy forwards — and looks model params up under — for a
+ * stored route. Anthropic accepts dotted short ids (`claude-sonnet-4.5`) that
+ * it only serves in their dashed form.
+ */
+export function normalizeProviderModel(provider: string, model: string): string {
+  return provider.toLowerCase() === 'anthropic' ? normalizeAnthropicShortModelId(model) : model;
+}

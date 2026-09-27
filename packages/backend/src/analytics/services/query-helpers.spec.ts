@@ -6,12 +6,21 @@ import {
   selectMessageRowColumns,
   excludePlaygroundAgents,
   EXCLUDE_PLAYGROUND_AGENTS_PREDICATE,
+  excludeDirectAttempts,
+  EXCLUDE_DIRECT_ATTEMPTS_PREDICATE,
+  sqlExcludeDirectRequests,
   CUSTOM_PROVIDER_JOIN_CONDITION,
   PROVIDER_SERIES_KEY_EXPR,
   filterByKeyLabel,
+  filterByTenantProviderId,
+  scopeToConnection,
   filterByLiveAgentName,
   MESSAGE_ROW_SELECT_ALIASES,
+  sqlCountMessages,
+  ERROR_MESSAGE_STATUSES,
+  MANIFEST_ORIGIN_PREDICATE,
 } from './query-helpers';
+import { MANIFEST_ERROR_ORIGINS } from 'manifest-shared';
 import { SelectQueryBuilder } from 'typeorm';
 import { CustomProvider } from '../../entities/custom-provider.entity';
 
@@ -226,21 +235,84 @@ describe('excludePlaygroundAgents', () => {
     expect(mockAndWhere).toHaveBeenCalledWith(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE);
   });
 
-  it('matches the playground agent by id OR name and never multiplies rows', () => {
-    // The predicate is a pure existence test (cannot duplicate fact rows) and
+  it('matches the playground agent by id OR name, without correlating on agents', () => {
+    // Still a pure existence test that cannot duplicate fact rows, and still
     // matches on either agent_id OR agent_name (so a Playground row carrying
-    // only agent_name, NULL agent_id, is still excluded).
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('NOT EXISTS');
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('playag.is_playground = true');
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('playag.tenant_id = at.tenant_id');
+    // only agent_name, NULL agent_id, is excluded too).
+    //
+    // Both subqueries must stay UNCORRELATED. Postgres evaluates an
+    // uncorrelated `IN (subquery)` once, as a hashed SubPlan; the previous
+    // correlated NOT EXISTS was re-scanned per row whenever the planner
+    // declined to materialize it, costing 24.7s on the Overview.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('is_playground = true');
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('at.agent_id IN (SELECT plg.id');
     expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain(
-      'playag.id = at.agent_id OR playag.name = at.agent_name',
+      '(at.tenant_id, at.agent_name) IN (SELECT plg.tenant_id, plg.name',
     );
+    // No reference to the outer alias inside either subquery.
+    const subqueries = EXCLUDE_PLAYGROUND_AGENTS_PREDICATE.match(/\(SELECT plg[^)]*\)/g) ?? [];
+    expect(subqueries).toHaveLength(2);
+    for (const sub of subqueries) expect(sub).not.toContain('at.');
+    // The name arm compares the (tenant_id, name) PAIR. Agent names are unique
+    // only per tenant, so a bare name match would drop other tenants' traffic.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).not.toMatch(/[^,]agent_name IN \(SELECT plg\.name/);
+    // COALESCE is required: `x IN (subquery)` is NULL, not false, when x is
+    // NULL and nothing matches, and NOT NULL is NULL — the row would vanish.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE.match(/COALESCE\(/g)).toHaveLength(2);
   });
 
   it('returns the query builder for chaining', () => {
     const { qb } = makeMockQb();
     expect(excludePlaygroundAgents(qb)).toBe(qb);
+  });
+});
+
+describe('excludeDirectAttempts', () => {
+  function makeMockQb() {
+    const mockAndWhere = jest.fn();
+    const qb = { andWhere: mockAndWhere.mockImplementation(() => qb) };
+    return { qb: qb as unknown as SelectQueryBuilder<never>, mockAndWhere };
+  }
+
+  it('drops rows the caller pinned a model on', () => {
+    const { qb, mockAndWhere } = makeMockQb();
+    excludeDirectAttempts(qb);
+    expect(mockAndWhere).toHaveBeenCalledWith(EXCLUDE_DIRECT_ATTEMPTS_PREDICATE);
+  });
+
+  it('uses IS DISTINCT FROM so NULL-reason rows survive', () => {
+    // A pending/cancelled row is stamped before a route is chosen, so its
+    // routing_reason is NULL. Under `!= 'direct'` NULL compares to NULL and the
+    // row would silently vanish from the harness Overview.
+    expect(EXCLUDE_DIRECT_ATTEMPTS_PREDICATE).toBe("at.routing_reason IS DISTINCT FROM 'direct'");
+  });
+
+  it('returns the query builder for chaining', () => {
+    const { qb } = makeMockQb();
+    expect(excludeDirectAttempts(qb)).toBe(qb);
+  });
+});
+
+describe('sqlExcludeDirectRequests', () => {
+  it('tests the parent request through its attempts, where routing_reason lives', () => {
+    // `requests` carries no routing_reason column, so a request-level aggregate
+    // has to reach into agent_messages by request_id.
+    const sql = sqlExcludeDirectRequests('r');
+    expect(sql).toContain('NOT EXISTS');
+    expect(sql).toContain('FROM agent_messages direct_attempt');
+    expect(sql).toContain('direct_attempt.request_id = r.id');
+    expect(sql).toContain("direct_attempt.routing_reason = 'direct'");
+  });
+
+  it('honours the caller alias', () => {
+    expect(sqlExcludeDirectRequests('req')).toContain('direct_attempt.request_id = req.id');
+  });
+
+  it('keeps a request that has no attempts at all', () => {
+    // NOT EXISTS over an empty attempt set is true: a request recorded before any
+    // provider was contacted has nothing claiming `direct`, so it survives —
+    // matching how the attempt-level predicate keeps NULL routing_reason rows.
+    expect(sqlExcludeDirectRequests('r').startsWith('NOT EXISTS')).toBe(true);
   });
 });
 
@@ -281,6 +353,68 @@ describe('filterByKeyLabel', () => {
   it('returns the query builder for chaining', () => {
     const { qb } = makeMockQb();
     expect(filterByKeyLabel(qb, 'x')).toBe(qb);
+  });
+});
+
+describe('filterByTenantProviderId', () => {
+  function makeMockQb() {
+    const mockAndWhere = jest.fn();
+    const qb = { andWhere: mockAndWhere.mockImplementation(() => qb) };
+    return { qb: qb as unknown as SelectQueryBuilder<never>, mockAndWhere };
+  }
+
+  it('filters by the tenant_provider_id column', () => {
+    const { qb, mockAndWhere } = makeMockQb();
+    filterByTenantProviderId(qb, 'tp-123');
+    expect(mockAndWhere).toHaveBeenCalledWith('at.tenant_provider_id = :tenantProviderId', {
+      tenantProviderId: 'tp-123',
+    });
+  });
+
+  it('returns the query builder for chaining', () => {
+    const { qb } = makeMockQb();
+    expect(filterByTenantProviderId(qb, 'tp-123')).toBe(qb);
+  });
+});
+
+describe('scopeToConnection', () => {
+  function makeMockQb() {
+    const mockAndWhere = jest.fn();
+    const qb = { andWhere: mockAndWhere.mockImplementation(() => qb) };
+    return { qb: qb as unknown as SelectQueryBuilder<never>, mockAndWhere };
+  }
+
+  it('uses filterByTenantProviderId when tenantProviderId is provided', () => {
+    const { qb, mockAndWhere } = makeMockQb();
+    scopeToConnection(qb, 'tp-123', 'Work');
+    expect(mockAndWhere).toHaveBeenCalledWith('at.tenant_provider_id = :tenantProviderId', {
+      tenantProviderId: 'tp-123',
+    });
+  });
+
+  it('uses filterByKeyLabel when only label is provided', () => {
+    const { qb, mockAndWhere } = makeMockQb();
+    scopeToConnection(qb, undefined, 'Work');
+    expect(mockAndWhere).toHaveBeenCalledWith(
+      "LOWER(COALESCE(at.provider_key_label, 'Default')) = LOWER(:keyLabel)",
+      { keyLabel: 'Work' },
+    );
+  });
+
+  it('is a no-op when neither tenantProviderId nor label is supplied', () => {
+    const { qb, mockAndWhere } = makeMockQb();
+    const result = scopeToConnection(qb, undefined, undefined);
+    expect(mockAndWhere).not.toHaveBeenCalled();
+    expect(result).toBe(qb);
+  });
+
+  it('uses filterByKeyLabel when label is null', () => {
+    const { qb, mockAndWhere } = makeMockQb();
+    scopeToConnection(qb, undefined, null);
+    expect(mockAndWhere).toHaveBeenCalledWith(
+      "LOWER(COALESCE(at.provider_key_label, 'Default')) = LOWER(:keyLabel)",
+      { keyLabel: 'Default' },
+    );
   });
 });
 
@@ -357,6 +491,27 @@ describe('selectMessageRowColumns', () => {
     expect(specCall).toEqual(['at.specificity_category', 'specificity_category']);
   });
 
+  it('projects error_origin, error_class, and error_http_status so the frontend can render the taxonomy', () => {
+    const { qb, addSelectCalls } = makeMockQb();
+    selectMessageRowColumns(qb, 'cost');
+
+    expect(addSelectCalls.find(([, a]) => a === 'error_origin')).toEqual([
+      'at.error_origin',
+      'error_origin',
+    ]);
+    expect(addSelectCalls.find(([, a]) => a === 'error_class')).toEqual([
+      'at.error_class',
+      'error_class',
+    ]);
+    expect(addSelectCalls.find(([, a]) => a === 'error_http_status')).toEqual([
+      'at.error_http_status',
+      'error_http_status',
+    ]);
+    expect(MESSAGE_ROW_SELECT_ALIASES).toContain('error_origin');
+    expect(MESSAGE_ROW_SELECT_ALIASES).toContain('error_class');
+    expect(MESSAGE_ROW_SELECT_ALIASES).toContain('error_http_status');
+  });
+
   it('returns the query builder for chaining', () => {
     const { qb } = makeMockQb();
     const result = selectMessageRowColumns(qb, 'cost');
@@ -377,6 +532,22 @@ describe('selectMessageRowColumns', () => {
     expect(nameCall).toEqual(['cp.name', 'custom_provider_name']);
   });
 
+  it('projects autofix_applied and autofix_role for Autofix rendering', () => {
+    const { qb, addSelectCalls } = makeMockQb();
+    selectMessageRowColumns(qb, 'cost');
+
+    expect(addSelectCalls.find(([, a]) => a === 'autofix_applied')).toEqual([
+      'at.autofix_applied',
+      'autofix_applied',
+    ]);
+    expect(addSelectCalls.find(([, a]) => a === 'autofix_role')).toEqual([
+      'at.autofix_role',
+      'autofix_role',
+    ]);
+    expect(MESSAGE_ROW_SELECT_ALIASES).toContain('autofix_applied');
+    expect(MESSAGE_ROW_SELECT_ALIASES).toContain('autofix_role');
+  });
+
   it('keys the join on the custom:-prefixed provider id', () => {
     expect(CUSTOM_PROVIDER_JOIN_CONDITION).toBe("at.provider = 'custom:' || cp.id");
   });
@@ -384,6 +555,37 @@ describe('selectMessageRowColumns', () => {
   it('resolves custom series keys to the provider name with a deleted-provider fallback', () => {
     expect(PROVIDER_SERIES_KEY_EXPR).toBe(
       "CASE WHEN at.provider LIKE 'custom:%' THEN COALESCE(cp.name, 'Deleted provider') ELSE at.provider END",
+    );
+  });
+});
+
+describe('sqlCountMessages', () => {
+  it('counts logical requests rather than provider hops', () => {
+    expect(sqlCountMessages()).toContain('COUNT(DISTINCT COALESCE(at.request_id, at.id))');
+    expect(sqlCountMessages()).toContain("at.status NOT IN ('error', 'fallback_error'");
+  });
+
+  it('honours a custom table alias', () => {
+    expect(sqlCountMessages('m')).toContain('COUNT(DISTINCT COALESCE(m.request_id, m.id))');
+    expect(sqlCountMessages('m')).toContain('m.status IS NULL');
+  });
+
+  it('keeps the shared error-status set for request log filters', () => {
+    expect(ERROR_MESSAGE_STATUSES).toEqual([
+      'error',
+      'fallback_error',
+      'rate_limited',
+      'auto_fixed',
+      'failed',
+    ]);
+  });
+});
+
+describe('origin predicates', () => {
+  it('MANIFEST_ORIGIN_PREDICATE matches every Manifest origin, request included', () => {
+    expect(MANIFEST_ERROR_ORIGINS).toEqual(['config', 'policy', 'internal', 'request']);
+    expect(MANIFEST_ORIGIN_PREDICATE).toBe(
+      "at.error_origin IN ('config', 'policy', 'internal', 'request')",
     );
   });
 });

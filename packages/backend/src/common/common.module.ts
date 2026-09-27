@@ -5,9 +5,12 @@ import { Agent } from '../entities/agent.entity';
 import { IngestEventBusService } from './services/ingest-event-bus.service';
 import { ManifestRuntimeService } from './services/manifest-runtime.service';
 import { TenantCacheService } from './services/tenant-cache.service';
-import { AgentRecordingCacheService } from './services/agent-recording-cache.service';
 import { UserCacheInterceptor } from './interceptors/user-cache.interceptor';
 import { AgentCacheInterceptor } from './interceptors/agent-cache.interceptor';
+import { AgentRecordingConfigService } from './services/agent-recording-config.service';
+import { RequestRecordingStorageService } from './services/request-recording-storage.service';
+import { AgentListCacheInterceptor } from './interceptors/agent-list-cache.interceptor';
+import { AgentListCacheService } from './services/agent-list-cache.service';
 
 @Global()
 @Module({
@@ -16,17 +19,23 @@ import { AgentCacheInterceptor } from './interceptors/agent-cache.interceptor';
     IngestEventBusService,
     ManifestRuntimeService,
     TenantCacheService,
-    AgentRecordingCacheService,
     UserCacheInterceptor,
     AgentCacheInterceptor,
+    AgentListCacheInterceptor,
+    AgentListCacheService,
+    AgentRecordingConfigService,
+    RequestRecordingStorageService,
   ],
   exports: [
     IngestEventBusService,
     ManifestRuntimeService,
     TenantCacheService,
-    AgentRecordingCacheService,
     UserCacheInterceptor,
     AgentCacheInterceptor,
+    AgentListCacheInterceptor,
+    AgentListCacheService,
+    AgentRecordingConfigService,
+    RequestRecordingStorageService,
   ],
 })
 export class CommonModule {}

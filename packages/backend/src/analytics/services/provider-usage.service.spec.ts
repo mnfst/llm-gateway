@@ -224,4 +224,57 @@ describe('ProviderUsageService', () => {
     expect(summary.last_used_at).toBe('2026-06-16T08:30:00.000Z');
     expect(summary.sparkline_7d[6]).toBe(0);
   });
+
+  it('sums per-row attempt reliability at the (provider, auth_type) grain', async () => {
+    // Two auth types of the same provider must NOT blend: the subscription
+    // row keeps its own rate, the api_key row keeps its own.
+    const { repo, qb } = makeRepo([
+      {
+        provider: 'openai',
+        auth_type: 'subscription',
+        day: utcDay(),
+        tokens: '10',
+        cost: '0',
+        messages: '1',
+        attempts: '100',
+        succeeded: '92',
+        last_used_at: null,
+      },
+      {
+        provider: 'openai',
+        auth_type: 'subscription',
+        day: utcDay(-1),
+        tokens: '10',
+        cost: '0',
+        messages: '1',
+        attempts: '29',
+        succeeded: '27',
+        last_used_at: null,
+      },
+      {
+        provider: 'openai',
+        auth_type: 'api_key',
+        day: utcDay(),
+        tokens: '10',
+        cost: '0',
+        messages: '1',
+        attempts: '188',
+        succeeded: '148',
+        last_used_at: null,
+      },
+    ]);
+    const service = new ProviderUsageService(repo as never);
+
+    const out = await service.getUsage('tenant-1');
+    const sub = out.find((r) => r.auth_type === 'subscription')!;
+    const byok = out.find((r) => r.auth_type === 'api_key')!;
+    expect(sub.attempts_30d).toBe(129);
+    expect(sub.succeeded_30d).toBe(119);
+    expect(byok.attempts_30d).toBe(188);
+    expect(byok.succeeded_30d).toBe(148);
+    // Canonical success and legacy NULL/ok all read as successful attempts.
+    const selects = (qb.sql as string[]).join(' ');
+    expect(selects).toContain("at.status IN ('ok', 'success')");
+    expect(selects).toContain("at.status NOT IN ('pending', 'cancelled')");
+  });
 });

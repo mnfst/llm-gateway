@@ -3,7 +3,6 @@ import { MessagesController } from './messages.controller';
 import { MessagesQueryService } from '../services/messages-query.service';
 import { MessageDetailsService } from '../services/message-details.service';
 import { MessageFeedbackService } from '../services/message-feedback.service';
-import { MessageRecordingService } from '../services/message-recording.service';
 import { SpecificityFeedbackService } from '../services/specificity-feedback.service';
 
 describe('MessagesController', () => {
@@ -15,7 +14,6 @@ describe('MessagesController', () => {
   let mockClearFeedback: jest.Mock;
   let mockFlagMiscategorized: jest.Mock;
   let mockClearMiscategorized: jest.Mock;
-  let mockDeleteRecording: jest.Mock;
 
   beforeEach(async () => {
     mockGetMessages = jest.fn().mockResolvedValue({
@@ -28,16 +26,12 @@ describe('MessagesController', () => {
 
     mockGetDetails = jest.fn().mockResolvedValue({
       message: { id: 'msg-1', status: 'ok' },
-      llm_calls: [],
-      tool_executions: [],
-      agent_logs: [],
     });
 
     mockSetFeedback = jest.fn().mockResolvedValue(undefined);
     mockClearFeedback = jest.fn().mockResolvedValue(undefined);
     mockFlagMiscategorized = jest.fn().mockResolvedValue(undefined);
     mockClearMiscategorized = jest.fn().mockResolvedValue(undefined);
-    mockDeleteRecording = jest.fn().mockResolvedValue(undefined);
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [MessagesController],
@@ -56,10 +50,6 @@ describe('MessagesController', () => {
         {
           provide: MessageFeedbackService,
           useValue: { setFeedback: mockSetFeedback, clearFeedback: mockClearFeedback },
-        },
-        {
-          provide: MessageRecordingService,
-          useValue: { delete: mockDeleteRecording },
         },
         {
           provide: SpecificityFeedbackService,
@@ -90,18 +80,33 @@ describe('MessagesController', () => {
       cursor: undefined,
       agent_name: undefined,
       status: undefined,
-      recorded: undefined,
+      connections: undefined,
+      attemptStatus: undefined,
+      triggers: undefined,
       routing_tier: undefined,
       specificity_category: undefined,
       header_tier_id: undefined,
       include_total: undefined,
+      cache_total: undefined,
       include_filter_options: undefined,
     });
   });
 
-  it('delegates recording deletion to MessageRecordingService', async () => {
-    await controller.deleteRecording('msg-1', ctx as never);
-    expect(mockDeleteRecording).toHaveBeenCalledWith('msg-1', 'tenant-1');
+  it('splits the model filter into a trimmed list, dropping empty entries', async () => {
+    await controller.getMessages({ model: 'gpt-4o, , claude-3.5-sonnet ' } as never, ctx as never);
+
+    expect(mockGetMessages).toHaveBeenCalledWith(
+      expect.objectContaining({ models: ['gpt-4o', 'claude-3.5-sonnet'] }),
+    );
+  });
+
+  it('caps the model filter so a long query string cannot widen the IN clause', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => `model-${i}`).join(',');
+    await controller.getMessages({ model: many } as never, ctx as never);
+
+    const sent = mockGetMessages.mock.calls.at(-1)?.[0] as { models: string[] };
+    expect(sent.models).toHaveLength(50);
+    expect(sent.models.at(-1)).toBe('model-49');
   });
 
   it('passes all filter parameters', async () => {
@@ -114,10 +119,13 @@ describe('MessagesController', () => {
       limit: 25,
       cursor: 'ts|id',
       agent_name: 'bot-1',
+      status: 'failed',
+      trigger: 'fallback',
       routing_tier: 'simple',
       specificity_category: 'coding',
       header_tier_id: 'ht-premium',
       include_total: false,
+      cache_total: true,
       include_filter_options: false,
     };
     await controller.getMessages(query as never, ctx as never);
@@ -132,12 +140,15 @@ describe('MessagesController', () => {
       limit: 25,
       cursor: 'ts|id',
       agent_name: 'bot-1',
-      status: undefined,
-      recorded: undefined,
+      status: 'failed',
+      connections: undefined,
+      attemptStatus: undefined,
+      triggers: ['fallback'],
       routing_tier: 'simple',
       specificity_category: 'coding',
       header_tier_id: 'ht-premium',
       include_total: false,
+      cache_total: true,
       include_filter_options: false,
     });
   });
@@ -185,9 +196,6 @@ describe('MessagesController', () => {
   it('returns message details result', async () => {
     const expected = {
       message: { id: 'msg-1', status: 'ok' },
-      llm_calls: [{ id: 'lc-1' }],
-      tool_executions: [],
-      agent_logs: [],
     };
     mockGetDetails.mockResolvedValue(expected);
 

@@ -6,6 +6,7 @@ import { TenantOwnerColumn1792400000000 } from '../src/database/migrations/17924
 import { TenantProviders1792500000000 } from '../src/database/migrations/1792500000000-TenantProviders';
 import { TenantScopedConfigs1792600000000 } from '../src/database/migrations/1792600000000-TenantScopedConfigs';
 import { DropUserScopeFromRouting1792700000000 } from '../src/database/migrations/1792700000000-DropUserScopeFromRouting';
+import { AddRequestsAndProviderAttempts1801000000000 } from '../src/database/migrations/1801000000000-AddRequestsAndProviderAttempts';
 import { runMessageProviderBackfill } from '../src/database/backfills/backfill-message-providers';
 import { TypeOrmBackfillGateway } from '../src/database/backfills/backfill-message-providers.gateway';
 
@@ -44,7 +45,11 @@ describe('agent-message attribution backfill after provider lift (e2e)', () => {
       logging: false,
     });
     await ds.initialize();
-    await ds.runMigrations();
+    await ds.runMigrations({ transaction: 'each' });
+
+    const schemaQr = ds.createQueryRunner();
+    await new AddRequestsAndProviderAttempts1801000000000().down(schemaQr);
+    await schemaQr.release();
 
     // Clean slate (FK-safe order), then rewind to the pre-lift schema by
     // reverting the relevant migrations in reverse chronological order. The
@@ -111,6 +116,10 @@ describe('agent-message attribution backfill after provider lift (e2e)', () => {
     await new TenantOwnerColumn1792400000000().up(upgradeQr);
     await new TenantProviders1792500000000().up(upgradeQr);
     await upgradeQr.release();
+
+    const requestSchemaUpQr = ds.createQueryRunner();
+    await new AddRequestsAndProviderAttempts1801000000000().up(requestSchemaUpQr);
+    await requestSchemaUpQr.release();
 
     // The migration leaves the column NULL; the historical stamping runs
     // post-deploy, against the renamed schema. This is the exact code the

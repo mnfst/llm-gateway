@@ -5,6 +5,8 @@ import type { AuthType, ModelRoute } from 'manifest-shared';
 import { applyRequestParamDefaults } from 'manifest-shared';
 import { AgentModelParamsService } from '../routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from '../routing-core/provider-param-spec.service';
+import { AutofixService, type AutofixAttempt } from '../autofix/autofix.service';
+import { getAutofixRetry, type AutofixRecord } from '../autofix/autofix.types';
 
 /**
  * Context for the per-attempt param-defaults merge. Carries the agentId so
@@ -26,9 +28,15 @@ interface ForwardProviderOptions {
   apiKey: string;
   model: string;
   body: Record<string, unknown>;
-  chatBody?: Record<string, unknown>;
+  resolveChatBody?: ResolveChatBody;
   stream: boolean;
   sessionKey: string;
+  /**
+   * Scoped replay-cache key (`sessionScope.cacheKey`). The reasoning cache must
+   * read with the same key the response handler wrote with.
+   */
+  reasoningCacheKey?: string;
+  providerCacheKey?: string;
   signal?: AbortSignal;
   authType?: string;
   rawApiKey?: string;
@@ -40,14 +48,14 @@ interface ForwardProviderOptions {
   apiMode?: ProxyApiMode;
   signatureLookup?: SignatureLookup;
   thinkingLookup?: ThinkingBlockLookup;
-  reasoningContentLookup?: ReasoningContentLookup;
+  /** The caller's raw `anthropic-beta` header, merged in when the endpoint is Anthropic. */
+  clientAnthropicBeta?: string | string[];
   paramMergeContext?: ParamMergeContext;
+  tenantProviderId?: string | null;
+  startProviderAttempt?: StartProviderAttempt;
 }
 
-import {
-  ProviderKeyService,
-  SYNTHETIC_OLLAMA_PROVIDER_ID,
-} from '../routing-core/provider-key.service';
+import { ProviderKeyService } from '../routing-core/provider-key.service';
 import { CustomProvider } from '../../entities/custom-provider.entity';
 import { CustomProviderService } from '../custom-provider/custom-provider.service';
 import { resolveForwardEndpoint } from './forward-endpoint-resolver';
@@ -64,24 +72,50 @@ import { CopilotTokenService } from './copilot-token.service';
 import { ReasoningContentCache } from './reasoning-content-cache';
 import { buildProviderExtraHeaders } from './provider-hooks';
 import { shouldTriggerFallback } from './fallback-status-codes';
+import { peekStream, STREAM_WARMUP_MS } from './stream-warmup';
 import { inferProviderFromModelName } from '../../common/utils/provider-aliases';
-import { normalizeAnthropicShortModelId } from '../../common/utils/anthropic-model-id';
+import { normalizeProviderModel } from '../../common/utils/anthropic-model-id';
 import {
   isTransportError,
   buildTransportErrorResponse,
   describeTransportError,
 } from './proxy-transport';
-import type { SignatureLookup, ThinkingBlockLookup, ReasoningContentLookup } from './proxy-types';
+import type {
+  SignatureLookup,
+  ThinkingBlockLookup,
+  ResolveChatBody,
+  ProviderAttemptRef,
+  StartProviderAttempt,
+} from './proxy-types';
 import type { ProxyApiMode } from './proxy-types';
+import { refreshRejectedOAuthCredential } from './oauth-credentials';
 import {
-  isRefreshableOAuthCredential,
-  refreshRejectedOAuthCredential,
-  resolveApiKey,
-} from './oauth-credentials';
+  buildCredentialFailureFallback,
+  presentCredentialFailure,
+  resolveRouteCredentials,
+  type RouteCredentialDeps,
+} from './route-credentials';
+import { recordingResponseFromText } from './attempt-recording-capture';
+import {
+  CredentialRejectionCooldown,
+  type RejectedCredentialRef,
+} from './credential-rejection-cooldown';
 
-const RATE_LIMIT_COOLDOWN_DEFAULT_MS = 60_000;
+// Fallback cooldown applied when an upstream 429 carries no usable Retry-After.
+// Kept short (15s) on purpose: many providers rate-limit on brief RPM/burst
+// windows and omit Retry-After entirely, so a long blackout would sideline a
+// route that recovered seconds later. Explicit Retry-After values are always
+// honored (capped at MAX) regardless of this default.
+const RATE_LIMIT_COOLDOWN_DEFAULT_MS = 15_000;
 const RATE_LIMIT_COOLDOWN_MAX_MS = 5 * 60_000;
 const MAX_RATE_LIMIT_COOLDOWNS = 2_000;
+const PROVIDER_ATTEMPT_REF = Symbol('providerAttemptRef');
+
+type AttemptTaggedError = Error & { [PROVIDER_ATTEMPT_REF]?: ProviderAttemptRef };
+
+function attemptFromError(error: unknown): ProviderAttemptRef | undefined {
+  return error instanceof Error ? (error as AttemptTaggedError)[PROVIDER_ATTEMPT_REF] : undefined;
+}
 
 export interface FailedFallback {
   model: string;
@@ -97,12 +131,26 @@ export interface FailedFallback {
   // The tenant_providers row that served this failed attempt, so the recorded
   // error row is scoped to the right connection. NULL for local/Ollama.
   tenantProviderId?: string | null;
+  // Label of that same connection, so a failed hop records the key it used
+  // instead of inheriting the primary's label.
+  keyLabel?: string;
+  attempt?: ProviderAttemptRef;
+  /** False when the route was rejected locally (for example by a cooldown). */
+  providerCallStarted?: boolean;
+  /**
+   * Autofix audit for this hop when Phoenix was consulted. Stamped onto the
+   * failed hop's row so a recovered fallback keeps its Phoenix decision.
+   */
+  autofix?: AutofixRecord;
+  /** Which side of the Autofix retry pair this row is. Defaults to `original`. */
+  autofixRole?: 'original' | 'retry';
 }
 
 @Injectable()
 export class ProxyFallbackService {
   private readonly logger = new Logger(ProxyFallbackService.name);
   private readonly rateLimitCooldowns = new Map<string, number>();
+  private readonly credentialRejections = new CredentialRejectionCooldown();
 
   constructor(
     private readonly providerKeyService: ProviderKeyService,
@@ -119,7 +167,8 @@ export class ProxyFallbackService {
     private readonly pricingCache: ModelPricingCacheService,
     private readonly modelParamsService: AgentModelParamsService,
     private readonly providerParamSpecs: ProviderParamSpecService,
-    private readonly reasoningCache?: ReasoningContentCache,
+    private readonly reasoningCache: ReasoningContentCache,
+    private readonly autofixService: AutofixService,
   ) {}
 
   /**
@@ -165,10 +214,16 @@ export class ProxyFallbackService {
     signatureLookup?: SignatureLookup,
     thinkingLookup?: ThinkingBlockLookup,
     apiMode?: ProxyApiMode,
-    chatBody?: Record<string, unknown>,
+    resolveChatBody?: ResolveChatBody,
     fallbackRoutes?: ModelRoute[] | null,
     paramMergeContext?: ParamMergeContext,
-    reasoningContentLookup?: ReasoningContentLookup,
+    startProviderAttempt?: StartProviderAttempt,
+    /** Dashboard URL embedded in mid-chain M100/M102 credential failure bodies. */
+    credentialDashboardUrl?: string,
+    providerCacheKey?: string,
+    reasoningCacheKey?: string,
+    /** The caller's raw `anthropic-beta` header; a fallback hop onto Anthropic needs it too. */
+    clientAnthropicBeta?: string | string[],
   ): Promise<{
     success: {
       forward: ForwardResult;
@@ -178,6 +233,8 @@ export class ProxyFallbackService {
       authType?: AuthType;
       keyLabel?: string;
       tenantProviderId: string | null;
+      /** Phoenix audit when this hop was recovered by Autofix. */
+      autofix?: AutofixRecord;
     } | null;
     failures: FailedFallback[];
   }> {
@@ -237,122 +294,180 @@ export class ProxyFallbackService {
         )) as AuthType;
       }
       const model = normalizeProviderModel(provider, requestedModel);
-      // Single key selection per attempt: the forwarded apiKey, the stamped
-      // tenant_provider_id, the recorded key label, and the region are all
-      // projected from this one row, so they can never diverge. With no
-      // pinned label this returns the priority-0 (default) key.
-      const key = await this.providerKeyService.selectProviderKey(
+      // Same credential resolution as primary (select key + OAuth unwrap).
+      const credentials = await resolveRouteCredentials(this.routeCredentialDeps(), {
+        agentId,
         tenantId,
         provider,
         authType,
         providerKeyLabel,
-        agentId,
-      );
-      if (!key || key.apiKey === null) {
+      });
+      if (!credentials.ok) {
         this.logger.debug(
-          `Fallback ${i}: skipping model=${model} provider=${provider} (no API key)`,
+          `Fallback ${i}: credential failure model=${model} provider=${provider} reason=${credentials.reason}`,
         );
-        continue;
-      }
-      const apiKey = key.apiKey;
-      // NULL for synthetic Ollama — no persisted row to stamp.
-      const tenantProviderId = key.id === SYNTHETIC_OLLAMA_PROVIDER_ID ? null : key.id;
-      // Resolve an unpinned subscription label to the selected row's label so
-      // OAuth refresh persistence updates the same key the selection used.
-      if (!providerKeyLabel && authType === 'subscription') {
-        providerKeyLabel = key.label;
-      }
-
-      const resolvedCredentials = await resolveApiKey(
-        provider,
-        apiKey,
-        authType,
-        agentId,
-        tenantId,
-        this.openaiOauth,
-        this.minimaxOauth,
-        this.anthropicOauth,
-        this.geminiOauth,
-        this.kiroOauth,
-        this.xaiOauth,
-        providerKeyLabel,
-      );
-      if (resolvedCredentials.apiKey === null) {
-        this.logger.debug(
-          `Fallback ${i}: skipping model=${model} provider=${provider} (OAuth token unavailable)`,
-        );
-        continue;
-      }
-      let rawApiKey = apiKey;
-      if (authType === 'subscription' && isRefreshableOAuthCredential(apiKey)) {
-        // Deliberate re-read: resolveApiKey may have refreshed + persisted a
-        // rotated OAuth blob (which also invalidates the key cache), so the
-        // freshest stored value is fetched for the 401-retry path.
-        rawApiKey =
-          (await this.providerKeyService.getProviderApiKey(
-            tenantId,
+        failures.push(
+          buildCredentialFailureFallback({
+            model,
             provider,
+            fallbackIndex: i,
             authType,
-            providerKeyLabel,
-            agentId,
-          )) ?? apiKey;
+            tenantProviderId: credentials.tenantProviderId,
+            keyLabel: providerKeyLabel,
+            presentation: presentCredentialFailure(
+              credentials.reason,
+              provider,
+              credentialDashboardUrl ?? 'the dashboard',
+            ),
+            startProviderAttempt,
+          }),
+        );
+        continue;
       }
-      const providerRegion = key.region;
+      // resolveRouteCredentials always reports the row it selected, which may
+      // differ from the pin when the pin matched nothing.
+      providerKeyLabel = credentials.keyLabel;
+      const tenantProviderId = credentials.tenantProviderId;
 
       this.logger.log(
         `Fallback ${i}: trying model=${model} provider=${provider} auth_type=${authType} (primary=${primaryModel})`,
       );
 
-      const forward = await this.tryForwardToProvider({
-        provider,
-        apiKey: resolvedCredentials.apiKey,
+      // A hop's stream is warmed up exactly like the primary's: a 200 that
+      // never sends a byte becomes a failed hop, so the next route still gets
+      // its turn instead of the client receiving a dead stream.
+      const forward = await this.warmUpStreamBody(
+        await this.tryForwardToProvider({
+          provider,
+          apiKey: credentials.apiKey,
+          model,
+          body,
+          resolveChatBody,
+          stream,
+          sessionKey,
+          reasoningCacheKey,
+          providerCacheKey,
+          signal,
+          agentId,
+          tenantId,
+          rawApiKey: credentials.rawApiKey,
+          providerKeyLabel,
+          authType,
+          apiMode,
+          resourceUrl: credentials.resourceUrl,
+          providerRegion: credentials.providerRegion,
+          signatureLookup,
+          thinkingLookup,
+          clientAnthropicBeta,
+          paramMergeContext,
+          tenantProviderId,
+          startProviderAttempt,
+        }),
+        { stream, provider, model },
+      );
+
+      // Autofix runs on a failed fallback hop too, not just the primary: a
+      // fallback that rejects a request-side param (e.g. an unsupported
+      // response_format) can carry its own Phoenix patch, and retrying it on
+      // this same transport recovers the request instead of recording a dead
+      // hop. Consent is enforced inside maybeHeal, exactly like the primary.
+      let autofixAttempt: AutofixAttempt | null = null;
+      let preHealErrorBody: string | null = null;
+      const fallbackApiMode = forward.wireApiMode ?? apiMode;
+      if (
+        !forward.response.ok &&
+        this.autofixService.isRepairable(forward.response.status) &&
+        forward.wireRequestBody &&
+        forward.retryWireBody &&
+        fallbackApiMode
+      ) {
+        // Keep the failed body readable for the audit row if the patch heals —
+        // maybeHeal consumes the live response.
+        preHealErrorBody = await forward.response.clone().text();
+        autofixAttempt = await this.maybeHealFallback({
+          forward,
+          requestBody: forward.wireRequestBody,
+          apiMode: fallbackApiMode,
+          agentId,
+          tenantId,
+          provider,
+          model,
+          authType,
+          tenantProviderId,
+          providerKeyLabel,
+          signal,
+          startProviderAttempt,
+          stream,
+        });
+      }
+      const finalForward = autofixAttempt?.forward ?? forward;
+      // A retry is sent only when Phoenix handed back a patch. When one was
+      // sent, the original hop is a distinct provider attempt that needs its own
+      // terminal row; otherwise finalForward IS the original.
+      const retrySent = autofixAttempt
+        ? getAutofixRetry(autofixAttempt.record) !== undefined
+        : false;
+      const originalFailure = (): FailedFallback => ({
         model,
-        body,
-        chatBody,
-        stream,
-        sessionKey,
-        signal,
-        agentId,
-        tenantId,
-        rawApiKey,
-        providerKeyLabel,
+        provider,
+        fallbackIndex: i,
+        status: forward.response.status,
+        errorBody: preHealErrorBody!,
         authType,
-        apiMode,
-        resourceUrl: resolvedCredentials.resourceUrl,
-        providerRegion,
-        signatureLookup,
-        thinkingLookup,
-        reasoningContentLookup,
-        paramMergeContext,
+        tenantProviderId,
+        // Selected-row label (credentials.keyLabel already folded in above),
+        // so this row's label and tenant_provider_id name the same connection.
+        keyLabel: providerKeyLabel,
+        attempt: forward.attempt,
+        providerCallStarted: forward.providerCallStarted,
+        autofix: autofixAttempt?.record,
+        autofixRole: 'original',
       });
 
-      if (forward.response.ok) {
+      if (finalForward.response.ok) {
+        // The hop that failed first is still recorded when Autofix recovers it,
+        // so a healed fallback keeps the same audit trail as a healed primary.
+        if (retrySent) failures.push(originalFailure());
         return {
           success: {
-            forward,
+            forward: finalForward,
             model,
             provider,
             fallbackIndex: i,
             authType,
             // Label of the connection row that served the attempt — stamped
             // alongside its tenant_provider_id so the pair always matches.
-            // Synthetic rows (Ollama) keep the pinned label, if any.
-            keyLabel: tenantProviderId ? key.label : providerKeyLabel,
+            keyLabel: providerKeyLabel,
             tenantProviderId,
+            // Fallback's own Phoenix audit, threaded to the recorder so a healed
+            // fallback hop carries the same metadata as a healed primary.
+            autofix: retrySent ? autofixAttempt?.record : undefined,
           },
           failures,
         };
       }
 
-      const errorBody = await forward.response.text();
+      const errorBody = await finalForward.response.text();
+      await finalForward.attempt?.finishRecording?.(recordingResponseFromText(errorBody));
+      // A failed patched retry is a second provider attempt: record the original
+      // hop too, so Autofix never leaves it dangling `pending`.
+      if (retrySent) failures.push(originalFailure());
       failures.push({
         model,
         provider,
         fallbackIndex: i,
-        status: forward.response.status,
+        status: finalForward.response.status,
         errorBody,
         authType,
         tenantProviderId,
+        // Selected-row label (credentials.keyLabel already folded in above),
+        // so this row's label and tenant_provider_id name the same connection.
+        keyLabel: providerKeyLabel,
+        attempt: finalForward.attempt,
+        providerCallStarted: finalForward.providerCallStarted,
+        ...(autofixAttempt
+          ? { autofix: autofixAttempt.record, autofixRole: retrySent ? 'retry' : 'original' }
+          : {}),
       });
 
       const existing = failedAuthByProvider.get(provider.toLowerCase());
@@ -365,17 +480,138 @@ export class ProxyFallbackService {
     return { success: null, failures };
   }
 
+  /**
+   * Heal a failed fallback hop before giving up on it. Phoenix patches are
+   * scoped per provider/model, so a fallback model with its own known issue can
+   * be recovered even when the primary could not. The patched body is resent
+   * through the SAME fallback transport (`retryWireBody`) rather than
+   * re-resolved against the full routing chain: the fallback is already the
+   * deliberate alternative route, and hopping back to the primary here would
+   * undo that.
+   *
+   * Returns null when Autofix declines (off for the agent, non-repairable status,
+   * no patch) — callers then keep the original failure. The caller has already
+   * established that the forward carries a wire body and a retry hook.
+   */
+  private async maybeHealFallback(input: {
+    forward: ForwardResult;
+    requestBody: Record<string, unknown>;
+    apiMode: ProxyApiMode;
+    agentId: string;
+    tenantId: string;
+    provider: string;
+    model: string;
+    authType: AuthType;
+    tenantProviderId: string | null;
+    providerKeyLabel?: string;
+    signal?: AbortSignal;
+    startProviderAttempt?: StartProviderAttempt;
+    stream: boolean;
+  }): Promise<AutofixAttempt | null> {
+    return this.autofixService.maybeHeal({
+      forward: input.forward,
+      agentId: input.agentId,
+      tenantId: input.tenantId,
+      provider: input.provider,
+      model: input.model,
+      authType: input.authType,
+      apiMode: input.apiMode,
+      requestBody: input.requestBody,
+      // Warm up the patched retry before Autofix sees it, so a retry whose
+      // stream stalls counts as a failed patch rather than a healed request.
+      reforward: async (healedBody) =>
+        this.warmUpStreamBody(
+          await this.retryWireBody(input.forward, healedBody, {
+            provider: input.provider,
+            model: input.model,
+            authType: input.authType,
+            agentId: input.agentId,
+            tenantProviderId: input.tenantProviderId,
+            providerKeyLabel: input.providerKeyLabel,
+            startProviderAttempt: input.startProviderAttempt,
+            signal: input.signal,
+            stream: input.stream,
+          }),
+          input,
+        ),
+    });
+  }
+
+  /**
+   * Streaming counterpart of {@link bufferNonStreamBody} for fallback hops.
+   * Peek at the first chunk before the hop is committed; on a stall, error or
+   * empty stream, return a synthetic 502 so the chain treats it as a failed
+   * hop. The primary gets the same warm-up in ProxyService.proxyRequest.
+   */
+  private async warmUpStreamBody(
+    forward: ForwardResult,
+    opts: { stream: boolean; provider: string; model: string },
+  ): Promise<ForwardResult> {
+    const { response, attempt } = forward;
+    if (!opts.stream || !response.ok || !response.body) return forward;
+    const warmup = await peekStream(response.body, STREAM_WARMUP_MS);
+    if (warmup.ok) {
+      return {
+        ...forward,
+        response: new Response(warmup.stream, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        }),
+      };
+    }
+    if (attempt) attempt.completedAtMs = Date.now();
+    this.logger.warn(
+      `Fallback stream warmup failed: provider=${opts.provider} model=${opts.model} reason=${warmup.reason} message=${warmup.message}`,
+    );
+    return {
+      ...forward,
+      response: new Response(
+        JSON.stringify({ error: { message: `Stream warmup failed: ${warmup.message}` } }),
+        { status: 502, headers: { 'content-type': 'application/json' } },
+      ),
+    };
+  }
+
+  private routeCredentialDeps(): RouteCredentialDeps {
+    return {
+      providerKeyService: this.providerKeyService,
+      oauth: {
+        openaiOauth: this.openaiOauth,
+        minimaxOauth: this.minimaxOauth,
+        anthropicOauth: this.anthropicOauth,
+        geminiOauth: this.geminiOauth,
+        kiroOauth: this.kiroOauth,
+        xaiOauth: this.xaiOauth,
+      },
+    };
+  }
+
   async tryForwardToProvider(opts: ForwardProviderOptions): Promise<ForwardResult> {
     const cooldown = this.getActiveRateLimitCooldown(opts);
     if (cooldown) {
       return this.buildRateLimitCooldownForward(opts, cooldown);
     }
+    const rejectedUntil = this.credentialRejections.rejectedUntil(
+      this.credentialRef(opts, opts.apiKey),
+    );
+    if (rejectedUntil) {
+      return this.buildCredentialRejectedForward(opts, rejectedUntil);
+    }
 
     try {
       const forward = await this.forwardToProvider(opts);
-      const result = await this.retryOAuthSubscriptionAfterRejectedToken(opts, forward);
+      const { forward: result, apiKey } = await this.retryOAuthSubscriptionAfterRejectedToken(
+        opts,
+        forward,
+      );
       this.recordRateLimitCooldown(opts, result.response);
-      return result;
+      // Still 401 after any OAuth refresh: the credential is stale (refresh
+      // rejected, or the account itself is refused). Skip it until it changes.
+      if (result.response.status === 401) {
+        this.credentialRejections.reject(this.credentialRef(opts, apiKey));
+      }
+      return await this.bufferNonStreamBody(result, opts);
     } catch (error) {
       if (opts.signal?.aborted) throw error;
       if (!isTransportError(error)) throw error;
@@ -388,6 +624,122 @@ export class ProxyFallbackService {
 
       return {
         response: failureResponse,
+        attempt: attemptFromError(error),
+        providerCallStarted: true,
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      };
+    }
+  }
+
+  /**
+   * Read a successful non-streaming body before the route is committed. The
+   * fallback decision only sees the status line, so a provider that sends 200
+   * headers and then times out or drops the socket mid-body used to fail later
+   * in the response handler, as an M500 with no fallback. Reading it here turns
+   * that failure into the same synthetic 503/504 as a pre-response transport
+   * error, which the fallback chain already handles. Only buffers when the
+   * caller is known to be non-streaming: nothing has reached the client yet, so
+   * another route can still answer.
+   */
+  private async bufferNonStreamBody(
+    forward: ForwardResult,
+    opts: { stream?: boolean; signal?: AbortSignal; provider: string; model: string },
+  ): Promise<ForwardResult> {
+    const { response, attempt } = forward;
+    if (opts.stream !== false || !response.ok || !response.body) return forward;
+    try {
+      const body = await response.arrayBuffer();
+      // The attempt ends when its body does, not when headers arrived.
+      if (attempt) attempt.completedAtMs = Date.now();
+      return {
+        ...forward,
+        response: new Response(body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        }),
+      };
+    } catch (error) {
+      if (attempt) attempt.completedAtMs = Date.now();
+      if (opts.signal?.aborted || !isTransportError(error)) {
+        if (attempt && error instanceof Error) {
+          (error as AttemptTaggedError)[PROVIDER_ATTEMPT_REF] = attempt;
+        }
+        throw error;
+      }
+      const failureResponse = buildTransportErrorResponse(error);
+      this.logger.warn(
+        `Provider body read failure: provider=${opts.provider} model=${opts.model} status=${failureResponse.status} message=${describeTransportError(error)}`,
+      );
+      return { ...forward, response: failureResponse, providerCallStarted: true };
+    }
+  }
+
+  /** Re-send a healed body without rebuilding the already-resolved provider request. */
+  async retryWireBody(
+    forward: ForwardResult,
+    healedBody: Record<string, unknown>,
+    opts?: Pick<
+      ForwardProviderOptions,
+      | 'provider'
+      | 'model'
+      | 'authType'
+      | 'agentId'
+      | 'tenantProviderId'
+      | 'providerKeyLabel'
+      | 'startProviderAttempt'
+      | 'signal'
+    > & { stream?: boolean },
+  ): Promise<ForwardResult> {
+    if (!forward.retryWireBody) {
+      throw new Error('Provider forward does not support wire-body retry');
+    }
+    if (!opts) return forward.retryWireBody(healedBody);
+    const attempt = opts.startProviderAttempt?.({
+      provider: opts.provider,
+      model: opts.model,
+      authType: opts.authType,
+      tenantProviderId: opts.tenantProviderId,
+      keyLabel: opts.providerKeyLabel,
+    });
+    try {
+      const retried = await forward.retryWireBody(healedBody, attempt);
+      if (attempt) attempt.completedAtMs = Date.now();
+      // A healed retry can itself be rate-limited. Record the cooldown so the
+      // next attempt on this route skips it, exactly as tryForwardToProvider
+      // does for a first attempt.
+      this.recordRateLimitCooldownForKey(
+        this.rateLimitCooldownKey({
+          agentId: opts.agentId,
+          authType: opts.authType,
+          provider: opts.provider,
+          providerKeyLabel: opts.providerKeyLabel,
+          model: opts.model,
+        }),
+        retried.response,
+      );
+      return await this.bufferNonStreamBody(
+        { ...retried, attempt, providerCallStarted: true },
+        opts,
+      );
+    } catch (error) {
+      if (attempt) attempt.completedAtMs = Date.now();
+      if (attempt && error instanceof Error) {
+        (error as AttemptTaggedError)[PROVIDER_ATTEMPT_REF] = attempt;
+      }
+      if (opts.signal?.aborted || !isTransportError(error)) throw error;
+
+      const failureResponse = buildTransportErrorResponse(error);
+      const message = describeTransportError(error);
+      this.logger.warn(
+        `Provider transport failure: provider=${opts.provider} model=${opts.model} status=${failureResponse.status} message=${message}`,
+      );
+      return {
+        response: failureResponse,
+        attempt,
+        providerCallStarted: true,
         isGoogle: false,
         isAnthropic: false,
         isChatGpt: false,
@@ -411,13 +763,46 @@ export class ProxyFallbackService {
     opts: ForwardProviderOptions,
     expiresAt: number,
   ): ForwardResult {
-    const retryAfterSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
     const message =
       `Provider route temporarily cooling down after an upstream 429: ` +
       `${opts.provider}/${opts.model}`;
+    return this.buildLocalSkipForward(opts, 429, message, expiresAt);
+  }
+
+  private buildCredentialRejectedForward(
+    opts: ForwardProviderOptions,
+    expiresAt: number,
+  ): ForwardResult {
+    const credential = opts.providerKeyLabel ? `"${opts.providerKeyLabel}" ` : '';
+    const message =
+      `${opts.provider} rejected the ${credential}credential with a 401 and it is skipped ` +
+      `for now. Reconnect or replace it if this continues.`;
+    return this.buildLocalSkipForward(opts, 401, message, expiresAt);
+  }
+
+  /**
+   * A route skipped locally, without calling the provider. The status keeps
+   * the fallback chain moving; the attempt is not persisted as a provider call.
+   */
+  private buildLocalSkipForward(
+    opts: ForwardProviderOptions,
+    status: number,
+    message: string,
+    expiresAt: number,
+  ): ForwardResult {
+    const attempt = opts.startProviderAttempt?.({
+      provider: opts.provider,
+      model: opts.model,
+      authType: opts.authType,
+      tenantProviderId: opts.tenantProviderId,
+      keyLabel: opts.providerKeyLabel,
+      providerCallStarted: false,
+    });
+    if (attempt) attempt.completedAtMs = Date.now();
+    const retryAfterSeconds = Math.max(1, Math.ceil((expiresAt - Date.now()) / 1000));
     return {
       response: new Response(JSON.stringify({ error: { message } }), {
-        status: 429,
+        status,
         headers: {
           'content-type': 'application/json',
           'retry-after': String(retryAfterSeconds),
@@ -426,13 +811,29 @@ export class ProxyFallbackService {
       isGoogle: false,
       isAnthropic: false,
       isChatGpt: false,
+      providerCallStarted: false,
+      attempt,
+    };
+  }
+
+  private credentialRef(opts: ForwardProviderOptions, secret: string): RejectedCredentialRef {
+    return {
+      tenantId: opts.tenantId,
+      connectionId: opts.tenantProviderId,
+      provider: opts.provider,
+      authType: opts.authType,
+      keyLabel: opts.providerKeyLabel,
+      model: opts.model,
+      secret,
     };
   }
 
   private recordRateLimitCooldown(opts: ForwardProviderOptions, response: Response): void {
-    if (response.status !== 429) return;
-    const key = this.rateLimitCooldownKey(opts);
-    if (!key) return;
+    this.recordRateLimitCooldownForKey(this.rateLimitCooldownKey(opts), response);
+  }
+
+  private recordRateLimitCooldownForKey(key: string | null, response: Response): void {
+    if (response.status !== 429 || !key) return;
     if (this.rateLimitCooldowns.size >= MAX_RATE_LIMIT_COOLDOWNS) {
       this.evictExpiredRateLimitCooldowns();
       if (this.rateLimitCooldowns.size >= MAX_RATE_LIMIT_COOLDOWNS) {
@@ -466,15 +867,24 @@ export class ProxyFallbackService {
     if (Number.isFinite(seconds) && seconds > 0) {
       return Math.min(seconds * 1000, RATE_LIMIT_COOLDOWN_MAX_MS);
     }
+    // HTTP-date form (RFC 9110): honor the provider's stated instant the same
+    // way as the numeric-seconds form — respect the actual delta, capped at
+    // MAX, with no artificial floor. A past or nonsensical date carries no
+    // usable duration, so fall back to the short default.
     const retryAt = Date.parse(retryAfter);
     if (Number.isNaN(retryAt)) return RATE_LIMIT_COOLDOWN_DEFAULT_MS;
-    return Math.min(
-      Math.max(retryAt - Date.now(), RATE_LIMIT_COOLDOWN_DEFAULT_MS),
-      RATE_LIMIT_COOLDOWN_MAX_MS,
-    );
+    const deltaMs = retryAt - Date.now();
+    if (deltaMs <= 0) return RATE_LIMIT_COOLDOWN_DEFAULT_MS;
+    return Math.min(deltaMs, RATE_LIMIT_COOLDOWN_MAX_MS);
   }
 
-  private rateLimitCooldownKey(opts: ForwardProviderOptions): string | null {
+  private rateLimitCooldownKey(opts: {
+    agentId?: string;
+    authType?: string;
+    provider: string;
+    providerKeyLabel?: string;
+    model: string;
+  }): string | null {
     if (!opts.agentId || !opts.authType) return null;
     return [
       opts.agentId,
@@ -485,10 +895,16 @@ export class ProxyFallbackService {
     ].join('\u0000');
   }
 
+  /**
+   * Refresh an OAuth token the provider rejected with a 401 and resend once.
+   * Returns the secret the final attempt used, so a still-rejected credential
+   * is remembered under the token the next request will actually send.
+   */
   private async retryOAuthSubscriptionAfterRejectedToken(
     opts: ForwardProviderOptions,
     forward: ForwardResult,
-  ): Promise<ForwardResult> {
+  ): Promise<{ forward: ForwardResult; apiKey: string }> {
+    const unchanged = { forward, apiKey: opts.apiKey };
     if (
       opts.authType !== 'subscription' ||
       forward.response.status !== 401 ||
@@ -496,7 +912,7 @@ export class ProxyFallbackService {
       !opts.agentId ||
       !opts.tenantId
     ) {
-      return forward;
+      return unchanged;
     }
 
     const refreshed = await refreshRejectedOAuthCredential(
@@ -514,16 +930,48 @@ export class ProxyFallbackService {
         xaiOauth: this.xaiOauth,
       },
     );
-    if (!refreshed?.apiKey || refreshed.apiKey === opts.apiKey) return forward;
+    if (!refreshed?.apiKey || refreshed.apiKey === opts.apiKey) {
+      this.logger.warn(
+        `OAuth token rejected upstream and could not be refreshed: provider=${opts.provider} ` +
+          `keyLabel=${opts.providerKeyLabel ?? 'default'} agent=${opts.agentId}`,
+      );
+      return unchanged;
+    }
 
     this.logger.log(
       `OAuth token rejected upstream; refreshed provider=${opts.provider} agent=${opts.agentId}`,
     );
-    return this.forwardToProvider({
+    const rejectedBody = await forward.response
+      .clone()
+      .text()
+      .catch(() => 'OAuth token rejected');
+    await forward.attempt?.finishRecording?.(recordingResponseFromText(rejectedBody));
+    await forward.attempt?.completeFailure?.({
+      status: forward.response.status,
+      errorBody: rejectedBody,
+      superseded: true,
+    });
+    const retryOpts = {
       ...opts,
       apiKey: refreshed.apiKey,
       resourceUrl: refreshed.resourceUrl ?? opts.resourceUrl,
-    });
+    };
+    try {
+      return { forward: await this.forwardToProvider(retryOpts), apiKey: refreshed.apiKey };
+    } catch (error) {
+      if (opts.signal?.aborted || !isTransportError(error)) throw error;
+      return {
+        forward: {
+          response: buildTransportErrorResponse(error),
+          attempt: attemptFromError(error),
+          providerCallStarted: true,
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        },
+        apiKey: refreshed.apiKey,
+      };
+    }
   }
 
   private async forwardToProvider(opts: ForwardProviderOptions): Promise<ForwardResult> {
@@ -536,7 +984,6 @@ export class ProxyFallbackService {
       providerRegion,
       signatureLookup,
       thinkingLookup,
-      reasoningContentLookup,
     } = opts;
     // Per-attempt merge: ask the model-params service for this iteration's
     // (provider, auth_type, model) config. Storage is model-scoped on the
@@ -550,17 +997,12 @@ export class ProxyFallbackService {
       authType,
       opts.model,
     );
-    let chatBody = opts.chatBody
-      ? await this.applyParamMerge(
-          opts.chatBody,
-          opts.paramMergeContext,
-          provider,
-          authType,
-          opts.model,
-        )
-      : undefined;
-
-    const extraHeaders = buildProviderExtraHeaders(provider, opts.sessionKey);
+    // Agent-scope fallback for providers (OpenCode) that need a session id on
+    // every request even when the caller sent no x-session-key. NUL-joined so
+    // distinct (tenant, agent) pairs can never collide before hashing.
+    const agentScopeKey =
+      opts.tenantId && opts.agentId ? `${opts.tenantId}\u0000${opts.agentId}` : undefined;
+    const extraHeaders = buildProviderExtraHeaders(provider, opts.providerCacheKey, agentScopeKey);
 
     // Copilot: exchange the stored GitHub OAuth token for a short-lived API token
     let effectiveKey = opts.apiKey;
@@ -598,22 +1040,35 @@ export class ProxyFallbackService {
         : customEndpoint
           ? 'custom'
           : resolveEndpointKey(provider);
-    if (this.reasoningCache) {
-      body = await this.reasoningCache.reinjectMissingReasoningContent(
-        body,
-        opts.sessionKey,
-        reasoningEndpointKey,
-        forwardModel,
-      );
-      if (chatBody) {
-        chatBody = await this.reasoningCache.reinjectMissingReasoningContent(
-          chatBody,
-          opts.sessionKey,
-          reasoningEndpointKey,
-          forwardModel,
-        );
-      }
-    }
+    let resolvedChatBody: Promise<Record<string, unknown>> | undefined;
+    const resolveChatBody = opts.resolveChatBody
+      ? () => {
+          resolvedChatBody ??= (async () => {
+            let resolved = await opts.resolveChatBody!();
+            resolved = await this.applyParamMerge(
+              resolved,
+              opts.paramMergeContext,
+              provider,
+              authType,
+              opts.model,
+            );
+            resolved = await this.reasoningCache.prepareRequest(
+              resolved,
+              opts.reasoningCacheKey ?? opts.sessionKey,
+              reasoningEndpointKey,
+              forwardModel,
+            );
+            return resolved;
+          })();
+          return resolvedChatBody;
+        }
+      : undefined;
+    body = await this.reasoningCache.prepareRequest(
+      body,
+      opts.reasoningCacheKey ?? opts.sessionKey,
+      reasoningEndpointKey,
+      forwardModel,
+    );
 
     // For Gemini OAuth, the OAuth blob's `u` field is the
     // CodeAssist project id (not a URL). It must be forwarded so the
@@ -621,26 +1076,53 @@ export class ProxyFallbackService {
     const providerResource =
       authType === 'subscription' && provider.toLowerCase() === 'gemini' ? resourceUrl : undefined;
 
-    return this.providerClient.forward({
+    const attempt = opts.startProviderAttempt?.({
       provider,
-      apiKey: effectiveKey,
-      model: forwardModel,
-      body,
-      chatBody,
-      stream,
-      signal,
-      extraHeaders,
-      customEndpoint,
+      model: opts.model,
       authType,
-      apiMode: opts.apiMode,
-      signatureLookup,
-      thinkingLookup,
-      reasoningContentLookup,
-      providerResource,
+      tenantProviderId: opts.tenantProviderId,
+      keyLabel: opts.providerKeyLabel,
     });
+    try {
+      const forward = await this.providerClient.forward({
+        provider,
+        apiKey: effectiveKey,
+        model: forwardModel,
+        body,
+        resolveChatBody,
+        stream,
+        signal,
+        extraHeaders,
+        customEndpoint,
+        authType,
+        apiMode: opts.apiMode,
+        sessionKey: opts.sessionKey,
+        providerCacheKey: opts.providerCacheKey,
+        signatureLookup,
+        thinkingLookup,
+        ...(thinkingLookup
+          ? {
+              thinkingRouteContext: {
+                provider,
+                authType,
+                model: opts.model,
+              },
+            }
+          : {}),
+        clientAnthropicBeta: opts.clientAnthropicBeta,
+        providerResource,
+        attempt,
+      });
+      if (attempt) attempt.completedAtMs = Date.now();
+      return { ...forward, attempt, providerCallStarted: true };
+    } catch (error) {
+      if (attempt) attempt.completedAtMs = Date.now();
+      if (attempt && error instanceof Error) {
+        (error as AttemptTaggedError)[PROVIDER_ATTEMPT_REF] = attempt;
+      }
+      throw error;
+    }
   }
 }
 
-export function normalizeProviderModel(provider: string, model: string): string {
-  return provider.toLowerCase() === 'anthropic' ? normalizeAnthropicShortModelId(model) : model;
-}
+export { normalizeProviderModel };

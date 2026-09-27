@@ -3,7 +3,24 @@ buildCommand = "npx turbo build --filter=manifest-backend --filter=manifest-fron
 
 [deploy]
 startCommand = "npm start"
+# Run migrations once, before any replica starts, over the direct (non-PgBouncer)
+# connection. Railway runs preDeploy in a single one-off container per deployment,
+# so replicas never migrate concurrently on boot. migrate.js also holds an advisory
+# lock, so overlapping deployments serialize instead of deadlocking on agent_messages.
+preDeployCommand = "npm run migration:run:prod --workspace=packages/backend"
+# Request history is regrouped after readiness by a non-blocking worker. Cloud
+# uses the direct MIGRATION_DATABASE_URL, while self-hosted deployments reuse
+# their ordinary DATABASE_URL. The current application keeps writing
+# agent_messages throughout the backfill.
 healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 300
+# Zero-downtime rolling deploys. The new deployment runs alongside the old one
+# for `overlapSeconds` (edge shifts traffic over) before the old replica is sent
+# SIGTERM. `drainingSeconds` is the SIGTERM→SIGKILL grace; it MUST exceed the
+# app's own drain window (SHUTDOWN_DRAIN_MS, default 10s — the server keeps
+# serving and reports 503 on /api/v1/health so the edge deregisters it) plus a
+# margin for in-flight requests to finish, or the drain gets cut short.
+overlapSeconds = 20
+drainingSeconds = 30
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 3

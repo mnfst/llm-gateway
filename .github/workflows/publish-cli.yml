@@ -1,0 +1,68 @@
+name: Publish CLI
+
+# Publishes mnfst-gateway-cli to npm on demand, decoupled from a release.
+#
+# The release path publishes the CLI as part of a version bump, which is right
+# for the normal case. It is wrong for recovering from a failed publish: the
+# version on main is already correct, so cutting a whole new release — image,
+# GitHub release, tag — just to retry one npm upload is pure waste. This
+# workflow runs the same steps against whatever version main already carries.
+#
+# Safe to run repeatedly. The same guard the release job uses skips a version
+# that is already on npm, so a second run after a success is a no-op rather
+# than a duplicate-publish error.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build and inspect the package without uploading'
+        type: boolean
+        default: false
+
+jobs:
+  publish:
+    # workflow_dispatch accepts any ref and checkout honours it. Only main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: npm-publish-mnfst-gateway-cli
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # npm provenance attestation
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Stamp the CLI version from packages/manifest/package.json
+        run: npm run set-version --workspace=packages/cli
+      - name: Check whether this version is already on npm
+        id: published
+        run: bash .github/scripts/check-cli-npm-status.sh
+      - name: Build shared, then the CLI
+        if: steps.published.outputs.skip != 'true'
+        run: |
+          npm run build --workspace=packages/shared
+          npm run build --workspace=packages/cli
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
+        # access + provenance come from publishConfig in packages/cli/package.json.
+        #
+        # --dry-run builds and inspects the tarball. It does NOT contact the
+        # registry, so it cannot validate package creation rights, token scope,
+        # 2FA policy, name-similarity rejection, or provenance. Verified: with
+        # publishConfig.access removed — the exact config that failed the 6.25.1
+        # publish with EUSAGE — a dry run still exits 0. Never read a green dry
+        # run as evidence that the real publish will succeed.
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npm publish --workspace=packages/cli --dry-run
+          else
+            npm publish --workspace=packages/cli
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

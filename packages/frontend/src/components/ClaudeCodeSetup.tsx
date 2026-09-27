@@ -73,6 +73,13 @@ const ClaudeCodeSetup: Component<Props> = (props) => {
         </div>
         <CodeBlock code={settingsShown()} language="json" />
       </div>
+
+      <p class="setup-method__hint">
+        Through a gateway, Claude Code assumes a 200k context window and compacts long sessions
+        early. For long-context work, pin a 1M model instead of{' '}
+        <code class="setup-model-hint__code">auto</code>, for example{' '}
+        <code class="setup-model-hint__code">/model claude-opus-5-5[1m]</code>.
+      </p>
     </div>
   );
 };

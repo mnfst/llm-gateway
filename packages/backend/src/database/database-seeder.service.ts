@@ -8,14 +8,109 @@ import { Agent } from '../entities/agent.entity';
 import { AgentApiKey } from '../entities/agent-api-key.entity';
 import { ApiKey } from '../entities/api-key.entity';
 import { AgentMessage } from '../entities/agent-message.entity';
+import { ManifestRequest } from '../entities/request.entity';
 import { TenantProvider } from '../entities/tenant-provider.entity';
+import { AgentEnabledProvider } from '../entities/agent-enabled-provider.entity';
+import { TierAssignment } from '../entities/tier-assignment.entity';
+import { SpecificityAssignment } from '../entities/specificity-assignment.entity';
 import { hashKey, keyPrefix } from '../common/utils/hash.util';
-import { getSeedConnections, seedAgentMessages } from './seed-messages';
+import { RequestRecordingStorageService } from '../common/services/request-recording-storage.service';
+import { encodeRequestRecording } from '../common/utils/request-recording-codec';
+import type { StoredAttemptRecording } from '../routing/proxy/attempt-recording.types';
+import { getSeedConnections, seedAgentMessages, seedConnectionId } from './seed-messages';
+import { seedRoutingCohorts } from './seed-cohorts';
 
 const SEED_API_KEY = 'dev-api-key-manifest-001';
 const SEED_OTLP_KEY = 'mnfst_dev-otlp-key-001';
 const SEED_TENANT_ID = 'seed-tenant-001';
 const SEED_AGENT_ID = 'seed-agent-001';
+const SEED_RECORDED_REQUEST_ID = 'seed-req-recording-001';
+const SEED_RECORDED_ATTEMPT_ID = 'seed-msg-recording-001';
+const SEED_RECORDED_TRACE_ID = 'seed-trace-recording-001';
+const SEED_RECORDED_SESSION_KEY = 'sess-recording-preview';
+const SEED_RECORDED_MODEL = 'gpt-4o-mini';
+
+const SEED_ATTEMPT_RECORDING: StoredAttemptRecording = {
+  version: 1,
+  wire_format: 'openai_chat_completions',
+  request_body: {
+    model: SEED_RECORDED_MODEL,
+    messages: [
+      {
+        role: 'system',
+        content: 'You are a concise travel assistant. Use tools when they are helpful.',
+      },
+      {
+        role: 'user',
+        content: 'Should I bring an umbrella for an evening walk in Paris?',
+      },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'call_weather_paris',
+            type: 'function',
+            function: {
+              name: 'get_weather',
+              arguments: '{"city":"Paris","unit":"celsius"}',
+            },
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        tool_call_id: 'call_weather_paris',
+        content: '{"temperature":18,"condition":"light rain","precipitation_chance":70}',
+      },
+    ],
+    tools: [
+      {
+        type: 'function',
+        function: {
+          name: 'get_weather',
+          description: 'Get the current weather for a city.',
+          parameters: {
+            type: 'object',
+            properties: {
+              city: { type: 'string' },
+              unit: { type: 'string', enum: ['celsius', 'fahrenheit'] },
+            },
+            required: ['city'],
+          },
+        },
+      },
+    ],
+    tool_choice: 'auto',
+    temperature: 0.2,
+    stream: false,
+  },
+  response_body: {
+    type: 'json',
+    body: {
+      id: 'chatcmpl-seed-recording-001',
+      object: 'chat.completion',
+      created: 1_753_700_000,
+      model: SEED_RECORDED_MODEL,
+      choices: [
+        {
+          index: 0,
+          message: {
+            role: 'assistant',
+            content:
+              'Yes. Light rain is likely this evening, so bring a compact umbrella for your walk.',
+          },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: {
+        prompt_tokens: 124,
+        completion_tokens: 22,
+        total_tokens: 146,
+      },
+    },
+  },
+};
 
 @Injectable()
 export class DatabaseSeederService implements OnModuleInit {
@@ -29,7 +124,15 @@ export class DatabaseSeederService implements OnModuleInit {
     @InjectRepository(AgentApiKey) private readonly agentKeyRepo: Repository<AgentApiKey>,
     @InjectRepository(ApiKey) private readonly apiKeyRepo: Repository<ApiKey>,
     @InjectRepository(AgentMessage) private readonly messageRepo: Repository<AgentMessage>,
+    @InjectRepository(ManifestRequest)
+    private readonly requestRepo: Repository<ManifestRequest>,
     @InjectRepository(TenantProvider) private readonly providerRepo: Repository<TenantProvider>,
+    @InjectRepository(AgentEnabledProvider)
+    private readonly enabledProviderRepo: Repository<AgentEnabledProvider>,
+    @InjectRepository(TierAssignment) private readonly tierRepo: Repository<TierAssignment>,
+    @InjectRepository(SpecificityAssignment)
+    private readonly specificityRepo: Repository<SpecificityAssignment>,
+    private readonly recordingStorage: RequestRecordingStorageService,
   ) {}
 
   async onModuleInit() {
@@ -64,6 +167,11 @@ export class DatabaseSeederService implements OnModuleInit {
       // tenant_providers row via the FK on agent_messages.tenant_provider_id.
       await this.seedTenantProviders();
       await this.seedAgentMessages();
+      // Two routing cohorts for the complexity/task-specific deprecation demo:
+      // the admin demo agent becomes "clean" (features hidden) and a fresh
+      // olduser gets a "legacy" agent (features visible).
+      await this.seedDemoCohorts();
+      await this.seedRecordedRequest();
       this.logger.log('Seeded demo data (SEED_DATA=true, dev/test only)');
       this.logger.warn(
         'SECURITY: Default seed credentials are active (admin@manifest.build). Do NOT use in production.',
@@ -164,6 +272,7 @@ export class DatabaseSeederService implements OnModuleInit {
       agent_category: 'personal',
       agent_platform: 'openclaw',
       is_active: true,
+      record_messages: true,
       tenant_id: SEED_TENANT_ID,
     });
 
@@ -208,6 +317,105 @@ export class DatabaseSeederService implements OnModuleInit {
   private async seedAgentMessages() {
     const userId = await this.getAdminUserId();
     if (!userId) return;
-    await seedAgentMessages(this.messageRepo, userId, this.logger);
+    await seedAgentMessages(this.messageRepo, userId, this.logger, undefined, this.requestRepo);
+  }
+
+  private async seedDemoCohorts() {
+    const userId = await this.getAdminUserId();
+    if (!userId) return;
+    await seedRoutingCohorts({
+      dataSource: this.dataSource,
+      tenantRepo: this.tenantRepo,
+      agentRepo: this.agentRepo,
+      agentKeyRepo: this.agentKeyRepo,
+      providerRepo: this.providerRepo,
+      enabledProviderRepo: this.enabledProviderRepo,
+      tierRepo: this.tierRepo,
+      specificityRepo: this.specificityRepo,
+      logger: this.logger,
+      cleanAgentId: SEED_AGENT_ID,
+    });
+  }
+
+  private async seedRecordedRequest(): Promise<void> {
+    if (!this.recordingStorage.backend) {
+      this.logger.warn('Skipped recorded request preview because recording storage is unavailable');
+      return;
+    }
+
+    const userId = await this.getAdminUserId();
+    if (!userId) return;
+
+    const timestamp = new Date().toISOString();
+    const existingRequest = await this.requestRepo.findOne({
+      where: { id: SEED_RECORDED_REQUEST_ID },
+    });
+    if (!existingRequest) {
+      await this.requestRepo.insert({
+        id: SEED_RECORDED_REQUEST_ID,
+        tenant_id: SEED_TENANT_ID,
+        agent_id: SEED_AGENT_ID,
+        user_id: userId,
+        agent_name: 'demo-agent',
+        trace_id: SEED_RECORDED_TRACE_ID,
+        session_key: SEED_RECORDED_SESSION_KEY,
+        timestamp,
+        duration_ms: 842,
+        status: 'success',
+        requested_model: 'auto',
+        request_params: { temperature: 0.2, tool_choice: 'auto' },
+      });
+    }
+
+    const existingAttempt = await this.messageRepo.findOne({
+      where: { id: SEED_RECORDED_ATTEMPT_ID },
+    });
+    if (!existingAttempt) {
+      await this.messageRepo.insert({
+        id: SEED_RECORDED_ATTEMPT_ID,
+        request_id: SEED_RECORDED_REQUEST_ID,
+        attempt_number: 1,
+        recording_key: null,
+        tenant_id: SEED_TENANT_ID,
+        agent_id: SEED_AGENT_ID,
+        user_id: userId,
+        agent_name: 'demo-agent',
+        trace_id: SEED_RECORDED_TRACE_ID,
+        session_key: SEED_RECORDED_SESSION_KEY,
+        timestamp,
+        duration_ms: 842,
+        input_tokens: 124,
+        output_tokens: 22,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        cost_usd: 0.0000318,
+        status: 'ok',
+        model: SEED_RECORDED_MODEL,
+        provider: 'openai',
+        auth_type: 'api_key',
+        tenant_provider_id: seedConnectionId('openai', 'api_key'),
+        routing_tier: 'default',
+        routing_reason: 'default',
+      });
+    }
+
+    const storageKey = this.recordingStorage.objectKey(
+      SEED_TENANT_ID,
+      SEED_RECORDED_REQUEST_ID,
+      SEED_RECORDED_ATTEMPT_ID,
+    );
+    await this.recordingStorage.put(
+      storageKey,
+      await encodeRequestRecording(SEED_ATTEMPT_RECORDING),
+    );
+    await this.messageRepo.update(
+      {
+        id: SEED_RECORDED_ATTEMPT_ID,
+        tenant_id: SEED_TENANT_ID,
+        request_id: SEED_RECORDED_REQUEST_ID,
+      },
+      { recording_key: storageKey },
+    );
+    this.logger.log(`Seeded recorded request preview with ${SEED_RECORDED_MODEL}`);
   }
 }

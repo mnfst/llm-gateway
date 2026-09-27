@@ -372,6 +372,143 @@ describe('ProviderKeyForm', () => {
         region: 'eu-west-1',
       });
     });
+
+    it('sends a custom Alibaba API-key endpoint URL as the provider region', async () => {
+      const def = makeProviderDef({
+        id: 'qwen',
+        name: 'Alibaba Cloud',
+        apiKeyEndpointRegions: [
+          { value: 'auto', label: 'Auto-detect' },
+          {
+            value: 'custom',
+            label: 'Custom endpoint',
+            baseUrlPlaceholder:
+              'https://<workspace-id>.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+          },
+        ],
+      });
+      const { container } = mount({
+        provDef: def,
+        provId: 'qwen',
+        isSubMode: false,
+        selectedAuthType: 'api_key',
+        keyInput: 'sk-qwen-key',
+      });
+
+      const endpoint = container.querySelector('#qwen-subscription-endpoint') as HTMLSelectElement;
+      fireEvent.change(endpoint, { target: { value: 'custom' } });
+      fireEvent.input(screen.getByLabelText('Base URL'), {
+        target: {
+          value: 'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+        },
+      });
+
+      const connectBtn = container.querySelector('.provider-detail__action') as HTMLButtonElement;
+      fireEvent.click(connectBtn);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(connectProviderMock).toHaveBeenCalledWith('test-agent', {
+        provider: 'qwen',
+        apiKey: 'sk-qwen-key',
+        authType: 'api_key',
+        region: 'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+      });
+    });
+
+    it('sends a named Alibaba workspace endpoint URL as the provider region', async () => {
+      const def = makeProviderDef({
+        id: 'qwen',
+        name: 'Alibaba Cloud',
+        apiKeyEndpointRegions: [
+          { value: 'auto', label: 'Auto-detect' },
+          {
+            value: 'workspace-eu-central-1',
+            label: 'Germany (Frankfurt)',
+            baseUrlPlaceholder:
+              'https://<workspace-id>.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+          },
+        ],
+      });
+      const { container } = mount({
+        provDef: def,
+        provId: 'qwen',
+        isSubMode: false,
+        selectedAuthType: 'api_key',
+        keyInput: 'sk-qwen-key',
+      });
+
+      const endpoint = container.querySelector('#qwen-subscription-endpoint') as HTMLSelectElement;
+      fireEvent.change(endpoint, { target: { value: 'workspace-eu-central-1' } });
+      fireEvent.input(screen.getByLabelText('Base URL'), {
+        target: {
+          value: 'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+        },
+      });
+
+      const connectBtn = container.querySelector('.provider-detail__action') as HTMLButtonElement;
+      fireEvent.click(connectBtn);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(connectProviderMock).toHaveBeenCalledWith('test-agent', {
+        provider: 'qwen',
+        apiKey: 'sk-qwen-key',
+        authType: 'api_key',
+        region: 'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+      });
+    });
+
+    it('selects the matching named Alibaba workspace region for a saved endpoint', () => {
+      const def = makeProviderDef({
+        id: 'qwen',
+        name: 'Alibaba Cloud',
+        apiKeyEndpointRegions: [
+          { value: 'auto', label: 'Auto-detect' },
+          {
+            value: 'workspace-eu-central-1',
+            label: 'Germany (Frankfurt)',
+            baseUrlPlaceholder:
+              'https://<workspace-id>.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+          },
+          {
+            value: 'workspace-ap-northeast-1',
+            label: 'Japan (Tokyo)',
+            baseUrlPlaceholder:
+              'https://<workspace-id>.ap-northeast-1.maas.aliyuncs.com/compatible-mode/v1',
+          },
+          {
+            value: 'custom',
+            label: 'Custom endpoint',
+            baseUrlPlaceholder:
+              'https://<workspace-id>.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+          },
+        ],
+      });
+      const { container } = mount({
+        provDef: def,
+        provId: 'qwen',
+        connected: true,
+        editing: true,
+        keyInput: 'sk-new-qwen-key',
+        providers: [
+          makeProvider({
+            provider: 'qwen',
+            region: 'https://workspace-123.ap-northeast-1.maas.aliyuncs.com/compatible-mode/v1',
+          }),
+        ],
+      });
+
+      const endpoint = container.querySelector(
+        '#qwen-subscription-endpoint-edit',
+      ) as HTMLSelectElement;
+      const baseUrl = screen.getByLabelText('Base URL') as HTMLInputElement;
+
+      expect(endpoint.value).toBe('workspace-ap-northeast-1');
+      expect(baseUrl.value).toBe(
+        'https://workspace-123.ap-northeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      );
+    });
   });
 
   describe('handleUpdateKey toast labels', () => {
@@ -1094,6 +1231,65 @@ describe('ProviderKeyForm', () => {
         authType: 'subscription',
         label: 'Key 3',
         region: 'cn',
+      });
+    });
+
+    it('list-mode AddAnotherKey sends a named Qwen workspace endpoint URL', async () => {
+      const def = makeProviderDef({
+        id: 'qwen',
+        name: 'Alibaba Cloud',
+        apiKeyEndpointRegions: [
+          { value: 'auto', label: 'Auto-detect' },
+          {
+            value: 'workspace-ap-northeast-1',
+            label: 'Japan (Tokyo)',
+            baseUrlPlaceholder:
+              'https://<workspace-id>.ap-northeast-1.maas.aliyuncs.com/compatible-mode/v1',
+          },
+        ],
+      });
+      const { container, getByText } = mount({
+        provDef: def,
+        provId: 'qwen',
+        connected: true,
+        addKeyOpen: true,
+        providers: [
+          makeProvider({
+            id: 'q1',
+            provider: 'qwen',
+            label: 'Personal',
+            priority: 0,
+            region: 'auto',
+          }),
+          makeProvider({
+            id: 'q2',
+            provider: 'qwen',
+            label: 'Work',
+            priority: 1,
+            region: 'auto',
+          }),
+        ],
+      });
+
+      const endpoint = container.querySelector('#add-key-endpoint') as HTMLSelectElement;
+      fireEvent.change(endpoint, { target: { value: 'workspace-ap-northeast-1' } });
+      fireEvent.input(screen.getByLabelText('Base URL'), {
+        target: {
+          value: 'https://workspace-123.ap-northeast-1.maas.aliyuncs.com/compatible-mode/v1',
+        },
+      });
+      const apiKeyInput = container.querySelector('#add-key-value') as HTMLInputElement;
+      fireEvent.input(apiKeyInput, { target: { value: 'sk-third' } });
+      fireEvent.click(getByText('Add key'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(connectProviderMock).toHaveBeenCalledWith('test-agent', {
+        provider: 'qwen',
+        apiKey: 'sk-third',
+        authType: 'api_key',
+        label: 'Key 3',
+        region: 'https://workspace-123.ap-northeast-1.maas.aliyuncs.com/compatible-mode/v1',
       });
     });
 

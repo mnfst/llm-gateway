@@ -21,22 +21,22 @@ export function formatNumber(n: number): string {
  */
 export function formatCost(n: number): string | null {
   n = Number(n);
-  if (n < 0) return null;
+  if (!Number.isFinite(n) || n < 0) return null;
   if (n > 0 && n < 0.01) return '< $0.01';
   return `$${n.toFixed(2)}`;
 }
 
 /**
- * Format a per-request subscription cost (e.g. OpenCode Go's docs-attributed
- * USD per call) as a compact `$0.0136/req` label. Returns null for a missing,
- * zero, or negative value so callers fall back to a flat-fee label.
+ * Format a per-request subscription quota burn rate (e.g. OpenCode Go's
+ * docs-attributed USD per call) as a compact included-plan label. Returns null
+ * for a missing, zero, or negative value so callers fall back to a flat-fee label.
  */
 export function formatPerRequestCost(cost: number | null | undefined): string | null {
   if (cost == null) return null;
   const n = Number(cost);
   if (!Number.isFinite(n) || n <= 0) return null;
-  if (n < 0.0001) return '< $0.0001/req';
-  return `$${n.toFixed(4)}/req`;
+  if (n < 0.0001) return 'Included (< $0.0001 quota/req)';
+  return `Included ($${n.toFixed(4)} quota/req)`;
 }
 
 /**
@@ -53,6 +53,7 @@ export function formatTrend(pct: number): string {
 export function formatTime(ts: string): string {
   const normalized = ts.replace(' ', 'T');
   const d = new Date(normalized.endsWith('Z') ? normalized : normalized + 'Z');
+  if (Number.isNaN(d.getTime())) return '—';
   const date = d.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
@@ -73,12 +74,64 @@ const STATUS_LABELS: Record<string, string> = {
   ok: 'Success',
   retry: 'Retried',
   error: 'Failed',
-  rate_limited: 'Rate Limited',
+  // A rate limit is just a provider failure — the origin pill ("Provider") and
+  // the details drawer ("Type: Rate limit") carry the nuance, so the status
+  // column stays the simple Success/Failed it was before.
+  rate_limited: 'Failed',
   fallback_error: 'Handled',
+  auto_fixed: 'Autofixed',
 };
 
 export function formatStatus(status: string): string {
   return STATUS_LABELS[status.toLowerCase()] ?? status;
+}
+
+/**
+ * Map an error_origin to a user-facing label. Manifest-originated errors
+ * (config/policy/internal) are labelled as Manifest's own so they read
+ * distinctly from a provider's failure.
+ */
+const ERROR_ORIGIN_LABELS: Record<string, string> = {
+  provider: 'Provider',
+  transport: 'Transport',
+  config: 'Manifest · Setup',
+  // policy = a Manifest software limit (spend/token guardrail) was hit — labelled
+  // "Limit" so it reads distinctly from a provider rate limit.
+  policy: 'Manifest · Limit',
+  internal: 'Manifest · Internal',
+  // request = the caller's own payload was refused before routing. Not the
+  // operator's setup, not a Manifest bug, and never a provider failure.
+  request: 'Manifest · Bad request',
+};
+
+export function formatErrorOrigin(origin: string | null | undefined): string | null {
+  if (!origin) return null;
+  return ERROR_ORIGIN_LABELS[origin] ?? origin;
+}
+
+/** Map an error_class to a user-facing label. */
+const ERROR_CLASS_LABELS: Record<string, string> = {
+  rate_limit: 'Rate limit',
+  auth: 'Authentication',
+  invalid_request: 'Invalid request',
+  not_found: 'Not found',
+  payload_too_large: 'Payload too large',
+  billing: 'Billing',
+  server_error: 'Server error',
+  client_error: 'Client error',
+  timeout: 'Timeout',
+  network: 'Network',
+  no_provider: 'No provider configured',
+  no_provider_key: 'Missing API key',
+  subscription_credentials_unusable: 'Subscription credentials',
+  limit_exceeded: 'Limit exceeded',
+  plan_request_limit_exceeded: 'Plan request limit',
+  internal: 'Internal error',
+};
+
+export function formatErrorClass(errorClass: string | null | undefined): string | null {
+  if (!errorClass) return null;
+  return ERROR_CLASS_LABELS[errorClass] ?? errorClass.replace(/_/g, ' ');
 }
 
 /**

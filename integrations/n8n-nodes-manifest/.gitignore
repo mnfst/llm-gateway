@@ -1,0 +1,8 @@
+node_modules/
+!dist/
+!dist/**
+coverage/
+*.tgz
+*.log
+*.tsbuildinfo
+.env*

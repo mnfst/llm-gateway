@@ -1,0 +1,494 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Deploy Manifest on AWS with ECS Fargate, RDS PostgreSQL, S3 request
+  recording storage, an Application Load Balancer, and Secrets Manager. The load balancer is
+  HTTP-only by default; configure TLS with your own domain and ACM
+  certificate before sending production auth traffic through it.
+
+Parameters:
+  ServiceName:
+    Type: String
+    Default: manifest
+    Description: Lowercase service name used in resource labels.
+    AllowedPattern: "^[a-z][a-z0-9-]{0,39}$"
+    ConstraintDescription: Use up to 40 lowercase letters, numbers, and hyphens, starting with a letter.
+  ImageUrl:
+    Type: String
+    Default: docker.io/manifestdotbuild/manifest:6
+    Description: Manifest container image to deploy.
+  ContainerPort:
+    Type: Number
+    Default: 2099
+    MinValue: 1
+    MaxValue: 65535
+    Description: Port exposed by the Manifest container.
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 10
+    Description: Number of ECS tasks to run.
+  Cpu:
+    Type: String
+    Default: "512"
+    AllowedValues: ["256", "512", "1024", "2048", "4096"]
+    Description: Fargate task CPU units.
+  Memory:
+    Type: String
+    Default: "1024"
+    AllowedValues: ["512", "1024", "2048", "3072", "4096", "5120", "6144", "7168", "8192"]
+    Description: Fargate task memory in MiB.
+  DatabaseName:
+    Type: String
+    Default: manifest
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]{0,62}$"
+    Description: PostgreSQL database name.
+  DatabaseUsername:
+    Type: String
+    Default: manifest
+    AllowedPattern: "^[a-zA-Z][a-zA-Z0-9_]{0,62}$"
+    Description: PostgreSQL master username.
+  DatabaseInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    Description: RDS PostgreSQL instance class.
+  DatabaseAllocatedStorage:
+    Type: Number
+    Default: 20
+    MinValue: 20
+    MaxValue: 1024
+    Description: RDS storage in GiB.
+  DatabaseDeletionProtection:
+    Type: String
+    Default: "false"
+    AllowedValues: ["true", "false"]
+    Description: Set to true to prevent accidental database deletion.
+  AllowedIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to reach the public load balancer.
+  VpcCidr:
+    Type: String
+    Default: 10.80.0.0/16
+    Description: CIDR block for the VPC.
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.80.0.0/24
+    Description: CIDR block for the first public subnet.
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.80.1.0/24
+    Description: CIDR block for the second public subnet.
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.80.10.0/24
+    Description: CIDR block for the first private database subnet.
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.80.11.0/24
+    Description: CIDR block for the second private database subnet.
+
+Conditions:
+  EnableDatabaseDeletionProtection: !Equals [!Ref DatabaseDeletionProtection, "true"]
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}"
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}"
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref Vpc
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}-public-a"
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}-public-b"
+
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}-private-a"
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      MapPublicIpOnLaunch: false
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}-private-b"
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-${ServiceName}-public"
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP traffic to Manifest.
+      SecurityGroupIngress:
+        - CidrIp: !Ref AllowedIngressCidr
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+      VpcId: !Ref Vpc
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow load balancer traffic to the Manifest ECS task.
+      SecurityGroupIngress:
+        - FromPort: !Ref ContainerPort
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+          ToPort: !Ref ContainerPort
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+      VpcId: !Ref Vpc
+
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow Manifest ECS tasks to reach PostgreSQL.
+      SecurityGroupIngress:
+        - FromPort: 5432
+          IpProtocol: tcp
+          SourceSecurityGroupId: !Ref ServiceSecurityGroup
+          ToPort: 5432
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          IpProtocol: -1
+      VpcId: !Ref Vpc
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Private subnets for Manifest PostgreSQL.
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+
+  DatabasePassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Generated PostgreSQL password for Manifest.
+      GenerateSecretString:
+        ExcludePunctuation: true
+        IncludeSpace: false
+        PasswordLength: 32
+
+  BetterAuthSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Generated Better Auth session secret for Manifest.
+      GenerateSecretString:
+        ExcludePunctuation: true
+        IncludeSpace: false
+        PasswordLength: 64
+
+  ManifestEncryptionKey:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Generated at-rest encryption key for Manifest provider credentials.
+      GenerateSecretString:
+        ExcludePunctuation: true
+        IncludeSpace: false
+        PasswordLength: 64
+
+  RecordingBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AllocatedStorage: !Ref DatabaseAllocatedStorage
+      BackupRetentionPeriod: 7
+      DBInstanceClass: !Ref DatabaseInstanceClass
+      DBName: !Ref DatabaseName
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      DeletionProtection: !If [EnableDatabaseDeletionProtection, true, false]
+      Engine: postgres
+      MasterUsername: !Ref DatabaseUsername
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DatabasePassword}:SecretString}}"
+      MultiAZ: false
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      VPCSecurityGroups:
+        - !Ref DatabaseSecurityGroup
+
+  DatabaseUrlSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: DATABASE_URL for Manifest.
+      SecretString: !Sub "postgresql://${DatabaseUsername}:{{resolve:secretsmanager:${DatabasePassword}:SecretString}}@${Database.Endpoint.Address}:${Database.Endpoint.Port}/${DatabaseName}?uselibpqcompat=true&sslmode=require"
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "${AWS::StackName}-${ServiceName}"
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/ecs/${AWS::StackName}-${ServiceName}"
+      RetentionInDays: 14
+
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ReadManifestRuntimeSecrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource:
+                  - !Ref DatabaseUrlSecret
+                  - !Ref BetterAuthSecret
+                  - !Ref ManifestEncryptionKey
+
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ManageManifestRequestRecordings
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "${RecordingBucket.Arn}/request-recordings/*"
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Scheme: internet-facing
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      Type: application
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckEnabled: true
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /api/v1/health
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Matcher:
+        HttpCode: "200"
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetType: ip
+      UnhealthyThresholdCount: 3
+      VpcId: !Ref Vpc
+
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+        - TargetGroupArn: !Ref TargetGroup
+          Type: forward
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Environment:
+            - Name: PORT
+              Value: !Sub "${ContainerPort}"
+            - Name: BIND_ADDRESS
+              Value: 0.0.0.0
+            - Name: MANIFEST_MODE
+              Value: selfhosted
+            - Name: DB_POOL_MAX
+              Value: "10"
+            - Name: AUTH_DB_POOL_MAX
+              Value: "5"
+            - Name: BETTER_AUTH_URL
+              Value: !Sub "http://${LoadBalancer.DNSName}"
+            - Name: REQUEST_RECORDING_STORAGE
+              Value: s3
+            - Name: REQUEST_RECORDING_S3_BUCKET
+              Value: !Ref RecordingBucket
+            - Name: REQUEST_RECORDING_S3_REGION
+              Value: !Ref AWS::Region
+          Essential: true
+          Image: !Ref ImageUrl
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: manifest
+          Name: manifest
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+              Protocol: tcp
+          Secrets:
+            - Name: DATABASE_URL
+              ValueFrom: !Ref DatabaseUrlSecret
+            - Name: BETTER_AUTH_SECRET
+              ValueFrom: !Ref BetterAuthSecret
+            - Name: MANIFEST_ENCRYPTION_KEY
+              ValueFrom: !Ref ManifestEncryptionKey
+      Cpu: !Ref Cpu
+      ExecutionRoleArn: !GetAtt TaskExecutionRole.Arn
+      Family: !Sub "${AWS::StackName}-${ServiceName}"
+      Memory: !Ref Memory
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      TaskRoleArn: !GetAtt TaskRole.Arn
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn:
+      - Listener
+      - DatabaseUrlSecret
+    Properties:
+      Cluster: !Ref Cluster
+      DesiredCount: !Ref DesiredCount
+      HealthCheckGracePeriodSeconds: 180
+      LaunchType: FARGATE
+      LoadBalancers:
+        - ContainerName: manifest
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref TargetGroup
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+          Subnets:
+            - !Ref PublicSubnet1
+            - !Ref PublicSubnet2
+      TaskDefinition: !Ref TaskDefinition
+
+Outputs:
+  ServiceUrl:
+    Description: Public Manifest URL.
+    Value: !Sub "http://${LoadBalancer.DNSName}"
+  HealthCheckUrl:
+    Description: Manifest health check URL.
+    Value: !Sub "http://${LoadBalancer.DNSName}/api/v1/health"
+  DatabaseEndpoint:
+    Description: RDS PostgreSQL endpoint.
+    Value: !GetAtt Database.Endpoint.Address
+  DatabaseUrlSecretArn:
+    Description: Secrets Manager ARN containing DATABASE_URL.
+    Value: !Ref DatabaseUrlSecret
+  RecordingBucketName:
+    Description: Private S3 bucket containing compressed request recordings.
+    Value: !Ref RecordingBucket

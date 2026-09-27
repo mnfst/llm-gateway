@@ -1,3 +1,7 @@
+# Managed by Manifest's installer. Keep local settings in `.env` or
+# `docker-compose.override.yml` so upgrades can replace this file safely.
+# manifest-compose-version: 1
+#
 # First boot: `docker compose up -d` starts the stack. Visit
 # http://localhost:2099 and the app walks you through creating the first
 # admin account via the setup wizard at /setup. No hardcoded credentials.
@@ -24,8 +28,7 @@
 #     set BETTER_AUTH_URL to a reachable public URL so the verification
 #     links resolve.
 #   - The app port binds to 127.0.0.1 by default. To expose on the LAN,
-#     change `127.0.0.1:${PORT:-2099}:${PORT:-2099}` below to
-#     `${PORT:-2099}:${PORT:-2099}` AND update BETTER_AUTH_URL in .env to
+#     set HOST_BIND_ADDRESS=0.0.0.0 and update BETTER_AUTH_URL in .env to
 #     match the host you reach it on.
 #
 # Staying on the legacy 3001 port (existing installs):
@@ -42,9 +45,9 @@ name: mnfst
 
 services:
   manifest:
-    image: manifestdotbuild/manifest:latest
+    image: manifestdotbuild/manifest:${MANIFEST_VERSION:-latest}
     ports:
-      - "127.0.0.1:${PORT:-2099}:${PORT:-2099}"
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${HOST_PORT:-${PORT:-2099}}:${PORT:-2099}"
     # Lets the container reach LLM servers running on the host (Ollama,
     # LM Studio, or any other OpenAI-compatible server) at
     # host.docker.internal:<port>. Requires Docker Engine 20.10+ (Docker
@@ -61,12 +64,25 @@ services:
       # Optional dedicated at-rest encryption key for stored provider/OAuth
       # credentials. When unset, the backend falls back to BETTER_AUTH_SECRET.
       - MANIFEST_ENCRYPTION_KEY=${MANIFEST_ENCRYPTION_KEY:-}
-      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${PORT:-2099}}
+      - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${HOST_PORT:-${PORT:-2099}}}
+      # Extra hosts that may serve the dashboard/API, comma-separated. The
+      # OAuth callback and session cookie follow the request host, so set this
+      # when the same instance answers on more than one domain.
+      - BETTER_AUTH_ALLOWED_HOSTS=${BETTER_AUTH_ALLOWED_HOSTS:-}
+      - MCP_ENABLED=${MCP_ENABLED:-}
       # Defaults to the host-installed Ollama. Override in .env if your
       # Ollama runs elsewhere (e.g. on another host on your LAN).
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - PROVIDER_TIMEOUT_MS=${PROVIDER_TIMEOUT_MS:-180000}
       - STREAM_WARMUP_MS=${STREAM_WARMUP_MS:-15000}
+      - CODEX_SEMANTIC_OUTPUT_TIMEOUT_MS=${CODEX_SEMANTIC_OUTPUT_TIMEOUT_MS:-60000}
+      # Per-tenant concurrent in-flight request limit for this backend process.
+      - MANIFEST_CONCURRENCY_MAX=${MANIFEST_CONCURRENCY_MAX:-10}
+      # Both are deliberately hardcoded, not `${VAR:-default}`. The image is a
+      # production artifact: NODE_ENV=production is what makes it one, and the
+      # seeder refuses to run under it anyway (database-seeder.service.ts logs
+      # "SEED_DATA=true is ignored in production"). Exposing either as a knob
+      # would only offer a setting that cannot take effect.
       - SEED_DATA=false
       - NODE_ENV=production
       # Force self-hosted semantics regardless of the container runtime.
@@ -76,6 +92,17 @@ services:
       # exotic runtimes produce neither marker. Setting this avoids
       # silently flipping users back to cloud-mode SSRF rules (issue #1780).
       - MANIFEST_MODE=${MANIFEST_MODE:-selfhosted}
+      # Message recordings use this mounted Docker volume automatically when
+      # S3-compatible bucket credentials are not present.
+      - REQUEST_RECORDING_STORAGE=${REQUEST_RECORDING_STORAGE:-auto}
+      - REQUEST_RECORDING_FILESYSTEM_PATH=/data/request-recordings
+      - REQUEST_RECORDING_RETENTION_DAYS=${REQUEST_RECORDING_RETENTION_DAYS:-}
+      - REQUEST_RECORDING_S3_BUCKET=${REQUEST_RECORDING_S3_BUCKET:-}
+      - REQUEST_RECORDING_S3_ENDPOINT=${REQUEST_RECORDING_S3_ENDPOINT:-}
+      - REQUEST_RECORDING_S3_REGION=${REQUEST_RECORDING_S3_REGION:-}
+      - REQUEST_RECORDING_S3_ACCESS_KEY_ID=${REQUEST_RECORDING_S3_ACCESS_KEY_ID:-}
+      - REQUEST_RECORDING_S3_SECRET_ACCESS_KEY=${REQUEST_RECORDING_S3_SECRET_ACCESS_KEY:-}
+      - REQUEST_RECORDING_S3_FORCE_PATH_STYLE=${REQUEST_RECORDING_S3_FORCE_PATH_STYLE:-false}
       # Email provider (optional). Covers both login/verification emails
       # and threshold alert notifications. Set one provider block — see
       # DOCKER_README.md "Email setup". Supports resend, mailgun, sendgrid.
@@ -90,9 +117,55 @@ services:
       - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET:-}
       - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID:-}
       - DISCORD_CLIENT_SECRET=${DISCORD_CLIENT_SECRET:-}
-      # Anonymous usage telemetry (opt-out). Set to 1 to disable. See
-      # https://manifest.build/telemetry for the exact payload shape.
+      # Provider OAuth client overrides (optional). Only needed if you have
+      # registered your own OAuth app with these providers instead of using
+      # the defaults shipped with Manifest.
+      - OPENAI_OAUTH_CLIENT_ID=${OPENAI_OAUTH_CLIENT_ID:-}
+      - MINIMAX_OAUTH_CLIENT_ID=${MINIMAX_OAUTH_CLIENT_ID:-}
+      # Programmatic API access via the X-API-Key header. Optional — the
+      # dashboard uses cookie sessions and agents use their own mnfst_* keys.
+      - API_KEY=${API_KEY:-}
+      # Rate limiting. Window in ms + max requests per window per client.
+      - THROTTLE_TTL=${THROTTLE_TTL:-60000}
+      - THROTTLE_LIMIT=${THROTTLE_LIMIT:-100}
+      # Database tuning. DB_POOL_MAX sizes the app pool, AUTH_DB_POOL_MAX the
+      # separate pool Better Auth opens for itself.
+      - DB_POOL_MAX=${DB_POOL_MAX:-10}
+      - AUTH_DB_POOL_MAX=${AUTH_DB_POOL_MAX:-5}
+      - DB_TUNE_SESSION=${DB_TUNE_SESSION:-}
+      # Set false for multi-replica deploys where only one instance should run
+      # migrations. A single-container compose install wants the default.
+      - RUN_MIGRATIONS_ON_BOOT=${RUN_MIGRATIONS_ON_BOOT:-true}
+      # Grace period (ms) to finish in-flight requests on SIGTERM. Spelled with
+      # a real default rather than `:-` because the app reads it as
+      # `Number(env ?? 10000)` — an empty string would coerce to 0, not 10000.
+      - SHUTDOWN_DRAIN_MS=${SHUTDOWN_DRAIN_MS:-10000}
+      # Suppresses the boot warning about HSTS on plain-HTTP deployments. Set
+      # to 1 for HTTP-only LAN installs; prefer a real https:// BETTER_AUTH_URL
+      # anywhere reachable from the internet.
+      - MANIFEST_DISABLE_HSTS=${MANIFEST_DISABLE_HSTS:-}
+      # Extra browser origins allowed to call the gateway (comma-separated).
+      - WINGMAN_CORS_ORIGINS=${WINGMAN_CORS_ORIGINS:-}
+      # Error monitoring (opt-in). Sentry stays completely uninitialised
+      # unless SENTRY_DSN is set.
+      - SENTRY_DSN=${SENTRY_DSN:-}
+      - SENTRY_ENVIRONMENT=${SENTRY_ENVIRONMENT:-}
+      - SENTRY_RELEASE=${SENTRY_RELEASE:-}
+      # Anonymous usage telemetry (opt-out). Set MANIFEST_TELEMETRY_DISABLED=1
+      # to disable, or point TELEMETRY_ENDPOINT at your own collector. See
+      # https://manifest.build/llm-gateway/docs/self-hosted/#telemetry for the payload shape.
       - MANIFEST_TELEMETRY_DISABLED=${MANIFEST_TELEMETRY_DISABLED:-0}
+      - TELEMETRY_ENDPOINT=${TELEMETRY_ENDPOINT:-}
+      # Daily Harness usage rollup. Reads stay off until backfill parity passes.
+      - AGENT_USAGE_DAILY_WORKER=${AGENT_USAGE_DAILY_WORKER:-}
+      - AGENT_USAGE_DAILY_READS=${AGENT_USAGE_DAILY_READS:-}
+      - AGENT_USAGE_DAILY_READ_TENANTS=${AGENT_USAGE_DAILY_READ_TENANTS:-}
+      - AGENT_USAGE_DAILY_BATCH_SIZE=${AGENT_USAGE_DAILY_BATCH_SIZE:-}
+      - AGENT_USAGE_DAILY_RUN_BUDGET_MS=${AGENT_USAGE_DAILY_RUN_BUDGET_MS:-}
+      # Update check (opt-out). Once a day the dashboard asks GitHub for the
+      # latest Manifest release so it can show a "new version available"
+      # badge. Set MANIFEST_UPDATE_CHECK_DISABLED=1 on air-gapped installs.
+      - MANIFEST_UPDATE_CHECK_DISABLED=${MANIFEST_UPDATE_CHECK_DISABLED:-0}
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,6 +200,8 @@ services:
       - ALL
     mem_limit: 1g
     pids_limit: 512
+    volumes:
+      - recordings:/data/request-recordings
     networks:
       - internal
       - frontend
@@ -170,3 +245,5 @@ volumes:
   # against a fresh empty DB — i.e. data loss.
   pgdata:
     name: manifest_pgdata
+  recordings:
+    name: manifest_request_recordings

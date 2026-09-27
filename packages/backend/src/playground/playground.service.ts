@@ -15,6 +15,9 @@ import {
   resolveApiKey,
 } from '../routing/proxy/oauth-credentials';
 import { ProviderKeyService } from '../routing/routing-core/provider-key.service';
+import { isLocalOnlyProvider } from '../common/utils/provider-availability';
+import { OpencodeGoCatalogService } from '../model-discovery/opencode-go-catalog.service';
+import { PROVIDER_BY_ID_OR_ALIAS } from '../common/constants/providers';
 import { PlaygroundAgentService } from './playground-agent.service';
 import { OpenaiOauthService } from '../routing/oauth/openai/openai-oauth.service';
 import { MinimaxOauthService } from '../routing/oauth/minimax/minimax-oauth.service';
@@ -34,6 +37,7 @@ import { PlaygroundHistoryService } from './playground-history.service';
 import { buildForwardBody, derivePromptForHistory } from './playground-payload';
 import { consumeProviderStream } from './playground-stream';
 import type { RunPlaygroundDto } from './dto/run-playground.dto';
+import { ManifestRequest } from '../entities/request.entity';
 
 @Injectable()
 export class PlaygroundService {
@@ -56,6 +60,8 @@ export class PlaygroundService {
     private readonly messageRepo: Repository<AgentMessage>,
     @InjectRepository(CustomProvider)
     private readonly customProviderRepo: Repository<CustomProvider>,
+    private readonly customProviders: CustomProviderService,
+    private readonly opencodeGoCatalog: OpencodeGoCatalogService,
   ) {}
 
   /**
@@ -66,6 +72,7 @@ export class PlaygroundService {
    */
   async runStream(ctx: TenantContext, dto: RunPlaygroundDto, res: ExpressResponse): Promise<void> {
     let agent: { id: string; tenant_id: string; name: string };
+    let resolvedAgent: { id: string; tenant_id: string; name: string } | null = null;
     let authType: AuthType;
     let apiKey: string;
     let rawApiKey: string;
@@ -82,17 +89,16 @@ export class PlaygroundService {
       // and route against the whole global provider pool — regardless of any
       // agentName the client sends.
       agent = await this.playgroundAgent.resolve(ctx);
+      resolvedAgent = agent;
       const hasProvider = await this.providerKeyService.hasActiveProvider(
         agent.tenant_id,
         dto.provider,
         agent.id,
       );
       if (!hasProvider) {
-        return this.sendPreStreamError(
-          res,
-          404,
-          `Provider "${dto.provider}" is not connected for this agent`,
-        );
+        const message = `Provider "${dto.provider}" is not connected for this agent`;
+        await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
+        return this.sendPreStreamError(res, 404, message);
       }
       authType =
         dto.authType ??
@@ -110,11 +116,9 @@ export class PlaygroundService {
       );
       const key = keys[0];
       if (!key || key.apiKey === null) {
-        return this.sendPreStreamError(
-          res,
-          404,
-          `No usable API key found for provider "${dto.provider}"`,
-        );
+        const message = `No usable API key found for provider "${dto.provider}"`;
+        await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
+        return this.sendPreStreamError(res, 404, message);
       }
       rawApiKey = key.apiKey;
       providerKeyLabel = key.label;
@@ -134,11 +138,9 @@ export class PlaygroundService {
         providerKeyLabel,
       );
       if (resolved.apiKey === null) {
-        return this.sendPreStreamError(
-          res,
-          404,
-          `No usable API key found for provider "${dto.provider}"`,
-        );
+        const message = `No usable API key found for provider "${dto.provider}"`;
+        await this.recordRequestRejection(ctx.userId, agent, dto, 404, message, 'config');
+        return this.sendPreStreamError(res, 404, message);
       }
       apiKey = resolved.apiKey;
       if (authType === 'subscription' && isRefreshableOAuthCredential(rawApiKey)) {
@@ -162,6 +164,16 @@ export class PlaygroundService {
     } catch (err) {
       const status = err instanceof HttpException ? err.getStatus() : 500;
       const message = err instanceof Error ? err.message : String(err);
+      if (resolvedAgent) {
+        await this.recordRequestRejection(
+          ctx.userId,
+          resolvedAgent,
+          dto,
+          status,
+          message,
+          status >= 500 ? 'internal' : 'config',
+        );
+      }
       return this.sendPreStreamError(res, status, message);
     }
 
@@ -238,6 +250,18 @@ export class PlaygroundService {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      if (!abort.signal.aborted) {
+        await this.recordError(
+          ctx.userId,
+          agent,
+          dto,
+          authType,
+          502,
+          message,
+          Date.now() - startedAt,
+          'transport',
+        );
+      }
       return this.sendPreStreamError(res, 502, `Provider request failed: ${message}`);
     }
 
@@ -308,14 +332,45 @@ export class PlaygroundService {
       const outputTokens = usage?.completion_tokens ?? 0;
       const cacheReadTokens = usage?.cache_read_tokens ?? 0;
       const cacheCreationTokens = usage?.cache_creation_tokens ?? 0;
+      // Tile-connected local runtimes arrive as `custom:<uuid>`; only the
+      // canonical provider says whether one is local. A tenant-less context
+      // has no custom providers to resolve, so it degrades to the raw name.
+      //
+      // Best-effort by design: the answer has already been streamed to the
+      // client, so a metadata lookup that fails must not turn a delivered run
+      // into an error one. It only refines the cost inputs below, and the raw
+      // name is where the lookup starts from anyway.
+      const canonicalProvider = await this.customProviders
+        .canonicalizeAgentMessageKeys(ctx.tenantId ?? '', dto.provider, dto.model)
+        .then(({ provider }) => provider ?? dto.provider)
+        .catch(() => dto.provider);
       const cost = computeTokenCost({
         inputTokens,
         outputTokens,
         cacheReadTokens,
         cacheCreationTokens,
         model: dto.model,
-        pricing: this.pricingCache.getByModel(dto.model),
+        pricing: this.pricingCache.getByModel(dto.model, dto.provider),
         isSubscription: authType === 'subscription',
+        // Same source order as the proxy recorder: a playground run against
+        // the same provider must not report a different cost. That parity is
+        // the whole point, so each input is resolved the way the recorder
+        // resolves it — the local check on the canonical provider, because a
+        // tile-connected llama.cpp arrives as `custom:<uuid>`, and the
+        // per-request rate from the OpenCode Go catalogue.
+        isLocalProvider: isLocalOnlyProvider(canonicalProvider),
+        perRequestCostUsd:
+          authType === 'subscription' &&
+          PROVIDER_BY_ID_OR_ALIAS.get(canonicalProvider.toLowerCase())?.id === 'opencode-go'
+            ? await this.opencodeGoCatalog.resolveCostPerRequest(dto.model)
+            : null,
+        reportedCostUsd: usage?.reported_cost_usd,
+        // The request start, not the completion time. A stream that opens at
+        // 09:59 UTC and closes at 10:01 crossed out of a DeepSeek peak window
+        // mid-answer; the proxy recorder bills such a run from `startedAt`, so
+        // billing the playground from `Date.now()` would price the same run
+        // two different ways.
+        at: new Date(startedAt),
       });
       const tokensPerSec = outputTokens > 0 ? outputTokens / (Math.max(totalMs, 1) / 1000) : null;
 
@@ -423,27 +478,62 @@ export class PlaygroundService {
       // No tenant_provider_id: Playground runs use the reserved is_playground agent,
       // which excludePlaygroundAgents() filters out of every per-connection view,
       // so stamping the connection here would have no analytic effect.
-      await this.messageRepo.insert({
-        id: uuid(),
-        tenant_id: agent.tenant_id,
-        agent_id: agent.id,
-        agent_name: agent.name,
-        // Informational attribution only — never used for scoping.
-        user_id: createdByUserId,
-        timestamp: new Date().toISOString(),
-        status: 'ok',
-        model: dto.model,
-        provider: dto.provider,
-        routing_tier: 'playground',
-        routing_reason: null,
-        auth_type: authType,
-        input_tokens: metrics.inputTokens,
-        output_tokens: metrics.outputTokens,
-        cache_read_tokens: metrics.cacheReadTokens,
-        cache_creation_tokens: metrics.cacheCreationTokens,
-        cost_usd: metrics.cost,
-        duration_ms: metrics.durationMs,
-      });
+      const requestId = uuid();
+      const timestamp = new Date().toISOString();
+      await this.insertPlaygroundRequest(
+        {
+          id: uuid(),
+          request_id: requestId,
+          attempt_number: 1,
+          tenant_id: agent.tenant_id,
+          agent_id: agent.id,
+          agent_name: agent.name,
+          // Informational attribution only — never used for scoping.
+          user_id: createdByUserId,
+          timestamp,
+          status: 'success',
+          model: dto.model,
+          provider: dto.provider,
+          routing_tier: 'playground',
+          routing_reason: null,
+          auth_type: authType,
+          input_tokens: metrics.inputTokens,
+          output_tokens: metrics.outputTokens,
+          cache_read_tokens: metrics.cacheReadTokens,
+          cache_creation_tokens: metrics.cacheCreationTokens,
+          cost_usd: metrics.cost,
+          duration_ms: metrics.durationMs,
+        },
+        {
+          id: requestId,
+          tenant_id: agent.tenant_id,
+          agent_id: agent.id,
+          user_id: createdByUserId,
+          agent_name: agent.name,
+          trace_id: null,
+          session_key: null,
+          session_id: null,
+          timestamp,
+          duration_ms: metrics.durationMs,
+          status: 'success',
+          autofix_status: null,
+          error_message: null,
+          error_http_status: null,
+          error_code: null,
+          error_origin: null,
+          error_class: null,
+          requested_model: dto.model,
+          // The Playground calls a provider directly; it never enters through
+          // one of the proxy's public API surfaces.
+          api_mode: null,
+          caller_attribution: null,
+          request_headers: null,
+          request_params: null,
+          feedback_rating: null,
+          feedback_tags: null,
+          feedback_details: null,
+        },
+      );
       this.eventBus.emit(agent.tenant_id);
     } catch (err) {
       this.logger.warn(
@@ -460,36 +550,133 @@ export class PlaygroundService {
     status: number,
     errorBody: string,
     durationMs: number,
+    errorOrigin: 'provider' | 'transport' = 'provider',
   ): Promise<void> {
     try {
       // No tenant_provider_id — see recordSuccess: Playground is a system agent,
       // excluded from per-connection analytics.
-      await this.messageRepo.insert({
-        id: uuid(),
-        tenant_id: agent.tenant_id,
-        agent_id: agent.id,
-        agent_name: agent.name,
-        // Informational attribution only — never used for scoping.
-        user_id: createdByUserId,
-        timestamp: new Date().toISOString(),
-        status: 'error',
-        // Some providers echo the submitted key back in their error body, so
-        // scrub before persisting — mirrors the proxy recorder's hardening.
-        error_message: scrubSecrets(errorBody).slice(0, 2000),
-        error_http_status: status,
-        model: dto.model,
-        provider: dto.provider,
-        routing_tier: 'playground',
-        routing_reason: null,
-        auth_type: authType,
-        duration_ms: durationMs,
-      });
+      const requestId = uuid();
+      const timestamp = new Date().toISOString();
+      const errorMessage = scrubSecrets(errorBody).slice(0, 2000);
+      await this.insertPlaygroundRequest(
+        {
+          id: uuid(),
+          request_id: requestId,
+          attempt_number: 1,
+          tenant_id: agent.tenant_id,
+          agent_id: agent.id,
+          agent_name: agent.name,
+          // Informational attribution only — never used for scoping.
+          user_id: createdByUserId,
+          timestamp,
+          status: 'failed',
+          // Some providers echo the submitted key back in their error body, so
+          // scrub before persisting — mirrors the proxy recorder's hardening.
+          error_message: errorMessage,
+          error_http_status: status,
+          error_origin: errorOrigin,
+          model: dto.model,
+          provider: dto.provider,
+          routing_tier: 'playground',
+          routing_reason: null,
+          auth_type: authType,
+          duration_ms: durationMs,
+        },
+        {
+          id: requestId,
+          tenant_id: agent.tenant_id,
+          agent_id: agent.id,
+          user_id: createdByUserId,
+          agent_name: agent.name,
+          trace_id: null,
+          session_key: null,
+          session_id: null,
+          timestamp,
+          duration_ms: durationMs,
+          status: 'failed',
+          autofix_status: null,
+          error_message: errorMessage,
+          error_http_status: status,
+          error_code: null,
+          error_origin: errorOrigin,
+          error_class: null,
+          requested_model: dto.model,
+          // The Playground calls a provider directly; it never enters through
+          // one of the proxy's public API surfaces.
+          api_mode: null,
+          caller_attribution: null,
+          request_headers: null,
+          request_params: null,
+          feedback_rating: null,
+          feedback_tags: null,
+          feedback_details: null,
+        },
+      );
       this.eventBus.emit(agent.tenant_id);
     } catch (err) {
       this.logger.warn(
         `Failed to record playground error: ${err instanceof Error ? err.message : err}`,
       );
     }
+  }
+
+  private async recordRequestRejection(
+    createdByUserId: string | null,
+    agent: { id: string; tenant_id: string; name: string },
+    dto: RunPlaygroundDto,
+    status: number,
+    errorBody: string,
+    errorOrigin: 'config' | 'request' | 'internal',
+  ): Promise<void> {
+    try {
+      const getRepository = this.messageRepo.manager?.getRepository?.bind(this.messageRepo.manager);
+      if (!getRepository) return;
+      const errorMessage = scrubSecrets(errorBody).slice(0, 2000);
+      await getRepository(ManifestRequest).insert({
+        id: uuid(),
+        tenant_id: agent.tenant_id,
+        agent_id: agent.id,
+        user_id: createdByUserId,
+        agent_name: agent.name,
+        trace_id: null,
+        session_key: null,
+        session_id: null,
+        timestamp: new Date().toISOString(),
+        duration_ms: 0,
+        status: 'failed',
+        autofix_status: null,
+        error_message: errorMessage,
+        error_http_status: status,
+        error_code: null,
+        error_origin: errorOrigin,
+        error_class: null,
+        requested_model: dto.model,
+        caller_attribution: null,
+        request_headers: null,
+        request_params: null,
+        feedback_rating: null,
+        feedback_tags: null,
+        feedback_details: null,
+      });
+      this.eventBus.emit(agent.tenant_id);
+    } catch (err) {
+      this.logger.warn(
+        `Failed to record playground rejection: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  private async insertPlaygroundRequest(
+    attempt: Partial<AgentMessage>,
+    request: ManifestRequest,
+  ): Promise<void> {
+    const getRepository = this.messageRepo.manager?.getRepository?.bind(this.messageRepo.manager);
+    if (!getRepository) {
+      await this.messageRepo.insert(attempt);
+      return;
+    }
+    await getRepository(ManifestRequest).insert(request);
+    await this.messageRepo.insert(attempt);
   }
 
   private truncateError(bodyText: string, status: number): string {

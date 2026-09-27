@@ -1,4 +1,5 @@
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import {
   AnthropicOauthExchangeError,
@@ -36,12 +37,20 @@ function createProviderService() {
       recalculateTiersForTenant,
       nextOAuthLabel,
       getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+        getFreshSubscriptionCredential,
+        upsertProvider,
+      }),
     } as unknown as ProviderService,
     upsertProvider,
     recalculateTiers,
     recalculateTiersForTenant,
     nextOAuthLabel,
     getFreshSubscriptionCredential,
+    withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+      getFreshSubscriptionCredential,
+      upsertProvider,
+    }),
   };
 }
 
@@ -423,7 +432,7 @@ describe('AnthropicOauthService', () => {
       const token = await svc.unwrapToken(blob, 'agent-1', 'tenant-1', 'Work');
       expect(token).toBe('new');
       expect(providerService.upsertProvider).toHaveBeenCalledWith(
-        'agent-1',
+        null,
         'tenant-1',
         'anthropic',
         expect.stringContaining('"t":"new"'),

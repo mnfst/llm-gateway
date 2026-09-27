@@ -1,6 +1,7 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { Subject, Observable } from 'rxjs';
 import { filter } from 'rxjs/operators';
+import { AgentListCacheService } from './agent-list-cache.service';
 
 export type IngestEventKind = 'message' | 'agent' | 'routing';
 
@@ -13,9 +14,31 @@ export interface IngestEvent {
 
 @Injectable()
 export class IngestEventBusService implements OnModuleDestroy {
+  private readonly logger = new Logger(IngestEventBusService.name);
   private readonly subject = new Subject<IngestEvent>();
   private readonly debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly DEBOUNCE_MS = 250;
+
+  constructor(private readonly agentListCache: AgentListCacheService) {}
+
+  private async publish(event: IngestEvent): Promise<void> {
+    if (event.kind === 'message') {
+      // Agent-list responses carry message_count, so retire them before
+      // subscribers refetch. Invalidation is generation-based and cannot leave a
+      // reader on a stale key, so a failure here is housekeeping noise: publish
+      // regardless, because swallowing the event would leave every dashboard
+      // waiting for a refresh that never comes.
+      try {
+        await this.agentListCache.invalidate(event.tenantId);
+      } catch (error) {
+        this.logger.error(
+          `Failed to invalidate the agent-list cache for tenant ${event.tenantId}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+    }
+    this.subject.next(event);
+  }
 
   /**
    * Notify subscribers that the given tenant's data changed. The kind narrows
@@ -32,7 +55,7 @@ export class IngestEventBusService implements OnModuleDestroy {
       debounceKey,
       setTimeout(() => {
         this.debounceTimers.delete(debounceKey);
-        this.subject.next({ tenantId, kind, userId });
+        void this.publish({ tenantId, kind, userId });
       }, this.DEBOUNCE_MS),
     );
   }

@@ -9,6 +9,7 @@ import {
   OAuthPendingFlowStore,
   parseOAuthTokenBlob,
   serializeOAuthTokenBlob,
+  subscriptionCredentialLock,
   type OAuthTokenBlob,
 } from '../core';
 import { ANTHROPIC_OAUTH } from './anthropic-oauth.config';
@@ -222,22 +223,15 @@ export class AnthropicOauthService {
         key: oauthRefreshKey('anthropic', tenantId, keyLabel),
         logger: this.logger,
         callerBlob: blob,
-        readFreshRaw: () =>
-          this.providerService.getFreshSubscriptionCredential(tenantId, 'anthropic', keyLabel),
         parse: parseOAuthTokenBlob,
         refresh: (current) => this.refreshAccessToken(current.r),
-        persist: (refreshed) =>
-          this.providerService
-            .upsertProvider(
-              agentId,
-              tenantId,
-              'anthropic',
-              serializeOAuthTokenBlob(refreshed),
-              'subscription',
-              undefined,
-              keyLabel,
-            )
-            .then(() => undefined),
+        withLock: subscriptionCredentialLock(
+          (t, p, l, fn) => this.providerService.withSubscriptionCredentialLock(t, p, l, fn),
+          tenantId,
+          'anthropic',
+          keyLabel,
+          serializeOAuthTokenBlob,
+        ),
       });
       return resolved.t;
     } catch (err) {

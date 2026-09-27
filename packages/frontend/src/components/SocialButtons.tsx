@@ -1,5 +1,7 @@
 import { For, Show, type Component, type JSX } from 'solid-js';
+import { useLocation, useSearchParams } from '@solidjs/router';
 import { authClient } from '../services/auth-client.js';
+import { buildSocialAuthUrls } from '../services/auth-redirects.js';
 import { setLastAuthMethod } from '../services/last-auth-method.js';
 
 type Provider = 'google' | 'github' | 'discord';
@@ -10,12 +12,14 @@ const allProviders: { id: Provider; label: string }[] = [
   { id: 'discord', label: 'Continue with Discord' },
 ];
 
-const handleSocialLogin = (provider: Provider) => {
+const handleSocialLogin = (
+  provider: Provider,
+  urls: { callbackURL: string; errorCallbackURL: string },
+) => {
   setLastAuthMethod(provider);
   authClient.signIn.social({
     provider,
-    callbackURL: '/',
-    errorCallbackURL: '/login?error=oauth_failed',
+    ...urls,
   });
 };
 
@@ -52,13 +56,23 @@ const providerIcons: Record<Provider, () => JSX.Element> = {
   ),
 };
 
-const SocialButtons: Component<{ enabledProviders?: string[]; lastUsed?: string | null }> = (
-  props,
-) => {
+interface SocialButtonsProps {
+  enabledProviders?: string[];
+  lastUsed?: string | null;
+  callbackURL?: string;
+}
+
+const SocialButtons: Component<SocialButtonsProps> = (props) => {
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
   const visible = () => {
     if (!props.enabledProviders) return allProviders;
     return allProviders.filter((p) => props.enabledProviders!.includes(p.id));
   };
+  const authUrls = () => ({
+    ...buildSocialAuthUrls(searchParams, location.search),
+    ...(props.callbackURL ? { callbackURL: props.callbackURL } : {}),
+  });
 
   return (
     <Show when={visible().length > 0}>
@@ -67,7 +81,7 @@ const SocialButtons: Component<{ enabledProviders?: string[]; lastUsed?: string 
           {(provider) => (
             <button
               class={`auth-social-btn auth-social-btn--${provider.id}`}
-              onClick={() => handleSocialLogin(provider.id)}
+              onClick={() => handleSocialLogin(provider.id, authUrls())}
             >
               <span class="auth-social-btn__icon">{providerIcons[provider.id]()}</span>
               <span class="auth-social-btn__label">{provider.label}</span>

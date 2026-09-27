@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { KiroOauthService } from './kiro-oauth.service';
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import {
   KiroAuthorizationOptionsError,
@@ -38,6 +39,10 @@ function createProviderService() {
   const recalculateTiersForUser = jest.fn().mockResolvedValue(undefined);
   const nextOAuthLabel = jest.fn().mockResolvedValue('Kiro 1');
   const getFreshSubscriptionCredential = jest.fn().mockResolvedValue(null);
+  const withSubscriptionCredentialLock = mockSubscriptionCredentialLock({
+    getFreshSubscriptionCredential,
+    upsertProvider,
+  });
   return {
     svc: {
       upsertProvider,
@@ -45,12 +50,14 @@ function createProviderService() {
       recalculateTiersForUser,
       nextOAuthLabel,
       getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock,
     } as unknown as ProviderService,
     upsertProvider,
     recalculateTiers,
     recalculateTiersForUser,
     nextOAuthLabel,
     getFreshSubscriptionCredential,
+    withSubscriptionCredentialLock,
   };
 }
 

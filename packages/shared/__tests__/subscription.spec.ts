@@ -5,7 +5,6 @@ import {
   supportsSubscriptionProvider,
   getSubscriptionKnownModels,
   getSubscriptionKnownModelsMatch,
-  getSubscriptionExcludedModels,
   getSubscriptionCapabilities,
 } from '../src/subscription';
 
@@ -17,9 +16,11 @@ describe('SUBSCRIPTION_PROVIDER_CONFIGS', () => {
         'byteplus',
         'openai',
         'minimax',
+        'mistral',
         'xiaomi',
         'qwen',
         'moonshot',
+        'nous',
         'copilot',
         'commandcode',
         'ollama-cloud',
@@ -61,6 +62,18 @@ describe('getSubscriptionProviderConfig', () => {
     });
   });
 
+  it('lists claude-opus-5 explicitly — the claude-opus-4 prefix does not cover it', () => {
+    const config = getSubscriptionProviderConfig('anthropic');
+    const knownModels = config?.knownModels ?? [];
+    expect(knownModels).toContain('claude-opus-5');
+    // Anthropic matches by prefix, so claude-opus-4-8 rides on 'claude-opus-4'.
+    // The 5 generation dropped that prefix — without its own entry, an Opus 5
+    // subscription model would be filtered out of the curated catalog.
+    expect(knownModels.some((m) => 'claude-opus-5'.startsWith(m) && m !== 'claude-opus-5')).toBe(
+      false,
+    );
+  });
+
   it('returns config for openai', () => {
     const config = getSubscriptionProviderConfig('openai');
     expect(config).toMatchObject({
@@ -93,6 +106,18 @@ describe('getSubscriptionProviderConfig', () => {
     expect(config).toMatchObject({
       subscriptionAuthMode: 'device_code',
     });
+  });
+
+  it('returns config for Mistral Vibe subscription', () => {
+    const config = getSubscriptionProviderConfig('mistral');
+    expect(config).toMatchObject({
+      supportsSubscription: true,
+      subscriptionLabel: 'Mistral Vibe subscription',
+      subscriptionAuthMode: 'token',
+      subscriptionKeyPlaceholder: 'Paste your Mistral Vibe API key',
+      knownModelsMatch: 'exact',
+    });
+    expect(config?.knownModels).toEqual(['mistral-vibe-cli-latest']);
   });
 
   it('returns config for Xiaomi MiMo Token Plan', () => {
@@ -156,6 +181,16 @@ describe('getSubscriptionProviderConfig', () => {
     });
   });
 
+  it('returns config for NousResearch', () => {
+    const config = getSubscriptionProviderConfig('nous');
+    expect(config).toMatchObject({
+      supportsSubscription: true,
+      subscriptionLabel: 'NousResearch subscription',
+      subscriptionAuthMode: 'token',
+      subscriptionKeyPlaceholder: 'Paste your NousResearch API key',
+    });
+  });
+
   it('returns config for ollama-cloud', () => {
     const config = getSubscriptionProviderConfig('ollama-cloud');
     expect(config).toMatchObject({
@@ -207,9 +242,9 @@ describe('getSubscriptionProviderConfig', () => {
     });
   });
 
-  it('does not publish a hardcoded known-models list for xai', () => {
+  it('publishes the curated xai subscription models', () => {
     const config = getSubscriptionProviderConfig('xai');
-    expect(config?.knownModels).toBeUndefined();
+    expect(config?.knownModels).toEqual(['grok-4.7', 'grok-4.6', 'grok-4.5']);
   });
 
   it('returns config for gemini', () => {
@@ -222,18 +257,20 @@ describe('getSubscriptionProviderConfig', () => {
     });
     expect(config?.knownModels).toEqual(
       expect.arrayContaining([
-        'gemini-3.1-pro-preview',
-        'gemini-3-flash-preview',
+        'gemini-3.5-flash',
         'gemini-3.1-flash-lite',
-        'gemini-3.1-flash-lite-preview',
         'gemini-2.5-pro',
         'gemini-2.5-flash',
         'gemini-2.5-flash-lite',
       ]),
     );
+    expect(config?.knownModels).not.toContain('gemini-3.1-flash-lite-preview');
+    expect(config?.knownModels).not.toContain('gemini-3.1-pro-preview');
+    expect(config?.knownModels).not.toContain('gemini-3-flash-preview');
+    expect(config?.knownModels).not.toContain('gemini-3.6-flash');
     expect(config?.subscriptionCapabilities).toMatchObject({
       maxContextWindow: 1000000,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     });
   });
@@ -263,9 +300,11 @@ describe('supportsSubscriptionProvider', () => {
     expect(supportsSubscriptionProvider('byteplus')).toBe(true);
     expect(supportsSubscriptionProvider('openai')).toBe(true);
     expect(supportsSubscriptionProvider('minimax')).toBe(true);
+    expect(supportsSubscriptionProvider('mistral')).toBe(true);
     expect(supportsSubscriptionProvider('xiaomi')).toBe(true);
     expect(supportsSubscriptionProvider('qwen')).toBe(true);
     expect(supportsSubscriptionProvider('moonshot')).toBe(true);
+    expect(supportsSubscriptionProvider('nous')).toBe(true);
     expect(supportsSubscriptionProvider('copilot')).toBe(true);
     expect(supportsSubscriptionProvider('commandcode')).toBe(true);
     expect(supportsSubscriptionProvider('ollama-cloud')).toBe(true);
@@ -283,7 +322,6 @@ describe('supportsSubscriptionProvider', () => {
   it('returns false for unsupported providers', () => {
     expect(supportsSubscriptionProvider('deepseek')).toBe(false);
     expect(supportsSubscriptionProvider('kilo')).toBe(false);
-    expect(supportsSubscriptionProvider('mistral')).toBe(false);
   });
 });
 
@@ -293,6 +331,20 @@ describe('getSubscriptionKnownModels', () => {
     expect(models).toContain('claude-fable-5');
     expect(models).toContain('claude-opus-4');
     expect(models).toContain('claude-sonnet-4');
+    // claude-sonnet-5 (launched 2026-06-30) is served on the Claude plan.
+    expect(models).toContain('claude-sonnet-5');
+    // Opus 5.5 is a point release addressed directly by callers.
+    expect(models).toContain('claude-opus-5-5');
+  });
+
+  it('returns the curated ChatGPT plan models for OpenAI', () => {
+    const models = getSubscriptionKnownModels('openai');
+    expect(models).toEqual(
+      expect.arrayContaining(['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']),
+    );
+    expect(models).not.toContain('gpt-5.6-sol-pro');
+    expect(models).not.toContain('gpt-5.6-terra-pro');
+    expect(models).not.toContain('gpt-5.6-luna-pro');
   });
 
   it('returns known models for copilot', () => {
@@ -312,11 +364,19 @@ describe('getSubscriptionKnownModels', () => {
     expect(getSubscriptionKnownModels('commandcode')).toBeNull();
   });
 
+  it('returns null for Nous (dynamic Portal catalog, no hardcoded list)', () => {
+    expect(getSubscriptionKnownModels('nous')).toBeNull();
+  });
+
   it('returns known models for minimax including M2.7', () => {
     const models = getSubscriptionKnownModels('minimax');
     expect(models).toContain('MiniMax-M2.7');
     expect(models).toContain('MiniMax-M2.7-highspeed');
     expect(models).toContain('MiniMax-M2.5');
+  });
+
+  it('returns the fixed model id for Mistral Vibe', () => {
+    expect(getSubscriptionKnownModels('mistral')).toEqual(['mistral-vibe-cli-latest']);
   });
 
   it('returns known models for Xiaomi MiMo Token Plan', () => {
@@ -334,8 +394,18 @@ describe('getSubscriptionKnownModels', () => {
     expect(getSubscriptionKnownModels('qwen')).toBeNull();
   });
 
-  it('returns the fixed model id for moonshot Kimi Coding Plan', () => {
-    expect(getSubscriptionKnownModels('moonshot')).toEqual(['kimi-for-coding']);
+  it('returns the fixed model ids for moonshot Kimi Coding Plan', () => {
+    expect(getSubscriptionKnownModels('moonshot')).toEqual([
+      'k3',
+      'k3-256k',
+      'kimi-for-coding',
+      'kimi-for-coding-highspeed',
+    ]);
+  });
+
+  it('returns known models for cline-pass including Kimi K3', () => {
+    const models = getSubscriptionKnownModels('cline-pass');
+    expect(models).toContain('cline-pass/kimi-k3');
   });
 
   it('returns null known models for ollama-cloud (relies on live /api/tags discovery)', () => {
@@ -356,17 +426,20 @@ describe('getSubscriptionKnownModels', () => {
 
   it('returns known models for gemini', () => {
     const models = getSubscriptionKnownModels('gemini');
-    expect(models).toContain('gemini-3.1-pro-preview');
-    expect(models).toContain('gemini-3-flash-preview');
+    expect(models).toContain('gemini-3.5-flash');
     expect(models).toContain('gemini-3.1-flash-lite');
-    expect(models).toContain('gemini-3.1-flash-lite-preview');
     expect(models).toContain('gemini-2.5-pro');
     expect(models).toContain('gemini-2.5-flash');
     expect(models).toContain('gemini-2.5-flash-lite');
+    expect(models).not.toContain('gemini-3.1-flash-lite-preview');
+    expect(models).not.toContain('gemini-3.1-pro-preview');
+    expect(models).not.toContain('gemini-3-flash-preview');
+    expect(models).not.toContain('gemini-3.6-flash');
   });
 
-  it('returns null for xai (dynamic provider discovery, no hardcoded list)', () => {
-    expect(getSubscriptionKnownModels('xai')).toBeNull();
+  it('returns known models for xai', () => {
+    const models = getSubscriptionKnownModels('xai');
+    expect(models).toEqual(['grok-4.7', 'grok-4.6', 'grok-4.5']);
   });
 
   it('returns null for unsupported providers', () => {
@@ -398,6 +471,10 @@ describe('getSubscriptionKnownModelsMatch', () => {
     expect(getSubscriptionKnownModelsMatch('moonshot')).toBe('exact');
   });
 
+  it('returns exact for Mistral Vibe', () => {
+    expect(getSubscriptionKnownModelsMatch('mistral')).toBe('exact');
+  });
+
   it('returns exact for Xiaomi MiMo Token Plan', () => {
     expect(getSubscriptionKnownModelsMatch('xiaomi')).toBe('exact');
   });
@@ -416,26 +493,38 @@ describe('getSubscriptionKnownModelsMatch', () => {
   });
 });
 
-describe('getSubscriptionExcludedModels', () => {
-  it('returns the -fast exclusion for anthropic', () => {
-    expect(getSubscriptionExcludedModels('anthropic')).toEqual(['-fast']);
-  });
-
-  it('returns an empty array for providers with no exclusion configured', () => {
-    expect(getSubscriptionExcludedModels('gemini')).toEqual([]);
-  });
-
-  it('returns an empty array for unknown providers', () => {
-    expect(getSubscriptionExcludedModels('unknown')).toEqual([]);
-  });
-});
-
 describe('getSubscriptionCapabilities', () => {
   it('returns capabilities for anthropic', () => {
     const caps = getSubscriptionCapabilities('anthropic');
     expect(caps).toMatchObject({
       maxContextWindow: 200000,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
+      supportsBatching: false,
+    });
+    expect(caps?.modelContextWindows?.['claude-opus-4-8']).toBe(1000000);
+    // Opus 5 is 1M too; without an entry it would fall back to the 200k default.
+    expect(caps?.modelContextWindows?.['claude-opus-5']).toBe(1000000);
+  });
+
+  it('returns capabilities for OpenAI subscription', () => {
+    const caps = getSubscriptionCapabilities('openai');
+    expect(caps).toMatchObject({
+      maxContextWindow: 200000,
+      supportsPromptCaching: true,
+      supportsBatching: false,
+    });
+    expect(caps?.modelContextWindows).toMatchObject({
+      'gpt-5.6-sol': 1050000,
+      'gpt-5.6-terra': 1050000,
+      'gpt-5.6-luna': 1050000,
+    });
+  });
+
+  it('returns capabilities for MiniMax Coding Plan', () => {
+    const caps = getSubscriptionCapabilities('minimax');
+    expect(caps).toMatchObject({
+      maxContextWindow: 1000000,
+      supportsPromptCaching: true,
       supportsBatching: false,
     });
   });
@@ -472,7 +561,7 @@ describe('getSubscriptionCapabilities', () => {
     const caps = getSubscriptionCapabilities('zai');
     expect(caps).toMatchObject({
       maxContextWindow: 204800,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     });
   });
@@ -481,16 +570,27 @@ describe('getSubscriptionCapabilities', () => {
     const caps = getSubscriptionCapabilities('moonshot');
     expect(caps).toMatchObject({
       maxContextWindow: 262144,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     });
+    expect(caps?.modelContextWindows?.['k3']).toBe(1048576);
+    expect(caps?.modelContextWindows?.['k3-256k']).toBe(262144);
   });
 
   it('returns capabilities for Qwen Token Plan', () => {
     const caps = getSubscriptionCapabilities('qwen');
     expect(caps).toMatchObject({
       maxContextWindow: 991000,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
+      supportsBatching: false,
+    });
+  });
+
+  it('returns capabilities for Mistral Vibe subscription', () => {
+    const caps = getSubscriptionCapabilities('mistral');
+    expect(caps).toMatchObject({
+      maxContextWindow: 200000,
+      supportsPromptCaching: true,
       supportsBatching: false,
     });
   });
@@ -499,7 +599,7 @@ describe('getSubscriptionCapabilities', () => {
     const caps = getSubscriptionCapabilities('xiaomi');
     expect(caps).toMatchObject({
       maxContextWindow: 1048576,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     });
   });
@@ -507,14 +607,32 @@ describe('getSubscriptionCapabilities', () => {
   it('returns capabilities for xai', () => {
     const caps = getSubscriptionCapabilities('xai');
     expect(caps).toMatchObject({
-      maxContextWindow: 128000,
-      supportsPromptCaching: false,
+      maxContextWindow: 500000,
+      supportsPromptCaching: true,
+      supportsBatching: false,
+    });
+  });
+
+  it('returns capabilities for Gemini subscription', () => {
+    const caps = getSubscriptionCapabilities('gemini');
+    expect(caps).toMatchObject({
+      maxContextWindow: 1000000,
+      supportsPromptCaching: true,
       supportsBatching: false,
     });
   });
 
   it('returns capabilities for Command Code', () => {
     const caps = getSubscriptionCapabilities('commandcode');
+    expect(caps).toMatchObject({
+      maxContextWindow: 1000000,
+      supportsPromptCaching: false,
+      supportsBatching: false,
+    });
+  });
+
+  it('returns capabilities for Nous', () => {
+    const caps = getSubscriptionCapabilities('nous');
     expect(caps).toMatchObject({
       maxContextWindow: 1000000,
       supportsPromptCaching: false,

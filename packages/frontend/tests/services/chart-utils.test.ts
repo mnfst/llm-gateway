@@ -72,9 +72,12 @@ afterEach(() => {
 describe('rangeToSeconds', () => {
   it('returns correct seconds for known ranges', () => {
     expect(rangeToSeconds('1h')).toBe(3600);
+    expect(rangeToSeconds('6h')).toBe(21600);
     expect(rangeToSeconds('24h')).toBe(86400);
     expect(rangeToSeconds('7d')).toBe(604800);
     expect(rangeToSeconds('30d')).toBe(2592000);
+    expect(rangeToSeconds('90d')).toBe(7776000);
+    expect(rangeToSeconds('365d')).toBe(31536000);
   });
 
   it('defaults to 86400 for unknown range', () => {
@@ -95,6 +98,11 @@ describe('isMultiDayRange', () => {
 
   it('returns true for 30d', () => {
     expect(isMultiDayRange('30d')).toBe(true);
+  });
+
+  it('returns true for 90d and 365d', () => {
+    expect(isMultiDayRange('90d')).toBe(true);
+    expect(isMultiDayRange('365d')).toBe(true);
   });
 
   it('returns false for 24h', () => {
@@ -127,6 +135,11 @@ describe('formatAxisTimestamp', () => {
     expect(formatAxisTimestamp(epoch, '24h')).toBe(localHHMM(epoch));
   });
 
+  it('shows HH:MM for 6h range', () => {
+    const epoch = Date.UTC(2024, 0, 15, 10, 30) / 1000;
+    expect(formatAxisTimestamp(epoch, '6h')).toBe(localHHMM(epoch));
+  });
+
   it('shows Mon Day for 7d range', () => {
     const epoch = Date.UTC(2024, 0, 15, 10, 30) / 1000;
     expect(formatAxisTimestamp(epoch, '7d')).toBe(localMonDay(epoch));
@@ -135,6 +148,12 @@ describe('formatAxisTimestamp', () => {
   it('shows Mon Day for 30d range', () => {
     const epoch = Date.UTC(2024, 11, 25, 8, 0) / 1000;
     expect(formatAxisTimestamp(epoch, '30d')).toBe(localMonDay(epoch));
+  });
+
+  it('shows Mon Day for 90d and 365d ranges', () => {
+    const epoch = Date.UTC(2024, 0, 15, 10, 30) / 1000;
+    expect(formatAxisTimestamp(epoch, '90d')).toBe(localMonDay(epoch));
+    expect(formatAxisTimestamp(epoch, '365d')).toBe(localMonDay(epoch));
   });
 
   it('pads single-digit hours and minutes', () => {
@@ -401,6 +420,8 @@ describe('binWidthSeconds', () => {
   it('returns one day for multi-day ranges', () => {
     expect(binWidthSeconds('7d')).toBe(86400);
     expect(binWidthSeconds('30d')).toBe(86400);
+    expect(binWidthSeconds('90d')).toBe(86400);
+    expect(binWidthSeconds('365d')).toBe(86400);
   });
 
   it('returns one hour for intraday and unknown ranges', () => {
@@ -502,9 +523,11 @@ describe('createBaseAxes', () => {
     expect(formatted[1]).toBe('');
   });
 
-  it('adds splits function for multi-day ranges (7d, 30d)', () => {
+  it('adds splits function for multi-day ranges', () => {
     expect(typeof (createBaseAxes('#aaa', '#eee', '7d')[0] as any).splits).toBe('function');
     expect(typeof (createBaseAxes('#aaa', '#eee', '30d')[0] as any).splits).toBe('function');
+    expect(typeof (createBaseAxes('#aaa', '#eee', '90d')[0] as any).splits).toBe('function');
+    expect(typeof (createBaseAxes('#aaa', '#eee', '365d')[0] as any).splits).toBe('function');
   });
 
   it('does not add splits function for intraday or undefined ranges', () => {
@@ -522,7 +545,7 @@ describe('createBaseAxes', () => {
     expect(result).toEqual([100, 200, 300]);
   });
 
-  it('values callback thins labels to every 5th for 30d range with 31 unique days', () => {
+  it('values callback thins labels to a bounded count for 30d range with 31 unique days', () => {
     const axes = createBaseAxes('#aaa', '#eee', '30d');
     const mockU = { scales: {} } as any;
     // Generate 31 unique day epochs (one per day)
@@ -532,13 +555,12 @@ describe('createBaseAxes', () => {
     }
     const result = (axes[0].values as Function)(mockU, vals);
     const nonEmpty = result.filter((l: string) => l !== '');
-    // 31 unique labels, step=5 → labels at index 0,5,10,15,20,25,30 = 7 labels
-    expect(nonEmpty).toHaveLength(7);
+    expect(nonEmpty.length).toBeLessThanOrEqual(10);
     // First label should be Jan 1
     expect(nonEmpty[0]).toBe(localMonDay(vals[0]));
   });
 
-  it('values callback thins labels to every 3rd for 30d range with 16 unique days', () => {
+  it('values callback thins labels to a bounded count for 30d range with 16 unique days', () => {
     const axes = createBaseAxes('#aaa', '#eee', '30d');
     const mockU = { scales: {} } as any;
     // Generate 16 unique day epochs
@@ -548,8 +570,19 @@ describe('createBaseAxes', () => {
     }
     const result = (axes[0].values as Function)(mockU, vals);
     const nonEmpty = result.filter((l: string) => l !== '');
-    // 16 unique labels, step=3 → labels at index 0,3,6,9,12,15 = 6 labels
-    expect(nonEmpty).toHaveLength(6);
+    expect(nonEmpty.length).toBeLessThanOrEqual(10);
+  });
+
+  it('values callback keeps 365d labels readable', () => {
+    const axes = createBaseAxes('#aaa', '#eee', '365d');
+    const mockU = { scales: {} } as any;
+    const vals: number[] = [];
+    for (let i = 0; i < 366; i++) {
+      vals.push(new Date(2024, 0, 1 + i, 0, 0).getTime() / 1000);
+    }
+    const result = (axes[0].values as Function)(mockU, vals);
+    const nonEmpty = result.filter((l: string) => l !== '');
+    expect(nonEmpty.length).toBeLessThanOrEqual(10);
   });
 
   it('values callback does not thin labels for 7d range with 8 unique days', () => {
@@ -951,6 +984,12 @@ describe('fillDailyGaps', () => {
     expect(result).toHaveLength(25);
   });
 
+  it('fills 7 hourly slots for 6h range', () => {
+    const zeroHour = (hour: string) => ({ hour, cost: 0 });
+    const result = fillDailyGaps([], '6h', 'hour', zeroHour);
+    expect(result).toHaveLength(7);
+  });
+
   it('preserves existing hourly data for 24h range', () => {
     const now = new Date();
     now.setMinutes(0, 0, 0);
@@ -991,6 +1030,16 @@ describe('fillDailyGaps', () => {
   it('fills 31 days for 30d range', () => {
     const result = fillDailyGaps([], '30d', 'date', zeroCost);
     expect(result).toHaveLength(31);
+  });
+
+  it('fills 91 days for 90d range', () => {
+    const result = fillDailyGaps([], '90d', 'date', zeroCost);
+    expect(result).toHaveLength(91);
+  });
+
+  it('fills 366 days for 365d range', () => {
+    const result = fillDailyGaps([], '365d', 'date', zeroCost);
+    expect(result).toHaveLength(366);
   });
 
   it('fills 8 days for 7d range', () => {

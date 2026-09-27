@@ -42,6 +42,99 @@ describe('analytics API client', () => {
     expect(url).toContain('agent_name=demo');
   });
 
+  it('getOverview supports the fast response and loads details separately', async () => {
+    let fetchMock = setupFetch({});
+    await analytics.getOverview('365d', 'demo', true);
+    let url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview');
+    expect(url).toContain('fast=true');
+
+    fetchMock = setupFetch({});
+    await analytics.getOverviewDetails('365d', 'demo');
+    url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview/details');
+    expect(url).toContain('range=365d');
+    expect(url).toContain('agent_name=demo');
+  });
+
+  it('getAttemptStats uses the stats route and optional agent scope', async () => {
+    const fetchMock = setupFetch({});
+    await analytics.getAttemptStats('30d', 'demo');
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview/attempt-stats');
+    expect(url).toContain('range=30d');
+    expect(url).toContain('agent_name=demo');
+  });
+
+  it('getAttemptStats defaults to seven days without an agent scope', async () => {
+    const fetchMock = setupFetch({});
+    await analytics.getAttemptStats();
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('range=7d');
+    expect(url).not.toContain('agent_name=');
+  });
+
+  it('getAttemptTimeseries supports scoped and unscoped requests', async () => {
+    let fetchMock = setupFetch({});
+    await analytics.getAttemptTimeseries();
+    let url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview/attempt-timeseries');
+    expect(url).toContain('range=7d');
+    expect(url).not.toContain('agent_name=');
+
+    fetchMock = setupFetch({});
+    await analytics.getAttemptTimeseries('24h', 'demo');
+    url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('range=24h');
+    expect(url).toContain('agent_name=demo');
+  });
+
+  it('calls the Autofix analytics routes with their optional scopes', async () => {
+    let fetchMock = setupFetch({});
+    await analytics.getWorkspaceAutofixStatus();
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/autofix/status');
+
+    fetchMock = setupFetch({});
+    await analytics.getAutofixStats('30d', 'demo');
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/overview/autofix-stats');
+    expect(fetchMock.mock.calls[0][0]).toContain('agent_name=demo');
+
+    fetchMock = setupFetch({});
+    await analytics.getAutofixTimeseries('24h', 'autofix', 'demo', true);
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/overview/autofix-timeseries');
+    expect(fetchMock.mock.calls[0][0]).toContain('failed_only=true');
+
+    fetchMock = setupFetch({});
+    await analytics.getPerProviderReliability('7d', 'demo');
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/overview/autofix-per-provider');
+    expect(fetchMock.mock.calls[0][0]).toContain('agent_name=demo');
+
+    fetchMock = setupFetch({});
+    await analytics.getPerAgentReliability('90d');
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/overview/autofix-per-agent');
+
+    fetchMock = setupFetch({});
+    await analytics.getErrorBreakdown('30d', 'demo');
+    expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/errors/breakdown');
+    expect(fetchMock.mock.calls[0][0]).toContain('agent_name=demo');
+  });
+
+  it('uses Autofix analytics defaults without optional filters', async () => {
+    const calls = [
+      () => analytics.getAutofixStats(),
+      () => analytics.getAutofixTimeseries(),
+      () => analytics.getPerProviderReliability(),
+      () => analytics.getErrorBreakdown(),
+    ];
+    for (const call of calls) {
+      const fetchMock = setupFetch({});
+      await call();
+      const url = fetchMock.mock.calls[0][0] as string;
+      expect(url).not.toContain('agent_name=');
+      expect(url).not.toContain('failed_only=');
+    }
+  });
+
   it('getHealth GETs /health', async () => {
     const fetchMock = setupFetch({ ok: true });
     await analytics.getHealth();

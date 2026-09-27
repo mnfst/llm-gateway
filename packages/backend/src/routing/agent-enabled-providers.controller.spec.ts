@@ -1,4 +1,5 @@
 import { HttpException } from '@nestjs/common';
+import { IsNull } from 'typeorm';
 import { AgentEnabledProvidersController } from './agent-enabled-providers.controller';
 import type { AgentEnabledProvider } from '../entities/agent-enabled-provider.entity';
 import type { TenantProvider } from '../entities/tenant-provider.entity';
@@ -123,6 +124,47 @@ describe('AgentEnabledProvidersController', () => {
       await expect(controller.disable(ctx, 'Playground', PROVIDER_ID)).rejects.toBeInstanceOf(
         HttpException,
       );
+    });
+  });
+
+  describe('resolveAgent — soft-deleted agents', () => {
+    it('only resolves a live agent (deleted_at IS NULL) so a reused name hits the active row', async () => {
+      const { controller, agentRepo } = makeController();
+      await controller.listEnabled(ctx, 'my-agent');
+      expect(agentRepo.findOne).toHaveBeenCalledWith({
+        where: {
+          name: 'my-agent',
+          tenant_id: TENANT_ID,
+          is_playground: false,
+          deleted_at: IsNull(),
+        },
+      });
+    });
+
+    it.each([
+      ['listEnabled', (c: AgentEnabledProvidersController) => c.listEnabled(ctx, 'repro')],
+      [
+        'getDisableImpact',
+        (c: AgentEnabledProvidersController) => c.getDisableImpact(ctx, 'repro', PROVIDER_ID),
+      ],
+      ['enable', (c: AgentEnabledProvidersController) => c.enable(ctx, 'repro', PROVIDER_ID)],
+      ['disable', (c: AgentEnabledProvidersController) => c.disable(ctx, 'repro', PROVIDER_ID)],
+    ])('applies the deleted_at filter in %s', async (_name, call) => {
+      const { controller, agentRepo } = makeController({
+        tenantProviderRepo: {
+          findOne: jest.fn().mockResolvedValue({
+            id: PROVIDER_ID,
+            tenant_id: TENANT_ID,
+            provider: 'openai',
+            auth_type: 'api_key',
+            cached_models: [],
+          } as Partial<TenantProvider>),
+        },
+      });
+      await call(controller);
+      expect(agentRepo.findOne).toHaveBeenCalledWith({
+        where: expect.objectContaining({ name: 'repro', deleted_at: IsNull() }),
+      });
     });
   });
 

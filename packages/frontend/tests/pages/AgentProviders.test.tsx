@@ -176,6 +176,31 @@ describe('AgentProviders', () => {
     expect(screen.getByLabelText('Enable Anthropic Max')).toBeDefined();
   });
 
+  it('keeps a long connection name within its cell without removing the models column', async () => {
+    const longLabel = 'from MyTrainer LLM Judges and Evaluation Platform';
+    mockGetGlobalProviders.mockResolvedValue({
+      ...providersResponse,
+      providers: providersResponse.providers.map((provider) =>
+        provider.provider === 'openai'
+          ? {
+              ...provider,
+              connections: [{ ...provider.connections[0], label: longLabel }],
+            }
+          : provider,
+      ),
+    });
+
+    render(() => <AgentProviders />);
+
+    await waitFor(() => {
+      expect(screen.getByTitle(longLabel)).toBeDefined();
+    });
+
+    expect(screen.getByTitle(longLabel).style.textOverflow).toBe('ellipsis');
+    expect(screen.getByRole('columnheader', { name: 'Models' })).toBeDefined();
+    expect(screen.getByText('2')).toBeDefined();
+  });
+
   it('enables a provider with PUT', async () => {
     render(() => <AgentProviders />);
 

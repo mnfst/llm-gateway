@@ -159,10 +159,18 @@ async function postMessages(body: Record<string, unknown>): Promise<request.Resp
     .expect(200);
 }
 
-async function flushRecorder(): Promise<void> {
-  // recordSuccess fires off the response handler asynchronously — give it a
-  // tick or two before reading agent_messages.
-  await new Promise((r) => setTimeout(r, 200));
+async function waitForRecordedMessage(ds: DataSource): Promise<Record<string, unknown>[]> {
+  let rows: Record<string, unknown>[] = [];
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    rows = await ds.query(
+      `SELECT input_tokens, cache_read_tokens, cache_creation_tokens, status
+         FROM agent_messages WHERE agent_id = $1 ORDER BY timestamp DESC LIMIT 1`,
+      [TEST_AGENT_ID],
+    );
+    if (rows[0] && rows[0].status !== 'pending') return rows;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return rows;
 }
 
 describe('/v1/messages cache token round-trip (#1871)', () => {
@@ -198,14 +206,9 @@ describe('/v1/messages cache token round-trip (#1871)', () => {
       cache_read_input_tokens: 0,
     });
 
-    await flushRecorder();
-    const rows = await ds.query(
-      `SELECT input_tokens, cache_read_tokens, cache_creation_tokens, status
-         FROM agent_messages WHERE agent_id = $1 ORDER BY timestamp DESC LIMIT 1`,
-      [TEST_AGENT_ID],
-    );
+    const rows = await waitForRecordedMessage(ds);
     expect(rows).toHaveLength(1);
-    expect(rows[0].status).toBe('ok');
+    expect(rows[0].status).toBe('success');
     // input_tokens stores the chat-shape total (uncached + cache reads + creation).
     expect(Number(rows[0].input_tokens)).toBe(3013);
     expect(Number(rows[0].cache_read_tokens)).toBe(0);
@@ -244,12 +247,7 @@ describe('/v1/messages cache token round-trip (#1871)', () => {
       cache_read_input_tokens: 3006,
     });
 
-    await flushRecorder();
-    const rows = await ds.query(
-      `SELECT input_tokens, cache_read_tokens, cache_creation_tokens
-         FROM agent_messages WHERE agent_id = $1 ORDER BY timestamp DESC LIMIT 1`,
-      [TEST_AGENT_ID],
-    );
+    const rows = await waitForRecordedMessage(ds);
     expect(rows).toHaveLength(1);
     expect(Number(rows[0].input_tokens)).toBe(3013);
     expect(Number(rows[0].cache_read_tokens)).toBe(3006);

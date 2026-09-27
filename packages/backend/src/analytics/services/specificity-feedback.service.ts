@@ -84,7 +84,15 @@ export class SpecificityFeedbackService {
       .where('m.id = :id', { id: messageId })
       .andWhere('m.tenant_id = :tenantId', { tenantId })
       .getOne();
-    if (!message) throw new NotFoundException('Message not found');
-    return message;
+    if (message) return message;
+    const requestQb = this.messageRepo.createQueryBuilder('m');
+    if (!requestQb) throw new NotFoundException('Message not found');
+    const requestAttempt = await requestQb
+      .where('m.request_id = :requestId', { requestId: messageId })
+      .andWhere('m.tenant_id = :tenantId', { tenantId })
+      .andWhere('m.specificity_category IS NOT NULL')
+      .getOne();
+    if (!requestAttempt) throw new NotFoundException('Message not found');
+    return requestAttempt;
   }
 }

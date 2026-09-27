@@ -1,4 +1,4 @@
-import { ThoughtSignatureCache } from '../thought-signature-cache';
+import { ThoughtSignatureCache, MAX_CACHE_ENTRIES } from '../thought-signature-cache';
 
 describe('ThoughtSignatureCache', () => {
   let cache: ThoughtSignatureCache;
@@ -81,6 +81,18 @@ describe('ThoughtSignatureCache', () => {
     cache.store('session-1', 'tc-1', 'new-sig');
 
     expect(cache.retrieve('session-1', 'tc-1')).toBe('new-sig');
+  });
+
+  it('evicts the oldest entries once MAX_CACHE_ENTRIES is exceeded', () => {
+    for (let i = 0; i < MAX_CACHE_ENTRIES + 5; i++) {
+      cache.store('session', `tc-${i}`, `sig-${i}`);
+    }
+
+    // The five oldest entries are evicted FIFO; the cap holds and recent entries survive.
+    expect(cache.retrieve('session', 'tc-0')).toBeNull();
+    expect(cache.retrieve('session', 'tc-4')).toBeNull();
+    expect(cache.retrieve('session', 'tc-5')).not.toBeNull();
+    expect(cache.retrieve('session', `tc-${MAX_CACHE_ENTRIES + 4}`)).not.toBeNull();
   });
 
   describe('maybeCleanup (lazy eviction)', () => {

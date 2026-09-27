@@ -118,6 +118,17 @@ describe('PROVIDER_REGISTRY', () => {
     expect(fireworks!.keyPrefix).toBe('fw_');
   });
 
+  it('huggingface is registered as an API-key provider', () => {
+    const huggingface = PROVIDER_REGISTRY.find((p) => p.id === 'huggingface');
+    expect(huggingface).toBeDefined();
+    expect(huggingface!.displayName).toBe('Hugging Face');
+    expect(huggingface!.aliases).toEqual(['hugging-face', 'hugging face', 'hf']);
+    expect(huggingface!.openRouterPrefixes).toEqual([]);
+    expect(huggingface!.requiresApiKey).toBe(true);
+    expect(huggingface!.localOnly).toBe(false);
+    expect(huggingface!.keyPrefix).toBe('hf_');
+  });
+
   it('kiro is registered as a CLI OAuth subscription provider', () => {
     const kiro = PROVIDER_REGISTRY.find((p) => p.id === 'kiro');
     expect(kiro).toBeDefined();
@@ -143,6 +154,41 @@ describe('PROVIDER_REGISTRY', () => {
     expect(byteplus!.requiresApiKey).toBe(true);
     expect(byteplus!.localOnly).toBe(false);
     expect(byteplus!.keyPlaceholder).toBe('ModelArk Coding Plan API key');
+  });
+
+  it('cerebras is registered as an API-key provider', () => {
+    const cerebras = PROVIDER_REGISTRY.find((p) => p.id === 'cerebras');
+    expect(cerebras).toBeDefined();
+    expect(cerebras!.displayName).toBe('Cerebras');
+    expect(cerebras!.aliases).toEqual([]);
+    expect(cerebras!.openRouterPrefixes).toEqual([]);
+    expect(cerebras!.requiresApiKey).toBe(true);
+    expect(cerebras!.localOnly).toBe(false);
+    expect(cerebras!.keyPrefix).toBe('');
+    expect(cerebras!.keyPlaceholder).toBe('Cerebras API key');
+  });
+
+  it('pioneer is registered as an API-key provider', () => {
+    const pioneer = PROVIDER_REGISTRY.find((p) => p.id === 'pioneer');
+    expect(pioneer).toBeDefined();
+    expect(pioneer!.displayName).toBe('Pioneer');
+    expect(pioneer!.aliases).toEqual(['pioneer-ai', 'pioneer ai']);
+    expect(pioneer!.openRouterPrefixes).toEqual([]);
+    expect(pioneer!.requiresApiKey).toBe(true);
+    expect(pioneer!.localOnly).toBe(false);
+    expect(pioneer!.keyPrefix).toBe('pio_sk_');
+    expect(pioneer!.keyPlaceholder).toBe('pio_sk_...');
+  });
+
+  it('meta is registered as an API-key provider with an OpenRouter fallback prefix', () => {
+    const meta = PROVIDER_REGISTRY.find((p) => p.id === 'meta');
+    expect(meta).toBeDefined();
+    expect(meta!.displayName).toBe('Meta');
+    expect(meta!.openRouterPrefixes).toEqual(['meta']);
+    expect(meta!.requiresApiKey).toBe(true);
+    expect(meta!.localOnly).toBe(false);
+    expect(meta!.keyPrefix).toBe('LLM_');
+    expect(meta!.keyPlaceholder).toBe('LLM_...');
   });
 });
 
@@ -218,6 +264,22 @@ describe('PROVIDER_BY_ID_OR_ALIAS', () => {
     expect(entry).toBeDefined();
     expect(entry.id).toBe('byteplus');
     expect(entry.displayName).toBe('BytePlus');
+  });
+
+  it('resolves cerebras by canonical id', () => {
+    const entry = PROVIDER_BY_ID_OR_ALIAS.get('cerebras') as ProviderRegistryEntry;
+    expect(entry).toBeDefined();
+    expect(entry.id).toBe('cerebras');
+    expect(entry.displayName).toBe('Cerebras');
+  });
+
+  it('resolves pioneer aliases to the canonical provider entry', () => {
+    for (const name of ['pioneer', 'pioneer-ai', 'pioneer ai']) {
+      const entry = PROVIDER_BY_ID_OR_ALIAS.get(name) as ProviderRegistryEntry;
+      expect(entry).toBeDefined();
+      expect(entry.id).toBe('pioneer');
+      expect(entry.displayName).toBe('Pioneer');
+    }
   });
 
   it('returns undefined for an unknown alias', () => {

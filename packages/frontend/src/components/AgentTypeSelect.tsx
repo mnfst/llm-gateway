@@ -1,13 +1,11 @@
-import { createSignal, For, Show, onCleanup, type Component } from 'solid-js';
+import { createSignal, Show, onCleanup, type Component } from 'solid-js';
 import {
   type AgentCategory,
   type AgentPlatform,
-  AGENT_CATEGORIES,
-  CATEGORY_LABELS,
   PLATFORM_LABELS,
-  PLATFORMS_BY_CATEGORY,
   PLATFORM_ICONS,
 } from 'manifest-shared';
+import AgentTypeGrid from './AgentTypeGrid.jsx';
 
 interface Props {
   category: AgentCategory | null;
@@ -50,12 +48,6 @@ const AgentTypeSelect: Component<Props> = (props) => {
     });
   }
 
-  const handleSelect = (cat: AgentCategory, plat: AgentPlatform) => {
-    props.onCategoryChange(cat);
-    props.onPlatformChange(plat);
-    setOpen(false);
-  };
-
   return (
     <div class="agent-type-select" ref={ref}>
       <button
@@ -93,44 +85,17 @@ const AgentTypeSelect: Component<Props> = (props) => {
         </svg>
       </button>
       <Show when={open()}>
-        <div class="agent-type-select__dropdown" role="listbox">
-          <For each={[...AGENT_CATEGORIES]}>
-            {(cat) => (
-              <div class="agent-type-select__column">
-                <div class="agent-type-select__group-label" role="presentation">
-                  {CATEGORY_LABELS[cat]}
-                </div>
-                <For each={[...PLATFORMS_BY_CATEGORY[cat]]}>
-                  {(plat) => {
-                    const isSelected = () => props.category === cat && props.platform === plat;
-                    const icon = iconFor(plat, cat);
-                    return (
-                      <button
-                        class="agent-type-select__option"
-                        classList={{ 'agent-type-select__option--selected': isSelected() }}
-                        onClick={() => handleSelect(cat, plat)}
-                        type="button"
-                        role="option"
-                        aria-selected={isSelected()}
-                      >
-                        <Show when={icon}>
-                          <img
-                            src={icon}
-                            alt=""
-                            width="18"
-                            height="18"
-                            class="agent-type-select__option-icon"
-                          />
-                        </Show>
-                        <span>{PLATFORM_LABELS[plat]}</span>
-                      </button>
-                    );
-                  }}
-                </For>
-              </div>
-            )}
-          </For>
-        </div>
+        <AgentTypeGrid
+          inline={false}
+          category={props.category}
+          platform={props.platform}
+          onCategoryChange={props.onCategoryChange}
+          onPlatformChange={(platform) => {
+            props.onPlatformChange(platform);
+            setOpen(false);
+          }}
+          disabled={props.disabled}
+        />
       </Show>
     </div>
   );

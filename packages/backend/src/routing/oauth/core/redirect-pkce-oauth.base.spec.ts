@@ -86,6 +86,44 @@ function buildSvc(): TestPkceOauthService {
   );
 }
 
+describe('RedirectPkceOauthBaseService — client id resolution', () => {
+  // The env var reaches the service through ConfigService. docker-compose
+  // forwards unset optional vars as an empty string, so `''` must mean
+  // "not configured" and fall back to the shipped default client id —
+  // otherwise the authorize redirect goes out with a blank client_id.
+  function buildWithEnvClientId(value: string | undefined): TestPkceOauthService {
+    const configService = {
+      get: (key: string) => {
+        if (key === 'app.nodeEnv') return 'production';
+        if (key === 'TEST_OAUTH_CLIENT_ID') return value;
+        return undefined;
+      },
+    } as unknown as ConfigService;
+    return new TestPkceOauthService(createProviderService(), configService, createDiscovery());
+  }
+
+  async function clientIdInAuthorizeUrl(svc: TestPkceOauthService): Promise<string | null> {
+    const url = await svc.generateAuthorizationUrl('a', 'u', 'http://localhost:3001');
+    return new URL(url).searchParams.get('client_id');
+  }
+
+  it('uses the env override when it holds a real value', async () => {
+    expect(await clientIdInAuthorizeUrl(buildWithEnvClientId('custom-client-id'))).toBe(
+      'custom-client-id',
+    );
+  });
+
+  it('falls back to the default when the env var is unset, empty, or whitespace', async () => {
+    for (const value of [undefined, '', '   ']) {
+      expect(await clientIdInAuthorizeUrl(buildWithEnvClientId(value))).toBe('test-client-id');
+    }
+  });
+
+  it('trims a padded env override', async () => {
+    expect(await clientIdInAuthorizeUrl(buildWithEnvClientId('  padded-id  '))).toBe('padded-id');
+  });
+});
+
 describe('RedirectPkceOauthBaseService — backendUrl validation', () => {
   beforeEach(() => {
     jest.useFakeTimers();
@@ -111,15 +149,14 @@ describe('RedirectPkceOauthBaseService — backendUrl validation', () => {
       expect(readPendingBackendUrl(svc, state)).toBe('http://127.0.0.1:8080');
     });
 
-    it('rejects http://[::1]:port (current isAllowedRedirectOrigin compares to "::1", not "[::1]")', async () => {
-      // The URL parser returns hostname='[::1]' for IPv6 literals, and the
-      // check uses === '::1'. This documents the current behaviour: the
-      // IPv6 loopback path is effectively dead code today. A future patch
-      // that strips the brackets should flip this test.
+    it('stores a valid http://[::1] (IPv6 loopback) backendUrl verbatim', async () => {
+      // The URL parser returns hostname='[::1]' for IPv6 literals;
+      // isAllowedRedirectOrigin now strips the brackets before comparing, so
+      // IPv6 loopback is accepted the same as localhost / 127.0.0.1.
       const svc = buildSvc();
       const url = await svc.generateAuthorizationUrl('a', 'u', 'http://[::1]:3001');
       const state = new URL(url).searchParams.get('state')!;
-      expect(readPendingBackendUrl(svc, state)).toBe('');
+      expect(readPendingBackendUrl(svc, state)).toBe('http://[::1]:3001');
     });
 
     it('accepts loopback hosts on non-standard ports', async () => {

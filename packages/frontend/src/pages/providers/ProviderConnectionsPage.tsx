@@ -18,26 +18,34 @@ import {
   getProviders as getGlobalProviders,
   getProviderUsage,
   mergeUsage,
+  connectionUsage,
   type TenantProviderSummary,
 } from '../../services/api/providers.js';
-import { messagePing, routingPing } from '../../services/sse.js';
+import { analyticsPing, routingPing } from '../../services/sse.js';
+import { toggleScrollFade } from '../../services/scroll-fade.js';
 import { renameProviderKey } from '../../services/api/routing.js';
 import type { AuthType, CustomProviderData, RoutingProvider } from '../../services/api.js';
 import type { CustomProviderPrefill, ProviderDeepLink } from '../../services/routing-params.js';
-import { PROVIDERS, type ProviderDef } from '../../services/providers.js';
+import { PROVIDERS, subscriptionCatalog, type ProviderDef } from '../../services/providers.js';
 import {
   customProviderColor,
   formatCost,
   formatNumber,
   formatTimeAgo,
 } from '../../services/formatters.js';
-import { providerIcon } from '../../components/ProviderIcon.jsx';
 import InfoTooltip from '../../components/InfoTooltip.jsx';
+import { providerIcon } from '../../components/ProviderIcon.jsx';
 import { toast } from '../../services/toast-store.js';
 import ProviderSelectModal from '../../components/ProviderSelectModal.jsx';
 import CustomProviderForm from '../../components/CustomProviderForm.jsx';
 import Sparkline from '../../components/Sparkline.jsx';
+import {
+  attemptSuccessRate,
+  totalAttemptsTooltip,
+  CONNECTION_SUCCESS_RATE_TOOLTIP_30D,
+} from '../../services/api/analytics.js';
 import '../../styles/routing.css';
+import '../../styles/analytics-overview.css';
 
 type ProviderPageKind = 'subscriptions' | 'byok' | 'local';
 type ViewMode = 'list' | 'grid';
@@ -109,9 +117,13 @@ const PAGE_COPY: Record<
   },
 };
 
-const providerListForKind = (kind: ProviderPageKind): ProviderDef[] => {
-  if (kind === 'subscriptions')
-    return PROVIDERS.filter((provider) => provider.supportsSubscription);
+const CONNECTIONS_COLLAPSE_THRESHOLD = 6;
+
+const providerListForKind = (
+  kind: ProviderPageKind,
+  hasConnection: (providerId: string) => boolean,
+): ProviderDef[] => {
+  if (kind === 'subscriptions') return subscriptionCatalog(PROVIDERS, hasConnection);
   if (kind === 'local') return PROVIDERS.filter((provider) => provider.localOnly);
   return PROVIDERS.filter((provider) => !provider.subscriptionOnly && !provider.localOnly);
 };
@@ -208,19 +220,6 @@ const GridIcon: Component = () => (
   </svg>
 );
 
-const CustomProviderIcon: Component = () => (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="14"
-    height="14"
-    fill="currentColor"
-    viewBox="0 0 24 24"
-    aria-hidden="true"
-  >
-    <path d="M7 11h10c.37 0 .72-.21.89-.54s.14-.73-.08-1.04l-5-7c-.38-.53-1.25-.53-1.63 0l-5 7A.997.997 0 0 0 6.99 11Zm5-6.28L15.06 9H8.95l3.06-4.28ZM17.5 13c-2.48 0-4.5 2.02-4.5 4.5s2.02 4.5 4.5 4.5 4.5-2.02 4.5-4.5-2.02-4.5-4.5-4.5m0 7a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5M3 22h7c.55 0 1-.45 1-1v-7c0-.55-.45-1-1-1H3c-.55 0-1 .45-1 1v7c0 .55.45 1 1 1m1-7h5v5H4z" />
-  </svg>
-);
-
 const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props) => {
   const copy = () => PAGE_COPY[props.kind];
   const navigate = useNavigate();
@@ -230,6 +229,22 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
   const [customProviderPrefill, setCustomProviderPrefill] =
     createSignal<CustomProviderPrefill | null>(null);
   const [viewMode, setViewMode] = createSignal<ViewMode>('grid');
+  // Past this many connections the list is capped inside its own card, so the
+  // supported-provider catalog below stays reachable without a long scroll.
+  const [connectionsExpanded, setConnectionsExpanded] = createSignal(false);
+  const connectionsCollapsible = () => connectedRows().length > CONNECTIONS_COLLAPSE_THRESHOLD;
+  const connectionsCollapsed = () => connectionsCollapsible() && !connectionsExpanded();
+  let connectionsScroller: HTMLDivElement | undefined;
+  const toggleConnections = () => {
+    setConnectionsExpanded((open) => !open);
+    // Expanding takes the cap off, which drops the scroll position. The
+    // at-bottom flag from before it would otherwise survive into the next
+    // collapse and keep the fade hidden at the top of the list.
+    if (connectionsScroller) {
+      connectionsScroller.scrollTop = 0;
+      connectionsScroller.parentElement?.classList.remove('scroll-panel--at-bottom');
+    }
+  };
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Inline rename state
@@ -299,11 +314,11 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
   });
 
   // USAGE resource — the expensive 30d aggregation, fetched independently. Its
-  // source includes the SSE ping signals so a newly ingested message
-  // (messagePing) or a provider connect/disconnect/rename (routingPing)
-  // re-runs the usage fetch within ~500ms, exactly like Overview/MessageLog.
+  // source includes the SSE ping signals so coalesced message activity
+  // (analyticsPing) or a provider connect/disconnect/rename (routingPing)
+  // re-runs the usage fetch.
   const [usage, { refetch: refetchUsage }] = createResource(
-    () => ({ m: messagePing(), r: routingPing() }),
+    () => ({ m: analyticsPing(), r: routingPing() }),
     async () => {
       try {
         return (await getProviderUsage()).providers;
@@ -381,7 +396,7 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
     }> = [];
     for (const summary of connectedSummaries()) {
       for (const connection of summary.connections) {
-        if (!connection.is_active && !hasUsage(summary)) continue;
+        if (!connection.is_active && props.kind !== 'subscriptions' && !hasUsage(summary)) continue;
         rows.push({
           summary,
           connection,
@@ -398,6 +413,15 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
     return map;
   };
 
+  const catalogProviders = () =>
+    providerListForKind(
+      props.kind,
+      (providerId) =>
+        connectedByProvider()
+          .get(providerId)
+          ?.connections.some((connection) => connection.is_active) ?? false,
+    );
+
   const activeConnectionCount = (providerId: string) =>
     connectedByProvider()
       .get(providerId)
@@ -407,6 +431,16 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
     connectedSummaries().reduce((sum, summary) => sum + summary.consumption_cost, 0),
   );
 
+  // Attempt-world totals for the header cards: summed over THIS page's rows
+  // (provider + auth_type grain), so the Subscriptions page never blends an
+  // api_key connection's failures into its numbers, and vice versa.
+  const totalAttempts = createMemo(() =>
+    connectedSummaries().reduce((sum, s) => sum + s.attempts_30d, 0),
+  );
+  const totalAttemptsSucceeded = createMemo(() =>
+    connectedSummaries().reduce((sum, s) => sum + s.succeeded_30d, 0),
+  );
+
   const connectionDenominator = (summary: TenantProviderSummary) =>
     Math.max(
       summary.connections.filter((connection) => connection.is_active || hasUsage(summary)).length,
@@ -414,14 +448,34 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
       1,
     );
 
-  const perConnectionTokens = (summary: TenantProviderSummary) =>
+  // Per-connection usage at the (provider, auth_type, label) grain: two
+  // connections of the same provider and type never share numbers. Falls back
+  // to the group's even split only while the label rows are missing.
+  const usageForConnection = (
+    summary: TenantProviderSummary,
+    connection: { label?: string | null },
+  ) => connectionUsage(usage(), summary.provider, summary.auth_type, connection.label);
+
+  const perConnectionTokens = (
+    summary: TenantProviderSummary,
+    connection: { label?: string | null },
+  ) =>
+    usageForConnection(summary, connection)?.consumption_tokens ??
     Math.round(summary.consumption_tokens / connectionDenominator(summary));
 
-  const perConnectionCost = (summary: TenantProviderSummary) =>
+  const perConnectionCost = (
+    summary: TenantProviderSummary,
+    connection: { label?: string | null },
+  ) =>
+    usageForConnection(summary, connection)?.consumption_cost ??
     summary.consumption_cost / connectionDenominator(summary);
 
-  const connectionLastUsedAt = (summary: TenantProviderSummary) =>
-    summary.connections.length === 1 ? summary.last_used_at : null;
+  const connectionLastUsedAt = (
+    summary: TenantProviderSummary,
+    connection: { label?: string | null },
+  ) =>
+    usageForConnection(summary, connection)?.last_used_at ??
+    (summary.connections.length === 1 ? summary.last_used_at : null);
 
   const showMetricCard = () =>
     !!copy().metricLabel && (connectedRows().length > 0 || totalApiCost() > 0);
@@ -508,23 +562,49 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
         </Show>
       </div>
 
-      <Show when={showMetricCard()}>
-        <div class="chart-card" style="margin-bottom: 24px; padding: 20px 24px;">
-          <span class="chart-card__label" style="display: flex; align-items: center; gap: 0;">
-            {copy().metricLabel}
-            <InfoTooltip text={copy().metricTooltip!} />
-          </span>
-          <div class="chart-card__value-row" style="margin-top: 4px;">
-            <Show
-              when={!usageLoading()}
-              fallback={
-                <span class="chart-card__value">
-                  <UsageShimmer width={72} />
-                </span>
-              }
-            >
-              <span class="chart-card__value">{formatCost(totalApiCost()) ?? '$0.00'}</span>
-            </Show>
+      <Show when={connectedRows().length > 0}>
+        <div
+          class="overview-stats"
+          classList={{ 'overview-stats--3': !showMetricCard() }}
+          style="margin-bottom: 24px;"
+        >
+          <Show when={showMetricCard()}>
+            <div class="overview-stat-card">
+              <span class="overview-stat-card__label">Total API cost (30d)</span>
+              <div class="overview-stat-card__value-row">
+                <Show when={!usageLoading()} fallback={<UsageShimmer width={72} />}>
+                  <span class="overview-stat-card__value">
+                    {formatCost(totalApiCost()) ?? '$0.00'}
+                  </span>
+                </Show>
+              </div>
+            </div>
+          </Show>
+          <div class="overview-stat-card">
+            <span class="overview-stat-card__label">
+              Total attempts (30d)
+              <InfoTooltip text={totalAttemptsTooltip(true)} />
+            </span>
+            <div class="overview-stat-card__value-row">
+              <span class="overview-stat-card__value">{formatNumber(totalAttempts())}</span>
+            </div>
+          </div>
+          <div class="overview-stat-card">
+            <span class="overview-stat-card__label">
+              Success rate (30d)
+              <InfoTooltip text={CONNECTION_SUCCESS_RATE_TOOLTIP_30D} />
+            </span>
+            <div class="overview-stat-card__value-row">
+              <span class="overview-stat-card__value">
+                {(() => {
+                  const rate = attemptSuccessRate({
+                    attempts: totalAttempts(),
+                    succeeded: totalAttemptsSucceeded(),
+                  });
+                  return rate == null ? '—' : `${(rate * 100).toFixed(1)}%`;
+                })()}
+              </span>
+            </div>
           </div>
         </div>
       </Show>
@@ -533,174 +613,267 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
         <h3 style="font-size: var(--font-size-base); font-weight: 600; color: hsl(var(--foreground)); margin-bottom: 12px;">
           {copy().connectedHeading}
         </h3>
-        <div class="panel" style="padding: 0; margin-bottom: 24px; overflow-x: auto;">
-          <table class="data-table" style="width: 100%;">
-            <thead>
-              <tr>
-                <th>Provider</th>
-                <th>Connection</th>
-                <th>Usage (30d)</th>
-                <Show when={copy().rowMetricHeading}>
-                  <th>{copy().rowMetricHeading}</th>
-                </Show>
-                <th>Status</th>
-                <th>Last used</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              <For each={connectedRows()}>
-                {(row) => (
-                  <tr
-                    style="cursor: pointer;"
-                    onClick={() => navigate(`/providers/connections/${row.connection.id}`)}
-                    onKeyDown={(event) => {
-                      if (event.target !== event.currentTarget) return;
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        navigate(`/providers/connections/${row.connection.id}`);
-                      }
-                    }}
-                    tabindex="0"
-                  >
-                    <td>
-                      <span style="display: flex; align-items: center; gap: 10px;">
-                        <ProviderMark providerId={row.summary.provider} name={row.name} />
-                        <span style="font-weight: 500;">{row.name}</span>
-                        <Show when={row.summary.provider.startsWith('custom:')}>
-                          <span style="display: inline-flex; padding: 1px 6px; border-radius: var(--radius-sm); border: 1px solid hsl(var(--border)); font-size: var(--font-size-xs); color: hsl(var(--muted-foreground));">
-                            Custom
-                          </span>
-                        </Show>
-                      </span>
-                    </td>
-                    <td
-                      style="color: hsl(var(--muted-foreground));"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Show
-                        when={renamingId() === row.connection.id}
-                        fallback={
-                          <span
-                            style="display: inline-flex; align-items: center; gap: 6px; cursor: default;"
-                            class="connection-label-cell"
-                          >
-                            {row.connection.label}
-                            <button
-                              type="button"
-                              class="connection-label-cell__edit"
-                              onClick={(e) =>
-                                startRename(row.connection.id, row.connection.label, e)
-                              }
-                              aria-label={`Rename ${row.connection.label}`}
-                              style="background: none; border: none; cursor: pointer; padding: 2px; color: hsl(var(--muted-foreground)); opacity: 0; transition: opacity 0.15s; display: inline-flex; align-items: center; line-height: 1;"
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M5 21h14c1.1 0 2-.9 2-2v-7h-2v7H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2" />
-                                <path d="M7 13v3c0 .55.45 1 1 1h3c.27 0 .52-.11.71-.29l9-9a.996.996 0 0 0 0-1.41l-3-3a.996.996 0 0 0-1.41 0l-9.01 8.99A1 1 0 0 0 7 13m10-7.59L18.59 7 17.5 8.09 15.91 6.5zm-8 8 5.5-5.5 1.59 1.59-5.5 5.5H9z" />
-                              </svg>
-                            </button>
-                          </span>
-                        }
+        <div
+          class="panel connections-panel"
+          classList={{ 'connections-panel--collapsed': connectionsCollapsed() }}
+          style="padding: 0; margin-bottom: 24px;"
+        >
+          <div class="connections-panel__viewport">
+            <div
+              class="connections-panel__body"
+              id="connected-connections"
+              ref={connectionsScroller}
+              onScroll={toggleScrollFade}
+            >
+              <table class="data-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Connection</th>
+                    <th>Status</th>
+                    <th>Usage (30d)</th>
+                    <Show when={copy().rowMetricHeading}>
+                      <th>{copy().rowMetricHeading}</th>
+                    </Show>
+                    <th class="rel-col">
+                      Total attempts (30d)
+                      <InfoTooltip text={totalAttemptsTooltip(true)} />
+                    </th>
+                    <th class="rel-col">
+                      Success rate (30d)
+                      <InfoTooltip text={CONNECTION_SUCCESS_RATE_TOOLTIP_30D} />
+                    </th>
+                    <th>Last used</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  <For each={connectedRows()}>
+                    {(row) => (
+                      <tr
+                        style="cursor: pointer;"
+                        onClick={() => navigate(`/providers/connections/${row.connection.id}`)}
+                        onKeyDown={(event) => {
+                          if (event.target !== event.currentTarget) return;
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            navigate(`/providers/connections/${row.connection.id}`);
+                          }
+                        }}
+                        tabindex="0"
                       >
-                        <div style="display: flex; align-items: center; gap: 6px;">
-                          <input
-                            type="text"
-                            class={`provider-detail__input${renameError() ? ' provider-detail__input--error' : ''}`}
-                            value={renameValue()}
-                            onInput={(e) => {
-                              setRenameValue(e.currentTarget.value);
-                              setRenameError('');
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter')
-                                submitRename(
-                                  row.summary.provider,
-                                  row.connection.label,
-                                  row.summary.auth_type ?? copy().authType,
-                                  e,
-                                );
-                              if (e.key === 'Escape') cancelRename(e);
-                            }}
-                            style="width: 120px;"
-                            ref={(el) => requestAnimationFrame(() => el.focus())}
-                          />
-                          <button
-                            class="btn btn--primary btn--sm"
-                            style="font-size: var(--font-size-xs); padding: 4px 10px;"
-                            disabled={renameBusy()}
-                            onClick={(e) =>
-                              submitRename(
-                                row.summary.provider,
-                                row.connection.label,
-                                row.summary.auth_type ?? copy().authType,
-                                e,
-                              )
+                        <td>
+                          <span style="display: flex; align-items: center; gap: 10px;">
+                            <ProviderMark providerId={row.summary.provider} name={row.name} />
+                            <span style="font-weight: 500;">{row.name}</span>
+                            <Show when={row.summary.provider.startsWith('custom:')}>
+                              <span style="display: inline-flex; padding: 1px 6px; border-radius: var(--radius-sm); border: 1px solid hsl(var(--border)); font-size: var(--font-size-xs); color: hsl(var(--muted-foreground));">
+                                Custom
+                              </span>
+                            </Show>
+                          </span>
+                        </td>
+                        <td
+                          style="color: hsl(var(--muted-foreground));"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Show
+                            when={renamingId() === row.connection.id}
+                            fallback={
+                              <span
+                                style="display: inline-flex; align-items: center; gap: 6px; cursor: default;"
+                                class="connection-label-cell"
+                              >
+                                {row.connection.label}
+                                <button
+                                  type="button"
+                                  class="connection-label-cell__edit"
+                                  onClick={(e) =>
+                                    startRename(row.connection.id, row.connection.label, e)
+                                  }
+                                  aria-label={`Rename ${row.connection.label}`}
+                                  style="background: none; border: none; cursor: pointer; padding: 2px; color: hsl(var(--muted-foreground)); opacity: 0; transition: opacity 0.15s; display: inline-flex; align-items: center; line-height: 1;"
+                                >
+                                  <svg
+                                    width="14"
+                                    height="14"
+                                    viewBox="0 0 24 24"
+                                    fill="currentColor"
+                                  >
+                                    <path d="M5 21h14c1.1 0 2-.9 2-2v-7h-2v7H5V5h7V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2" />
+                                    <path d="M7 13v3c0 .55.45 1 1 1h3c.27 0 .52-.11.71-.29l9-9a.996.996 0 0 0 0-1.41l-3-3a.996.996 0 0 0-1.41 0l-9.01 8.99A1 1 0 0 0 7 13m10-7.59L18.59 7 17.5 8.09 15.91 6.5zm-8 8 5.5-5.5 1.59 1.59-5.5 5.5H9z" />
+                                  </svg>
+                                </button>
+                              </span>
                             }
                           >
-                            Save
-                          </button>
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                              <input
+                                type="text"
+                                class={`provider-detail__input${renameError() ? ' provider-detail__input--error' : ''}`}
+                                value={renameValue()}
+                                onInput={(e) => {
+                                  setRenameValue(e.currentTarget.value);
+                                  setRenameError('');
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter')
+                                    submitRename(
+                                      row.summary.provider,
+                                      row.connection.label,
+                                      row.summary.auth_type ?? copy().authType,
+                                      e,
+                                    );
+                                  if (e.key === 'Escape') cancelRename(e);
+                                }}
+                                style="width: 120px;"
+                                ref={(el) => requestAnimationFrame(() => el.focus())}
+                              />
+                              <button
+                                class="btn btn--primary btn--sm"
+                                style="font-size: var(--font-size-xs); padding: 4px 10px;"
+                                disabled={renameBusy()}
+                                onClick={(e) =>
+                                  submitRename(
+                                    row.summary.provider,
+                                    row.connection.label,
+                                    row.summary.auth_type ?? copy().authType,
+                                    e,
+                                  )
+                                }
+                              >
+                                Save
+                              </button>
+                              <button
+                                class="btn btn--outline btn--sm"
+                                style="font-size: var(--font-size-xs); padding: 4px 10px;"
+                                onClick={cancelRename}
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                            <Show when={renameError()}>
+                              <div style="color: hsl(var(--destructive)); font-size: var(--font-size-xs); margin-top: 2px;">
+                                {renameError()}
+                              </div>
+                            </Show>
+                          </Show>
+                        </td>
+                        <td>
+                          <StatusBadge active={row.connection.is_active} />
+                        </td>
+                        <td>
+                          <Show when={!usageLoading()} fallback={<UsageShimmer width={96} />}>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                              {(() => {
+                                const u = usageForConnection(row.summary, row.connection);
+                                const spark = u?.sparkline_7d ?? row.summary.sparkline_7d;
+                                return (
+                                  <>
+                                    <Show when={spark?.length}>
+                                      <span style="flex-shrink: 0;">
+                                        <Sparkline data={spark} width={60} height={20} />
+                                      </span>
+                                    </Show>
+                                    <span>
+                                      {formatNumber(
+                                        perConnectionTokens(row.summary, row.connection),
+                                      )}{' '}
+                                      tokens
+                                    </span>
+                                  </>
+                                );
+                              })()}
+                            </div>
+                          </Show>
+                        </td>
+                        <Show when={copy().rowMetricHeading}>
+                          <td>
+                            <Show when={!usageLoading()} fallback={<UsageShimmer />}>
+                              {formatCost(perConnectionCost(row.summary, row.connection)) ??
+                                '$0.00'}
+                            </Show>
+                          </td>
+                        </Show>
+                        {/* Attempt reliability at the row's own grain (provider +
+                        auth_type): a subscription row never shows a rate
+                        blended with the provider's api_key traffic. */}
+                        <td class="rel-col">
+                          <Show when={!usageLoading()} fallback={<UsageShimmer width={48} />}>
+                            {formatNumber(
+                              usageForConnection(row.summary, row.connection)?.attempts_30d ??
+                                row.summary.attempts_30d,
+                            )}
+                          </Show>
+                        </td>
+                        <td class="rel-col">
+                          <Show when={!usageLoading()} fallback={<UsageShimmer width={48} />}>
+                            {(() => {
+                              const u = usageForConnection(row.summary, row.connection);
+                              const rate = attemptSuccessRate({
+                                attempts: u?.attempts_30d ?? row.summary.attempts_30d,
+                                succeeded: u?.succeeded_30d ?? row.summary.succeeded_30d,
+                              });
+                              return rate == null ? '—' : `${(rate * 100).toFixed(1)}%`;
+                            })()}
+                          </Show>
+                        </td>
+                        <td style="color: hsl(var(--muted-foreground)); font-size: var(--font-size-xs);">
+                          <Show when={!usageLoading()} fallback={<UsageShimmer width={48} />}>
+                            {connectionLastUsedAt(row.summary, row.connection)
+                              ? formatTimeAgo(connectionLastUsedAt(row.summary, row.connection)!)
+                              : '-'}
+                          </Show>
+                        </td>
+                        <td style="text-align: right;">
                           <button
                             class="btn btn--outline btn--sm"
-                            style="font-size: var(--font-size-xs); padding: 4px 10px;"
-                            onClick={cancelRename}
+                            style="font-size: var(--font-size-xs); white-space: nowrap;"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              navigate(`/providers/connections/${row.connection.id}`);
+                            }}
                           >
-                            Cancel
+                            View details
                           </button>
-                        </div>
-                        <Show when={renameError()}>
-                          <div style="color: hsl(var(--destructive)); font-size: var(--font-size-xs); margin-top: 2px;">
-                            {renameError()}
-                          </div>
-                        </Show>
-                      </Show>
-                    </td>
-                    <td>
-                      <Show when={!usageLoading()} fallback={<UsageShimmer width={96} />}>
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                          <Show when={row.summary.sparkline_7d?.length}>
-                            <span style="flex-shrink: 0;">
-                              <Sparkline data={row.summary.sparkline_7d} width={60} height={20} />
-                            </span>
-                          </Show>
-                          <span>{formatNumber(perConnectionTokens(row.summary))} tokens</span>
-                        </div>
-                      </Show>
-                    </td>
-                    <Show when={copy().rowMetricHeading}>
-                      <td>
-                        <Show when={!usageLoading()} fallback={<UsageShimmer />}>
-                          {formatCost(perConnectionCost(row.summary)) ?? '$0.00'}
-                        </Show>
-                      </td>
-                    </Show>
-                    <td>
-                      <StatusBadge active={row.connection.is_active} />
-                    </td>
-                    <td style="color: hsl(var(--muted-foreground)); font-size: var(--font-size-xs);">
-                      <Show when={!usageLoading()} fallback={<UsageShimmer width={48} />}>
-                        {connectionLastUsedAt(row.summary)
-                          ? formatTimeAgo(connectionLastUsedAt(row.summary)!)
-                          : '-'}
-                      </Show>
-                    </td>
-                    <td style="text-align: right;">
-                      <button
-                        class="btn btn--outline btn--sm"
-                        style="font-size: var(--font-size-xs); white-space: nowrap;"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          navigate(`/providers/connections/${row.connection.id}`);
-                        }}
-                      >
-                        View details
-                      </button>
-                    </td>
-                  </tr>
-                )}
-              </For>
-            </tbody>
-          </table>
+                        </td>
+                      </tr>
+                    )}
+                  </For>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <Show when={connectionsCollapsible()}>
+            <button
+              type="button"
+              class="connections-panel__toggle"
+              aria-expanded={connectionsExpanded()}
+              aria-controls="connected-connections"
+              onClick={toggleConnections}
+            >
+              <Show
+                when={connectionsExpanded()}
+                fallback={`Show all ${connectedRows().length} connections`}
+              >
+                Show less
+              </Show>
+              <svg
+                class="connections-panel__chevron"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </Show>
         </div>
       </Show>
 
@@ -744,7 +917,7 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
               </tr>
             </thead>
             <tbody>
-              <For each={providerListForKind(props.kind)}>
+              <For each={catalogProviders()}>
                 {(provider) => {
                   const activeCount = () => activeConnectionCount(provider.id);
                   return (
@@ -792,7 +965,7 @@ const ProviderConnectionsPage: Component<ProviderConnectionsPageProps> = (props)
 
       <Show when={viewMode() === 'grid'}>
         <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px;">
-          <For each={providerListForKind(props.kind)}>
+          <For each={catalogProviders()}>
             {(provider) => {
               const activeCount = () => activeConnectionCount(provider.id);
               return (

@@ -31,7 +31,26 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+      - name: Check for releasable changesets
+        id: releasable
+        run: |
+          # Skip the version-PR step only when we can PROVE nothing will be
+          # released. A changeset that targets only ignored packages
+          # (manifest-backend / -frontend / -shared) makes `changeset version` a
+          # no-op; changesets/action would then push an empty branch and fail
+          # with "No commits between main and changeset-release/main", aborting
+          # this job before the publish steps below ever run. Skipping (not
+          # failing) keeps the job green so Detect version bump can still fire.
+          skip=false
+          if npx changeset status --output=release-plan.json 2>/dev/null; then
+            if [ "$(jq '.releases | length' release-plan.json)" = "0" ]; then
+              skip=true
+            fi
+          fi
+          rm -f release-plan.json
+          echo "skip=$skip" >> "$GITHUB_OUTPUT"
       - uses: changesets/action@e0145edc7d9d8679003495b11f87bd8ef63c0cba # v1.5.3
+        if: steps.releasable.outputs.skip != 'true'
         id: changesets
         with:
           createGithubReleases: false
@@ -106,6 +125,26 @@ jobs:
             --notes "${BODY:-No changelog}" \
             --verify-tag
 
+      # Nudge the marketing site to rebuild so its /changelog/ page (generated
+      # from these GitHub releases) picks up this version within ~1 min. Kept in
+      # this job on purpose: the release is created with the default
+      # GITHUB_TOKEN, which does NOT trigger `release: published` workflows, so a
+      # standalone workflow would never fire. No-op if the secret is unset.
+      - name: Trigger website changelog rebuild
+        # Best-effort: the release, tag, and Docker publish already succeeded by
+        # this point, so a transient hook or network error must not fail the job
+        # (a red status after a good release is misleading). The site also
+        # rebuilds on the next release or any push to the website repo.
+        continue-on-error: true
+        env:
+          HOOK: ${{ secrets.WEBSITE_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "WEBSITE_DEPLOY_HOOK not set; skipping website rebuild."
+            exit 0
+          fi
+          curl -fsS -X POST "$HOOK"
+
   publish-docker:
     needs: release
     if: needs.release.outputs.should_publish == 'true'
@@ -114,3 +153,47 @@ jobs:
     permissions:
       contents: read
       id-token: write
+
+  # Publishes the management CLI to npm as mnfst-gateway-cli. Gated on the same
+  # `should_publish` output as the Docker image, so the CLI version always
+  # matches the Manifest release it shipped with — that is why the package stays
+  # in the `.changeset/config.json` ignore list and has no changeset target of
+  # its own.
+  publish-npm:
+    needs: release
+    if: needs.release.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    # Shared with the on-demand Publish CLI workflow: the two must never race
+    # for the same package and version.
+    concurrency:
+      group: npm-publish-mnfst-gateway-cli
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # npm provenance attestation
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Stamp the CLI version from packages/manifest/package.json
+        run: npm run set-version --workspace=packages/cli
+      - name: Check whether this version is already on npm
+        id: published
+        run: bash .github/scripts/check-cli-npm-status.sh
+      - name: Build shared, then the CLI
+        if: steps.published.outputs.skip != 'true'
+        # The CLI's `gen` step reads manifest-shared's build output to regenerate
+        # its provider catalog, so shared must be built first.
+        run: |
+          npm run build --workspace=packages/shared
+          npm run build --workspace=packages/cli
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
+        # access + provenance come from publishConfig in packages/cli/package.json.
+        run: npm publish --workspace=packages/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

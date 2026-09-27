@@ -1,0 +1,51 @@
+name: Phoenix contract drift
+
+# Detects when the vendored Phoenix OpenAPI contract
+# (packages/backend/src/routing/autofix/contract/phoenix-openapi.yaml) has fallen
+# behind the canonical one in mnfst/phoenix@main. On drift the job fails so a
+# maintainer refreshes it and reconciles phoenix.types.ts:
+#   npm run contract:refresh --workspace=packages/backend
+#
+# Requires a `PHOENIX_CONTRACT_TOKEN` repo secret with read access to the (private)
+# mnfst/phoenix repo. Without it the check skips (rather than hard-failing), so the
+# workflow is inert until the secret is configured. Scheduled workflows run from the
+# default branch, so this activates once the branch is merged.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays, 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Vendored spec vs mnfst/phoenix@main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+
+      - name: Refresh the vendored contract from mnfst/phoenix
+        id: refresh
+        env:
+          GH_TOKEN: ${{ secrets.PHOENIX_CONTRACT_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::PHOENIX_CONTRACT_TOKEN not set — skipping the drift check."
+            echo "skipped=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node packages/backend/scripts/refresh-phoenix-contract.mjs
+
+      - name: Fail if the vendored spec drifted
+        if: steps.refresh.outputs.skipped != 'true'
+        run: |
+          if ! git diff --exit-code -- packages/backend/src/routing/autofix/contract/phoenix-openapi.yaml; then
+            echo "::error::Vendored Phoenix contract is stale. Run 'npm run contract:refresh --workspace=packages/backend', review the diff, reconcile phoenix.types.ts, and commit."
+            exit 1
+          fi
+          echo "Vendored Phoenix contract is up to date."

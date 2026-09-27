@@ -18,6 +18,7 @@ import {
   safeParse,
 } from './chatgpt-helpers';
 import { OpenAIMessage } from './proxy-types';
+import { deduplicateCallIds } from './responses-call-ids';
 
 export class ResponsesSseError extends Error {
   constructor(
@@ -52,6 +53,14 @@ export interface ToResponsesRequestOptions {
    * ChatGPT-subscription behavior, which expects SSE collection.
    */
   stream?: boolean;
+  /**
+   * Map the standard Chat Completions `reasoning_effort` param onto the
+   * Responses `reasoning` object, requesting `summary: 'auto'` alongside so
+   * the effort yields visible `reasoning_content` (issue #2531 — GPT-5.6
+   * doesn't reason at all without it). Opt-in per endpoint: only backends
+   * known to accept `reasoning.summary` (OpenAI infrastructure).
+   */
+  mapReasoningEffort?: boolean;
 }
 
 export function toResponsesRequest(
@@ -92,7 +101,7 @@ export function toResponsesRequest(
 
   const request: Record<string, unknown> = {
     model,
-    input,
+    input: deduplicateCallIds(input),
     stream: options.stream ?? body.stream !== false,
     store: false,
     instructions: extractInstructions(messages),
@@ -118,6 +127,8 @@ export function toResponsesRequest(
 
   if (isObjectRecord(body.reasoning)) {
     request.reasoning = body.reasoning;
+  } else if (options.mapReasoningEffort && typeof body.reasoning_effort === 'string') {
+    request.reasoning = { effort: body.reasoning_effort, summary: 'auto' };
   }
 
   if (isObjectRecord(body.text)) {
@@ -131,6 +142,83 @@ export function toResponsesRequest(
   return request;
 }
 
+function textFromReasoningParts(parts: unknown): string {
+  if (!Array.isArray(parts)) return '';
+  return parts
+    .filter(isObjectRecord)
+    .map((part) => (typeof part.text === 'string' ? part.text : ''))
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function reasoningContentFromItem(item: Record<string, unknown>): string {
+  return [textFromReasoningParts(item.summary), textFromReasoningParts(item.content)]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function responseOutputItems(
+  response: Record<string, unknown> | undefined,
+): Record<string, unknown>[] {
+  const output = Array.isArray(response?.output) ? response.output : [];
+  return output.filter(isObjectRecord);
+}
+
+function hasResponseOutput(response: Record<string, unknown> | undefined): boolean {
+  return Array.isArray(response?.output);
+}
+
+function reasoningContentFromOutput(output: Record<string, unknown>[]): string {
+  return output
+    .filter((item) => item.type === 'reasoning')
+    .map(reasoningContentFromItem)
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+/**
+ * Prefix-matched so new model generations that rename the summary delta event
+ * (issue #2531) keep streaming without a per-model allowlist. Raw
+ * chain-of-thought events (`response.reasoning_text*`) never match — Manifest
+ * only exposes summaries.
+ */
+function isReasoningDeltaEvent(eventType: string): boolean {
+  return eventType.startsWith('response.reasoning_summary') && eventType.endsWith('.delta');
+}
+
+function reasoningDeltaText(data: Record<string, unknown>): string {
+  if (typeof data.delta === 'string') return data.delta;
+  // Tolerate payloads that nest the text ({"delta":{"text":"..."}}).
+  if (isObjectRecord(data.delta) && typeof data.delta.text === 'string') return data.delta.text;
+  return '';
+}
+
+/** Tracks whether reasoning summary text was already streamed to the client. */
+interface ReasoningStreamState {
+  streamed: boolean;
+  /** True once the stream has emitted any function_call output item / delta. */
+  sawToolCall: boolean;
+}
+
+/**
+ * The terminal `response.completed` / `response.incomplete` events always
+ * carry the full reasoning output, whatever the upstream named its delta
+ * events. When nothing was streamed incrementally, backfill the summary as a
+ * single `reasoning_content` frame ahead of the finish chunk so unrecognized
+ * delta shapes degrade to a lump-sum summary instead of losing it.
+ */
+function reasoningBackfillFrame(
+  response: Record<string, unknown> | undefined,
+  state: ReasoningStreamState | undefined,
+  model: string,
+): string {
+  if (!state || state.streamed) return '';
+  const reasoning = reasoningContentFromOutput(responseOutputItems(response));
+  if (!reasoning) return '';
+  state.streamed = true;
+  return formatSSE({ delta: { reasoning_content: reasoning }, finish_reason: null }, model);
+}
+
 /* ── Non-streaming response conversion ── */
 
 export function fromResponsesResponse(
@@ -139,10 +227,17 @@ export function fromResponsesResponse(
 ): Record<string, unknown> {
   const output = (data.output ?? []) as Record<string, unknown>[];
   let text = '';
+  const reasoningParts: string[] = [];
   const toolCalls: { id: string; type: string; function: { name: string; arguments: string } }[] =
     [];
 
   for (const item of output) {
+    if (item.type === 'reasoning') {
+      const reasoning = reasoningContentFromItem(item);
+      if (reasoning) reasoningParts.push(reasoning);
+      continue;
+    }
+
     if (item.type === 'message') {
       const content = item.content as { type?: string; text?: string }[] | undefined;
       if (!content) continue;
@@ -171,6 +266,8 @@ export function fromResponsesResponse(
     role: 'assistant',
     content: text || null,
   };
+  const reasoningContent = reasoningParts.join('\n\n');
+  if (reasoningContent) message.reasoning_content = reasoningContent;
 
   if (toolCalls.length > 0) {
     message.tool_calls = toolCalls;
@@ -193,7 +290,8 @@ export function fromResponsesResponse(
       completion_tokens: (usage.output_tokens as number) ?? 0,
       total_tokens: (usage.total_tokens as number) ?? 0,
       cache_read_tokens: inputDetails?.cached_tokens ?? 0,
-      cache_creation_tokens: 0,
+      cache_creation_tokens:
+        inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_input_tokens ?? 0,
     },
   };
 }
@@ -201,10 +299,24 @@ export function fromResponsesResponse(
 /* ── Streaming SSE conversion ── */
 
 /**
+ * Create a stateful per-stream transformer (must be created once per stream
+ * and fed events in order) so the terminal event can backfill reasoning
+ * summaries that never streamed as recognizable deltas.
+ */
+export function createChatGptStreamTransformer(model: string): (chunk: string) => string | null {
+  const state: ReasoningStreamState = { streamed: false, sawToolCall: false };
+  return (chunk) => transformResponsesStreamChunk(chunk, model, state);
+}
+
+/**
  * Transform a single Responses API SSE chunk into an OpenAI
  * Chat Completions SSE chunk. Returns null for irrelevant events.
  */
-export function transformResponsesStreamChunk(chunk: string, model: string): string | null {
+export function transformResponsesStreamChunk(
+  chunk: string,
+  model: string,
+  state?: ReasoningStreamState,
+): string | null {
   const lines = chunk.split('\n');
   let eventType = '';
   let dataStr = '';
@@ -226,6 +338,14 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
     if (!data) return null;
     const delta = typeof data.delta === 'string' ? data.delta : '';
     return formatSSE({ delta: { content: delta }, finish_reason: null }, model);
+  }
+
+  if (isReasoningDeltaEvent(eventType)) {
+    const data = safeParse(dataStr);
+    if (!data) return null;
+    const text = reasoningDeltaText(data);
+    if (text && state) state.streamed = true;
+    return formatSSE({ delta: { reasoning_content: text }, finish_reason: null }, model);
   }
 
   if (eventType === 'response.function_call_arguments.delta') {
@@ -253,6 +373,7 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
     if (!data) return null;
     const item = isObjectRecord(data.item) ? data.item : undefined;
     if (item?.type !== 'function_call') return null;
+    if (state) state.sawToolCall = true;
     return formatSSE(
       {
         delta: {
@@ -272,11 +393,11 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
   }
 
   if (eventType === 'response.completed') {
-    return handleCompletedEvent(dataStr, model);
+    return handleCompletedEvent(dataStr, model, state);
   }
 
   if (eventType === 'response.incomplete') {
-    return handleIncompleteEvent(dataStr, model);
+    return handleIncompleteEvent(dataStr, model, state);
   }
 
   if (eventType === 'error' || eventType === 'response.failed') {
@@ -286,19 +407,22 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
   return null;
 }
 
-function handleCompletedEvent(dataStr: string, model: string): string {
+function handleCompletedEvent(
+  dataStr: string,
+  model: string,
+  state?: ReasoningStreamState,
+): string {
   const data = safeParse(dataStr);
   const response = isObjectRecord(data?.response) ? data.response : undefined;
-  const responseOutput = Array.isArray(response?.output)
-    ? (response.output as Array<{ type?: string }>)
-    : [];
+  const responseOutput = responseOutputItems(response);
   const hasFunctionCalls = responseOutput.some((item) => item.type === 'function_call');
+  const sawToolCall = state?.sawToolCall ?? false;
   const finish = formatSSE(
-    { delta: {}, finish_reason: hasFunctionCalls ? 'tool_calls' : 'stop' },
+    { delta: {}, finish_reason: hasFunctionCalls || sawToolCall ? 'tool_calls' : 'stop' },
     model,
     extractResponseUsage(response),
   );
-  return `${finish}\ndata: [DONE]\n\n`;
+  return `${reasoningBackfillFrame(response, state, model)}${finish}\ndata: [DONE]\n\n`;
 }
 
 /**
@@ -308,7 +432,11 @@ function handleCompletedEvent(dataStr: string, model: string): string {
  * stream ends with no finish chunk and clients report an interrupted stream
  * (issue #2212's symptom).
  */
-function handleIncompleteEvent(dataStr: string, model: string): string {
+function handleIncompleteEvent(
+  dataStr: string,
+  model: string,
+  state?: ReasoningStreamState,
+): string {
   const data = safeParse(dataStr);
   const response = isObjectRecord(data?.response) ? data.response : undefined;
   const finish = formatSSE(
@@ -316,7 +444,7 @@ function handleIncompleteEvent(dataStr: string, model: string): string {
     model,
     extractResponseUsage(response),
   );
-  return `${finish}\ndata: [DONE]\n\n`;
+  return `${reasoningBackfillFrame(response, state, model)}${finish}\ndata: [DONE]\n\n`;
 }
 
 function incompleteFinishReason(response: Record<string, unknown> | undefined): string {
@@ -337,7 +465,8 @@ function extractResponseUsage(
     completion_tokens: (responseUsage.output_tokens as number) ?? 0,
     total_tokens: (responseUsage.total_tokens as number) ?? 0,
     cache_read_tokens: inputDetails?.cached_tokens ?? 0,
-    cache_creation_tokens: 0,
+    cache_creation_tokens:
+      inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_input_tokens ?? 0,
   };
 }
 
@@ -383,6 +512,7 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
   let usage: Record<string, unknown> | undefined;
   let hasFunctionCalls = false;
   let finishReasonOverride: string | undefined;
+  let reasoningContent = '';
 
   const events = sseText.split('\n\n');
   for (const event of events) {
@@ -402,6 +532,8 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
       throw buildResponsesSseError(data);
     } else if (eventType === 'response.output_text.delta') {
       text += typeof data.delta === 'string' ? data.delta : '';
+    } else if (isReasoningDeltaEvent(eventType)) {
+      reasoningContent += reasoningDeltaText(data);
     } else if (eventType === 'response.output_item.added') {
       const item = isObjectRecord(data.item) ? data.item : undefined;
       if (item?.type === 'function_call') {
@@ -421,19 +553,24 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
     } else if (eventType === 'response.completed') {
       const response = isObjectRecord(data.response) ? data.response : undefined;
       usage = extractResponseUsage(response) ?? usage;
-      const output = Array.isArray(response?.output)
-        ? (response.output as Array<{ type?: string }>)
-        : [];
+      const output = responseOutputItems(response);
       hasFunctionCalls = output.some((item) => item.type === 'function_call');
+      if (hasResponseOutput(response)) {
+        reasoningContent = reasoningContentFromOutput(output);
+      }
     } else if (eventType === 'response.incomplete') {
       const response = isObjectRecord(data.response) ? data.response : undefined;
       usage = extractResponseUsage(response) ?? usage;
       finishReasonOverride = incompleteFinishReason(response);
+      if (hasResponseOutput(response)) {
+        reasoningContent = reasoningContentFromOutput(responseOutputItems(response));
+      }
     }
   }
 
   const toolCalls = [...toolCallMap.values()];
   const message: Record<string, unknown> = { role: 'assistant', content: text || null };
+  if (reasoningContent) message.reasoning_content = reasoningContent;
   if (toolCalls.length > 0) message.tool_calls = toolCalls;
 
   return {
@@ -454,7 +591,7 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
   };
 }
 
-function buildResponsesSseError(data: Record<string, unknown>): ResponsesSseError {
+export function buildResponsesSseError(data: Record<string, unknown>): ResponsesSseError {
   const response = isObjectRecord(data.response) ? data.response : undefined;
   const error = isObjectRecord(data.error)
     ? data.error
@@ -479,12 +616,13 @@ function buildResponsesSseError(data: Record<string, unknown>): ResponsesSseErro
 }
 
 function statusFromResponsesError(code: string | undefined, type: string | undefined): number {
-  const value = (code ?? type ?? '').toLowerCase();
+  const value = `${code ?? ''} ${type ?? ''}`.toLowerCase();
   if (value.includes('model_not_found') || value.includes('not_found')) return 404;
   if (value.includes('rate_limit')) return 429;
-  if (value.includes('invalid') || value.includes('bad_request')) return 400;
   if (value.includes('unauthorized') || value.includes('authentication')) return 401;
   if (value.includes('forbidden') || value.includes('permission')) return 403;
   if (value.includes('server')) return 500;
+  if (value.includes('context_length_exceeded')) return 400;
+  if (value.includes('invalid') || value.includes('bad_request')) return 400;
   return 502;
 }

@@ -121,7 +121,7 @@ const DuplicateAgentModal: Component<Props> = (props) => {
           </h2>
           <p class="modal-card__desc">
             Creates a new harness with the same providers, routing, and tier configuration. A fresh
-            API key is generated. Telemetry and message history stay with the original.
+            API key is generated. Telemetry and request history stay with the original.
           </p>
 
           <label class="modal-card__field-label" for="duplicate-agent-name">
@@ -175,7 +175,7 @@ const DuplicateAgentModal: Component<Props> = (props) => {
           <div class="duplicate-agent__section">
             <div class="duplicate-agent__section-header">What is not copied</div>
             <ul class="duplicate-agent__list">
-              <li>Messages</li>
+              <li>Requests</li>
               <li>Logs</li>
               <li>Notification rules</li>
             </ul>

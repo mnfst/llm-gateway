@@ -1,1 +1,4 @@
 npx lint-staged
+if git diff --cached --name-only --diff-filter=ACMRD | grep -Eq '^(packages/frontend/src/.*\.(css|tsx?)|design-system/(generate-registry\.mjs|lib/.*\.mjs|migration-map\.json))$'; then
+  node design-system/generate-registry.mjs --check
+fi

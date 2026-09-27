@@ -32,10 +32,31 @@ const COPILOT_REASONING_STREAM_FORMAT: OpenAiReasoningStreamFormat = Object.free
  * strict OpenAI-compatible hosts that happen to serve a reasoning-derived
  * community slug and would reject the unknown message field.
  */
-const REASONING_CONTENT_AWARE_ENDPOINTS = new Set(['openrouter', 'opencode-go', 'custom']);
+const REASONING_CONTENT_AWARE_ENDPOINTS = new Set([
+  'openrouter',
+  'opencode-go',
+  'opencode-zen',
+  'custom',
+]);
 
-const OPENCODE_GO_REASONING_MODEL_FAMILY_RE =
-  /^(?:deepseek|kimi|glm|qwen|minimax|mimo)(?:[-_.\d]|$)/i;
+const REASONING_MODEL_FAMILY_RE = /^(?:deepseek|kimi|glm|qwen|minimax|mimo)(?:[-_.\d]|$)/i;
+
+/**
+ * Families a gateway serves by translating to the vendor's own protocol. The
+ * upstream owns the reasoning trace (Anthropic thinking blocks, OpenAI/Gemini
+ * reasoning items) and rejects `reasoning_content` as an unknown message field,
+ * so they are excluded before any capability check — models.dev marks them
+ * `reasoning: true` (they do think), which says nothing about the wire dialect.
+ */
+const TRANSLATED_DIALECT_FAMILY_RE = /^(?:claude|gpt|o\d|gemini|grok)(?:[-_.\d]|$)/i;
+
+/**
+ * Reasoning capability as the model catalog knows it. `undefined` means the
+ * catalog has no entry, which hands the decision back to the family fallback.
+ */
+export interface ReasoningModelCatalog {
+  isReasoningModel(endpointKey: string, model: string): boolean | undefined;
+}
 
 const UNSAFE_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -43,14 +64,23 @@ const UNSAFE_PATH_SEGMENTS = new Set(['__proto__', 'constructor', 'prototype']);
  * Some reasoning APIs reject follow-up turns that don't echo back the previous
  * assistant's `reasoning_content`. Preserve it for:
  *  - the native `deepseek` and `moonshot` endpoints (always)
- *  - OpenCode Go's known reasoning model families
- *  - aggregator/proxy endpoints whose `deepseek-*` slugs forward to a DeepSeek
- *    engine, or whose `moonshotai/*` slugs forward to Kimi
- *    (OpenRouter `deepseek/*` / `moonshotai/*` and DeepSeek custom providers).
+ *  - aggregator/gateway endpoints (OpenRouter, OpenCode Go, OpenCode Zen and
+ *    custom OpenAI-compatible providers) serving a reasoning model over the
+ *    DeepSeek dialect.
  * Strict OpenAI-compatible endpoints (Mistral, native OpenAI, etc.) keep
  * stripping the field even if a community fine-tune slug contains "deepseek".
+ *
+ * On a gateway the slug alone can't answer this — Zen serves `big-pickle`
+ * (DeepSeek dialect) and `claude-opus-5` (translated) off the same endpoint —
+ * so the decision is: never for a translated family, then the catalog's
+ * reasoning capability, then the known reasoning families for slugs the
+ * catalog has never seen.
  */
-export function supportsReasoningContent(endpointKey: string, model: string): boolean {
+export function supportsReasoningContent(
+  endpointKey: string,
+  model: string,
+  catalog?: ReasoningModelCatalog,
+): boolean {
   const normalizedEndpoint = endpointKey.toLowerCase();
   const key = normalizedEndpoint.startsWith('custom:') ? 'custom' : normalizedEndpoint;
   if (key === 'deepseek') return true;
@@ -65,23 +95,31 @@ export function supportsReasoningContent(endpointKey: string, model: string): bo
   // practice the custom path passes the already-bare model -- both shapes
   // are handled.)
   const bare = model.toLowerCase().split('/').pop() ?? '';
-  if (key === 'opencode-go') {
-    return OPENCODE_GO_REASONING_MODEL_FAMILY_RE.test(bare);
-  }
+  if (TRANSLATED_DIALECT_FAMILY_RE.test(bare)) return false;
+  const catalogued = catalog?.isReasoningModel(endpointKey, model);
+  if (catalogued !== undefined) return catalogued;
+  // Kimi speaks the dialect, so an uncatalogued OpenRouter `moonshotai/*` slug
+  // is preserved. The catalog outranks this: it is a fallback, not an override.
   if (key === 'openrouter' && model.toLowerCase().startsWith('moonshotai/')) {
     return true;
   }
-  return bare.includes('deepseek');
+  // OpenRouter exposes community fine-tunes under vendor prefixes, so an
+  // uncatalogued slug only counts when the DeepSeek engine is named outright.
+  if (key === 'openrouter') return bare.includes('deepseek');
+  return REASONING_MODEL_FAMILY_RE.test(bare);
 }
 
 export function getOpenAiReasoningStreamFormat(
   endpointKey: string,
   model: string,
+  catalog?: ReasoningModelCatalog,
 ): OpenAiReasoningStreamFormat | null {
   const normalizedEndpoint = endpointKey.toLowerCase();
   const key = normalizedEndpoint.startsWith('custom:') ? 'custom' : normalizedEndpoint;
   if (key === 'copilot') return COPILOT_REASONING_STREAM_FORMAT;
-  if (supportsReasoningContent(endpointKey, model)) return STANDARD_OPENAI_REASONING_STREAM_FORMAT;
+  if (supportsReasoningContent(endpointKey, model, catalog)) {
+    return STANDARD_OPENAI_REASONING_STREAM_FORMAT;
+  }
   return null;
 }
 

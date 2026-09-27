@@ -41,9 +41,60 @@ export interface TelemetryPayloadV1 {
    */
   cost_usd_by_provider?: Record<string, number>;
 
+  /**
+   * Caller requests over the 24h window (request-first model: one row per
+   * caller call; provider retries/fallbacks are attempts under it and are
+   * NOT counted here). Optional because older installs predate the field.
+   */
+  requests_total?: number;
+
+  /**
+   * Requests that ended `failed` over the same window. Together with
+   * `errors_by_class` this gives the receiver error visibility for installs
+   * whose failures never reach the Phoenix heal path.
+   */
+  errors_total?: number;
+
+  /**
+   * Per-`error_class` split of `errors_total`, using the shared taxonomy
+   * (`rate_limit`, `auth`, `invalid_request`, ...). Unknown values collapse
+   * to `"other"` and unclassified NULLs to `"unknown"` — same
+   * defense-in-depth as the tier map.
+   */
+  errors_by_class?: Record<string, number>;
+
   // Configuration
   agents_total: number;
   agents_by_platform: Record<string, number>;
+
+  // Management surfaces (CLI + remote MCP). All derived from existing tables at
+  // send time; nothing is counted per call. Optional because older installs
+  // predate the fields.
+
+  /** PATs minted by `mnfst login` (rows of `api_keys` named `cli`). */
+  cli_keys_total?: number;
+  /** Of those, keys that authenticated at least once in the last 7 days. */
+  cli_keys_active_7d?: number;
+
+  /** OAuth clients registered against the remote MCP server (not disabled). */
+  mcp_clients_total?: number;
+  /** Consent grants users gave to those clients. */
+  mcp_consents_total?: number;
+  /**
+   * Access tokens minted in the 24h window. Tokens live 15 minutes, so an
+   * actively used MCP session mints ~4/hour — this is the activity proxy
+   * that stands in for a per-tool-call counter.
+   */
+  mcp_tokens_issued_24h?: number;
+  /** Distinct clients that minted at least one access token in the window. */
+  mcp_clients_active_24h?: number;
+  /**
+   * Registered clients keyed by their declared name, whitelisted to known MCP
+   * hosts (`claude-code`, `cursor`, …). Anything else collapses to `"other"`
+   * and a missing name to `"unknown"`, so a free-form client name never
+   * leaves the install.
+   */
+  mcp_clients_by_name?: Record<string, number>;
 
   // Runtime
   platform: string;

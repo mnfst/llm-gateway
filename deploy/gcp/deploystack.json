@@ -1,0 +1,50 @@
+{
+  "title": "Manifest",
+  "description": "Deploy Manifest on Google Cloud Run with Cloud SQL and durable Cloud Storage request recordings.",
+  "logo": "https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg",
+  "duration": 15,
+  "documentationLink": "https://manifest.build/llm-gateway/docs/introduction/",
+  "variables": [
+    {
+      "name": "project_id",
+      "prompt": "Google Cloud project ID",
+      "type": "project"
+    },
+    {
+      "name": "region",
+      "prompt": "Region",
+      "type": "string",
+      "default": "us-central1"
+    },
+    {
+      "name": "service_name",
+      "prompt": "Cloud Run service name",
+      "type": "string",
+      "default": "manifest"
+    },
+    {
+      "name": "image_url",
+      "prompt": "Manifest image",
+      "type": "string",
+      "default": "docker.io/manifestdotbuild/manifest:6"
+    },
+    {
+      "name": "database_tier",
+      "prompt": "Cloud SQL machine tier",
+      "type": "string",
+      "default": "db-f1-micro"
+    },
+    {
+      "name": "max_instances",
+      "prompt": "Maximum Cloud Run instances",
+      "type": "number",
+      "default": 1
+    },
+    {
+      "name": "database_deletion_protection",
+      "prompt": "Enable Cloud SQL deletion protection",
+      "type": "boolean",
+      "default": true
+    }
+  ]
+}

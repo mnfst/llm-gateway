@@ -6,8 +6,9 @@ import request from 'supertest';
 import {
   HOSTED_WINGMAN_ORIGIN,
   applyPrivateNetworkAllow,
+  buildCorsOptions,
   buildDevAllowedOrigins,
-  createCorsOriginHandler,
+  buildProdAllowedOrigins,
 } from '../src/cors-csp-config';
 
 @Controller()
@@ -27,9 +28,8 @@ class CorsTestController {
 class CorsTestModule {}
 
 // Boots a minimal NestJS app and calls `enableCors()` with the exact same
-// inputs main.ts uses in dev. CORS is only enabled when NODE_ENV !==
-// 'production' — production never reaches `enableCors`, so there's
-// nothing to test there.
+// inputs main.ts uses in dev: the dev allow-list, the PNA middleware, and the
+// shared CORS options (header reflection + preflight maxAge).
 async function buildDevApp(): Promise<INestApplication> {
   const moduleRef = await Test.createTestingModule({
     imports: [CorsTestModule],
@@ -43,11 +43,26 @@ async function buildDevApp(): Promise<INestApplication> {
     applyPrivateNetworkAllow(req, allowedOrigins, (name, value) => res.setHeader(name, value));
     next();
   });
-  app.enableCors({
-    origin: createCorsOriginHandler(allowedOrigins),
-    credentials: false,
-    allowedHeaders: ['Authorization', 'Content-Type', 'X-API-Key'],
+  app.enableCors(buildCorsOptions(allowedOrigins));
+  await app.init();
+  return app;
+}
+
+// Boots a minimal NestJS app with the exact CORS config main.ts uses in
+// production: the hosted Wingman origin (plus WINGMAN_CORS_ORIGINS opt-ins), the
+// PNA middleware (so a browser-hosted Wingman can reach a self-hosted gateway on
+// a LAN address), and the shared CORS options.
+async function buildProdApp(extraOrigins?: string): Promise<INestApplication> {
+  const moduleRef = await Test.createTestingModule({
+    imports: [CorsTestModule],
+  }).compile();
+  const app = moduleRef.createNestApplication();
+  const allowedOrigins = buildProdAllowedOrigins({ extraOrigins });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    applyPrivateNetworkAllow(req, allowedOrigins, (name, value) => res.setHeader(name, value));
+    next();
   });
+  app.enableCors(buildCorsOptions(allowedOrigins));
   await app.init();
   return app;
 }
@@ -122,5 +137,103 @@ describe('CORS — development', () => {
       .set('Origin', HOSTED_WINGMAN_ORIGIN)
       .set('Access-Control-Request-Method', 'GET');
     expect(res.headers['access-control-allow-private-network']).toBeUndefined();
+  });
+
+  it('caches the preflight (maxAge) so a reload does not re-run it every few seconds', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/v1/chat/completions')
+      .set('Origin', HOSTED_WINGMAN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST');
+    expect(res.headers['access-control-max-age']).toBe('7200');
+  });
+});
+
+describe('CORS — production', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    app = await buildProdApp();
+  });
+
+  afterAll(async () => {
+    await app.close();
+  });
+
+  it('allows preflight from the hosted Wingman origin', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/v1/chat/completions')
+      .set('Origin', HOSTED_WINGMAN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST');
+    expect(res.headers['access-control-allow-origin']).toBe(HOSTED_WINGMAN_ORIGIN);
+  });
+
+  it('reflects the SDK fingerprint headers on the preflight (X-Stainless-*)', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/v1/chat/completions')
+      .set('Origin', HOSTED_WINGMAN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST')
+      .set(
+        'Access-Control-Request-Headers',
+        'authorization,content-type,x-stainless-lang,x-stainless-runtime',
+      );
+    const allowHeaders = (res.headers['access-control-allow-headers'] ?? '').toLowerCase();
+    expect(allowHeaders).toContain('authorization');
+    expect(allowHeaders).toContain('content-type');
+    expect(allowHeaders).toContain('x-stainless-lang');
+    expect(allowHeaders).toContain('x-stainless-runtime');
+  });
+
+  it('echoes Allow-Origin on the actual POST, not just the preflight', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/v1/chat/completions')
+      .set('Origin', HOSTED_WINGMAN_ORIGIN)
+      .send({ model: 'auto' });
+    expect(res.headers['access-control-allow-origin']).toBe(HOSTED_WINGMAN_ORIGIN);
+  });
+
+  it('does not echo Access-Control-Allow-Credentials (no cookies cross-origin)', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/v1/chat/completions')
+      .set('Origin', HOSTED_WINGMAN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST');
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+  });
+
+  it('rejects unknown origins (no Allow-Origin header echoed)', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/v1/chat/completions')
+      .set('Origin', 'https://evil.example.com')
+      .set('Access-Control-Request-Method', 'POST');
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('answers the Private Network Access preflight for an allow-listed origin (self-hosted LAN gateways)', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/v1/chat/completions')
+      .set('Origin', HOSTED_WINGMAN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Private-Network', 'true');
+    expect(res.headers['access-control-allow-private-network']).toBe('true');
+  });
+
+  it('caches the preflight (maxAge) to avoid a preflight per Wingman request', async () => {
+    const res = await request(app.getHttpServer())
+      .options('/v1/chat/completions')
+      .set('Origin', HOSTED_WINGMAN_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST');
+    expect(res.headers['access-control-max-age']).toBe('7200');
+  });
+
+  it('allows an operator-configured extra origin via WINGMAN_CORS_ORIGINS', async () => {
+    const scoped = await buildProdApp('https://wingman.acme.dev');
+    try {
+      const res = await request(scoped.getHttpServer())
+        .options('/v1/chat/completions')
+        .set('Origin', 'https://wingman.acme.dev')
+        .set('Access-Control-Request-Method', 'POST');
+      expect(res.headers['access-control-allow-origin']).toBe('https://wingman.acme.dev');
+    } finally {
+      await scoped.close();
+    }
   });
 });

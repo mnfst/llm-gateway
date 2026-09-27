@@ -154,9 +154,9 @@ const AgentProviders: Component = () => {
             <colgroup>
               <col style="width: 220px;" />
               <col style="width: 120px;" />
-              <col style="width: 140px;" />
-              <col style="width: 80px;" />
               <col />
+              <col style="width: 56px;" />
+              <col style="width: 64px;" />
             </colgroup>
             <thead>
               <tr>
@@ -209,7 +209,19 @@ const AgentProviders: Component = () => {
                           {AUTH_BADGES[connection.authType] ?? connection.authType}
                         </span>
                       </td>
-                      <td style="color: hsl(var(--muted-foreground));">{connection.label}</td>
+                      <td>
+                        <span
+                          title={connection.label}
+                          style={{
+                            display: 'block',
+                            overflow: 'hidden',
+                            'text-overflow': 'ellipsis',
+                            color: 'hsl(var(--muted-foreground))',
+                          }}
+                        >
+                          {connection.label}
+                        </span>
+                      </td>
                       <td>{connection.models || '-'}</td>
                       <td style="text-align: right;">
                         <button

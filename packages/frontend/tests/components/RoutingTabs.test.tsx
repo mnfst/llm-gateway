@@ -35,6 +35,60 @@ describe('RoutingTabs', () => {
     expect(screen.getByRole('tablist', { name: 'Routing layers' })).toBeDefined();
   });
 
+  it('hides the Task-specific tab when showSpecificity returns false', () => {
+    render(() => (
+      <RoutingTabs
+        specificityEnabled={() => false}
+        customEnabled={() => false}
+        showSpecificity={() => false}
+      >
+        {{
+          default: <div data-testid="default-content">Default content</div>,
+          specificity: <div data-testid="specificity-content">Specificity content</div>,
+          custom: <div data-testid="custom-content">Custom content</div>,
+        }}
+      </RoutingTabs>
+    ));
+    expect(screen.queryByRole('tab', { name: /Task-specific/ })).toBeNull();
+    expect(screen.getByRole('tab', { name: /Default/ })).toBeDefined();
+    expect(screen.getByRole('tab', { name: /Custom/ })).toBeDefined();
+  });
+
+  it('renders only two dots (Default + Custom) when Task-specific is hidden', () => {
+    const { container } = render(() => (
+      <RoutingTabs
+        specificityEnabled={() => false}
+        customEnabled={() => true}
+        showSpecificity={() => false}
+      >
+        {{
+          default: <div>Default</div>,
+          specificity: <div>Specificity</div>,
+          custom: <div>Custom</div>,
+        }}
+      </RoutingTabs>
+    ));
+    const dots = container.querySelectorAll('.routing-tabs__dot');
+    expect(dots.length).toBe(2);
+  });
+
+  it('keeps the Task-specific tab when showSpecificity returns true', () => {
+    render(() => (
+      <RoutingTabs
+        specificityEnabled={() => false}
+        customEnabled={() => false}
+        showSpecificity={() => true}
+      >
+        {{
+          default: <div>Default</div>,
+          specificity: <div>Specificity</div>,
+          custom: <div>Custom</div>,
+        }}
+      </RoutingTabs>
+    ));
+    expect(screen.getByRole('tab', { name: /Task-specific/ })).toBeDefined();
+  });
+
   it('shows default content by default', () => {
     renderTabs();
     expect(screen.getByTestId('default-content')).toBeDefined();

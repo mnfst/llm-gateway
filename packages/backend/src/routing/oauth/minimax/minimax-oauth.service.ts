@@ -4,8 +4,12 @@ import { createHash, randomBytes, randomUUID } from 'crypto';
 import { ProviderService } from '../../routing-core/provider.service';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import { scrubSecrets } from '../../../common/utils/secret-scrub';
-import { coordinateOAuthRefresh, oauthRefreshKey } from '../core';
-import { OAuthTokenBlob } from '../core';
+import {
+  coordinateOAuthRefresh,
+  oauthRefreshKey,
+  subscriptionCredentialLock,
+  type OAuthTokenBlob,
+} from '../core';
 import {
   MinimaxRegion,
   DEFAULT_REGION,
@@ -300,22 +304,15 @@ export class MinimaxOauthService {
         key: oauthRefreshKey('minimax', tenantId, keyLabel),
         logger: this.logger,
         callerBlob: blob,
-        readFreshRaw: () =>
-          this.providerService.getFreshSubscriptionCredential(tenantId, 'minimax', keyLabel),
         parse: parseMinimaxBlob,
         refresh: (current) => this.refreshAccessToken(current.r, current.u),
-        persist: (refreshed) =>
-          this.providerService
-            .upsertProvider(
-              agentId,
-              tenantId,
-              'minimax',
-              JSON.stringify(refreshed),
-              'subscription',
-              undefined,
-              keyLabel,
-            )
-            .then(() => undefined),
+        withLock: subscriptionCredentialLock(
+          (t, p, l, fn) => this.providerService.withSubscriptionCredentialLock(t, p, l, fn),
+          tenantId,
+          'minimax',
+          keyLabel,
+          (refreshed) => JSON.stringify(refreshed),
+        ),
       });
     } catch (err) {
       this.logger.error(`Failed to refresh MiniMax token: ${err}`);

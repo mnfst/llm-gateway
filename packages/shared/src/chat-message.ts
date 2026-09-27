@@ -16,11 +16,16 @@ export interface ChatMessage {
 
 export interface ChatTool {
   type?: string;
-  function?: { name?: string; description?: string };
+  function?: { name?: string; description?: string; parameters?: unknown };
+}
+
+export interface RecordedResponseBody {
+  type?: 'json' | 'stream';
+  body?: unknown;
+  raw_sse?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
-type RecordingResponseBody = { type?: string; body?: unknown };
 
 function isRecord(value: unknown): value is JsonRecord {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -28,6 +33,7 @@ function isRecord(value: unknown): value is JsonRecord {
 
 export function normalizeRole(role: unknown): Role {
   if (role === 'system' || role === 'user' || role === 'assistant' || role === 'tool') return role;
+  if (role === 'model') return 'assistant';
   return 'unknown';
 }
 
@@ -37,83 +43,84 @@ export function coerceContentToText(content: unknown): string {
   if (Array.isArray(content)) {
     return content
       .map((part) => {
-        if (part && typeof part === 'object') {
-          const p = part as { text?: unknown; type?: unknown };
-          if (typeof p.text === 'string') return p.text;
-          if (p.type === 'image_url' || p.type === 'input_image') return '[image]';
+        if (!isRecord(part)) return typeof part === 'string' ? part : '';
+        if (typeof part.text === 'string') return part.text;
+        if (part.type === 'image_url' || part.type === 'input_image' || part.type === 'image') {
+          return '[image]';
+        }
+        if (part.type === 'tool_result' && part.content != null) {
+          return coerceContentToText(part.content);
+        }
+        if (isRecord(part.functionResponse)) {
+          return prettyCompact(part.functionResponse.response);
         }
         return '';
       })
+      .filter(Boolean)
       .join('\n')
       .trim();
   }
+  return prettyCompact(content);
+}
+
+function prettyCompact(value: unknown): string {
   try {
-    return JSON.stringify(content);
+    return JSON.stringify(value);
   } catch {
-    return String(content);
+    return String(value);
   }
 }
 
-function responsesContentToChatContent(content: unknown, role: string): unknown {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return content;
-
-  const converted = content.filter(isRecord).map((part) => {
-    if (typeof part.text === 'string') {
-      return { type: 'text', text: part.text };
-    }
-    if (part.type === 'input_image' && typeof part.image_url === 'string') {
-      return { type: 'image_url', image_url: { url: part.image_url } };
-    }
-    return part;
-  });
-
-  if (converted.length === 1 && converted[0]?.type === 'text' && role !== 'assistant') {
-    return converted[0].text;
-  }
-  return converted;
+function systemMessages(value: unknown): ChatMessage[] {
+  const content = coerceContentToText(value);
+  return content ? [{ role: 'system', content }] : [];
 }
 
-function responsesInputItemToMessages(item: JsonRecord): ChatMessage[] {
-  if (item.type === 'function_call') {
-    return [
-      {
-        role: 'assistant',
-        content: null,
-        tool_calls: [
-          {
-            id: typeof item.call_id === 'string' ? item.call_id : undefined,
-            type: 'function',
-            function: {
-              name: typeof item.name === 'string' ? item.name : 'unknown',
-              arguments: typeof item.arguments === 'string' ? item.arguments : '{}',
-            },
-          },
-        ],
-      },
-    ];
-  }
+function anthropicMessage(message: JsonRecord): ChatMessage[] {
+  const role = typeof message.role === 'string' ? message.role : 'unknown';
+  // Callers only route array-form Anthropic content here.
+  const content = message.content as unknown[];
+  const toolCalls: ToolCall[] = [];
+  const normalContent: unknown[] = [];
+  const toolResults: ChatMessage[] = [];
 
-  if (item.type === 'function_call_output') {
-    return [
-      {
+  for (const block of content) {
+    if (!isRecord(block)) {
+      normalContent.push(block);
+      continue;
+    }
+    if (block.type === 'tool_use') {
+      toolCalls.push({
+        id: typeof block.id === 'string' ? block.id : undefined,
+        type: 'function',
+        function: {
+          name: typeof block.name === 'string' ? block.name : undefined,
+          arguments: block.input,
+        },
+      });
+    } else if (block.type === 'tool_result') {
+      toolResults.push({
         role: 'tool',
-        tool_call_id: typeof item.call_id === 'string' ? item.call_id : undefined,
-        content:
-          item.output == null
-            ? ''
-            : typeof item.output === 'string'
-              ? item.output
-              : JSON.stringify(item.output),
-      },
-    ];
+        tool_call_id: typeof block.tool_use_id === 'string' ? block.tool_use_id : undefined,
+        content: block.content,
+      });
+    } else {
+      normalContent.push(block);
+    }
   }
 
-  const role = typeof item.role === 'string' ? item.role : 'user';
-  return [{ role, content: responsesContentToChatContent(item.content, role) }];
+  const result: ChatMessage[] = [];
+  if (normalContent.length > 0 || toolCalls.length > 0) {
+    result.push({
+      role,
+      content: normalContent.length > 0 ? normalContent : null,
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    });
+  }
+  return [...result, ...toolResults];
 }
 
-function responsesOutputItemToMessages(item: JsonRecord): ChatMessage[] {
+function responsesItem(item: JsonRecord, defaultRole: string): ChatMessage[] {
   if (item.type === 'function_call') {
     return [
       {
@@ -130,42 +137,101 @@ function responsesOutputItemToMessages(item: JsonRecord): ChatMessage[] {
             type: 'function',
             function: {
               name: typeof item.name === 'string' ? item.name : 'unknown',
-              arguments: typeof item.arguments === 'string' ? item.arguments : '{}',
+              arguments: item.arguments ?? '{}',
             },
           },
         ],
       },
     ];
   }
+  if (item.type === 'function_call_output') {
+    return [
+      {
+        role: 'tool',
+        tool_call_id: typeof item.call_id === 'string' ? item.call_id : undefined,
+        content: item.output ?? '',
+      },
+    ];
+  }
+  if (item.type && item.type !== 'message') return [];
+  return [
+    {
+      role: typeof item.role === 'string' ? item.role : defaultRole,
+      content: item.content,
+    },
+  ];
+}
 
-  if (item.type !== 'message') return [];
+function geminiContents(contents: unknown[]): ChatMessage[] {
+  return contents.filter(isRecord).map((content) => {
+    const parts = Array.isArray(content.parts) ? content.parts : [];
+    const toolCalls: ToolCall[] = [];
+    const normalContent: unknown[] = [];
 
-  const role = typeof item.role === 'string' ? item.role : 'assistant';
-  return [{ role, content: responsesContentToChatContent(item.content, role) }];
+    for (const part of parts) {
+      if (!isRecord(part) || !isRecord(part.functionCall)) {
+        normalContent.push(part);
+        continue;
+      }
+      const call = part.functionCall;
+      toolCalls.push({
+        id: typeof call.id === 'string' ? call.id : undefined,
+        type: 'function',
+        function: {
+          name: typeof call.name === 'string' ? call.name : undefined,
+          arguments: call.args,
+        },
+      });
+    }
+
+    return {
+      role:
+        content.role === 'model'
+          ? 'assistant'
+          : typeof content.role === 'string'
+            ? content.role
+            : 'user',
+      content: normalContent.length > 0 ? normalContent : null,
+      ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+    };
+  });
 }
 
 export function extractRequestMessages(
   requestBody: Record<string, unknown> | null | undefined,
 ): ChatMessage[] {
   if (!requestBody) return [];
-  const rb = requestBody as { messages?: ChatMessage[]; input?: unknown; instructions?: unknown };
-  if (Array.isArray(rb.messages)) return rb.messages;
-
+  if (isRecord(requestBody.request) && Array.isArray(requestBody.request.contents)) {
+    requestBody = requestBody.request;
+  }
   const messages: ChatMessage[] = [];
-  if (typeof rb.instructions === 'string' && rb.instructions.trim()) {
-    messages.push({ role: 'system', content: rb.instructions });
+
+  if (requestBody.system != null) messages.push(...systemMessages(requestBody.system));
+  if (typeof requestBody.instructions === 'string' && requestBody.instructions.trim()) {
+    messages.push({ role: 'system', content: requestBody.instructions });
+  }
+  if (isRecord(requestBody.systemInstruction)) {
+    messages.push(...systemMessages(requestBody.systemInstruction.parts));
   }
 
-  if (typeof rb.input === 'string') {
-    messages.push({ role: 'user', content: rb.input });
-  } else if (Array.isArray(rb.input)) {
-    for (const item of rb.input) {
-      if (typeof item === 'string') {
-        messages.push({ role: 'user', content: item });
-      } else if (isRecord(item)) {
-        messages.push(...responsesInputItemToMessages(item));
-      }
+  if (Array.isArray(requestBody.messages)) {
+    for (const message of requestBody.messages) {
+      if (!isRecord(message)) continue;
+      if (Array.isArray(message.content)) messages.push(...anthropicMessage(message));
+      else messages.push(message as ChatMessage);
     }
+    return messages;
+  }
+
+  if (typeof requestBody.input === 'string') {
+    messages.push({ role: 'user', content: requestBody.input });
+  } else if (Array.isArray(requestBody.input)) {
+    for (const item of requestBody.input) {
+      if (typeof item === 'string') messages.push({ role: 'user', content: item });
+      else if (isRecord(item)) messages.push(...responsesItem(item, 'user'));
+    }
+  } else if (Array.isArray(requestBody.contents)) {
+    messages.push(...geminiContents(requestBody.contents));
   }
 
   return messages;
@@ -174,82 +240,199 @@ export function extractRequestMessages(
 export function extractRequestTools(
   requestBody: Record<string, unknown> | null | undefined,
 ): ChatTool[] {
-  const rb = requestBody as { tools?: unknown[] } | null | undefined;
-  if (!Array.isArray(rb?.tools)) return [];
-  return rb.tools.filter(isRecord).map((tool) => {
-    if (isRecord(tool.function)) return tool as ChatTool;
-    if (tool.type === 'function') {
+  if (!Array.isArray(requestBody?.tools)) return [];
+  return requestBody.tools.filter(isRecord).map((tool) => {
+    if (isRecord(tool.function)) {
       return {
-        type: 'function',
+        type: typeof tool.type === 'string' ? tool.type : 'function',
         function: {
-          name: typeof tool.name === 'string' ? tool.name : undefined,
-          description: typeof tool.description === 'string' ? tool.description : undefined,
+          name: typeof tool.function.name === 'string' ? tool.function.name : undefined,
+          description:
+            typeof tool.function.description === 'string' ? tool.function.description : undefined,
+          parameters: tool.function.parameters,
         },
       };
     }
     return {
-      type: typeof tool.type === 'string' ? tool.type : undefined,
-      function: { name: typeof tool.type === 'string' ? tool.type : undefined },
+      type: typeof tool.type === 'string' ? tool.type : 'function',
+      function: {
+        name: typeof tool.name === 'string' ? tool.name : undefined,
+        description: typeof tool.description === 'string' ? tool.description : undefined,
+        parameters: tool.input_schema ?? tool.parameters,
+      },
     };
   });
 }
 
-export type RequestBodyFormat = 'openai' | 'claude' | 'gemini' | 'empty' | 'unknown';
-
-/**
- * The drawer renders OpenAI chat-completion and Responses request shapes
- * inline; Claude/Gemini payloads route to the Raw tab. Returning
- * `empty`/`unknown` lets callers surface a hint instead of silently rendering
- * zero turns.
- */
-export function detectRequestBodyFormat(
-  requestBody: Record<string, unknown> | null | undefined,
-): RequestBodyFormat {
-  if (!requestBody) return 'empty';
-  if (Array.isArray((requestBody as { messages?: unknown }).messages)) return 'openai';
-  const input = (requestBody as { input?: unknown }).input;
-  if (typeof input === 'string' || Array.isArray(input)) return 'openai';
-  if (Array.isArray((requestBody as { contents?: unknown }).contents)) return 'gemini';
-  if (typeof (requestBody as { system?: unknown }).system === 'string') return 'claude';
-  return 'unknown';
+function extractJsonResponse(body: JsonRecord): ChatMessage[] {
+  if (Array.isArray(body.choices)) {
+    const choice = body.choices.find(isRecord);
+    return choice && isRecord(choice.message) ? [choice.message as ChatMessage] : [];
+  }
+  if (Array.isArray(body.output)) {
+    return body.output.filter(isRecord).flatMap((item) => responsesItem(item, 'assistant'));
+  }
+  if (body.type === 'message' && Array.isArray(body.content)) {
+    return anthropicMessage({ role: body.role ?? 'assistant', content: body.content });
+  }
+  if (Array.isArray(body.candidates)) {
+    const candidate = body.candidates.find(isRecord);
+    return candidate && isRecord(candidate.content)
+      ? geminiContents([{ ...candidate.content, role: 'model' }])
+      : [];
+  }
+  return [];
 }
 
-export function extractAssistantReply(
-  responseBody: RecordingResponseBody | null | undefined,
-): ChatMessage | null {
-  return (
-    extractResponseMessages(responseBody).find((m) => normalizeRole(m.role) === 'assistant') ?? null
-  );
+function extractStreamResponse(rawSse: string): ChatMessage[] {
+  let text = '';
+  const toolCalls: ToolCall[] = [];
+  type MutableToolCall = ToolCall & {
+    function: { name?: string; arguments?: unknown };
+  };
+  const callsByKey = new Map<string, MutableToolCall>();
+
+  const callFor = (key: string): MutableToolCall => {
+    const existing = callsByKey.get(key);
+    if (existing) return existing;
+    const call: MutableToolCall = { type: 'function', function: {} };
+    callsByKey.set(key, call);
+    toolCalls.push(call);
+    return call;
+  };
+
+  const appendArguments = (call: MutableToolCall, fragment: string) => {
+    const current = call.function.arguments;
+    call.function.arguments = `${typeof current === 'string' ? current : ''}${fragment}`;
+  };
+
+  for (const line of rawSse.split(/\r?\n/)) {
+    if (!line.startsWith('data:')) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') continue;
+    try {
+      const payload = JSON.parse(data) as JsonRecord;
+      const choices = Array.isArray(payload.choices) ? payload.choices : [];
+      const choice = choices.find(isRecord);
+      const delta = choice && isRecord(choice.delta) ? choice.delta : undefined;
+      if (typeof delta?.content === 'string') text += delta.content;
+      if (Array.isArray(payload.candidates)) {
+        const content = extractJsonResponse(payload)[0]?.content;
+        if (Array.isArray(content)) {
+          for (const part of content) {
+            if (isRecord(part) && typeof part.text === 'string') text += part.text;
+          }
+        }
+      }
+      if (Array.isArray(delta?.tool_calls)) {
+        for (const rawCall of delta.tool_calls) {
+          if (!isRecord(rawCall)) continue;
+          const index = typeof rawCall.index === 'number' ? rawCall.index : 0;
+          const call = callFor(`chat:${index}`);
+          if (typeof rawCall.id === 'string') call.id = rawCall.id;
+          if (typeof rawCall.type === 'string') call.type = rawCall.type;
+          if (isRecord(rawCall.function)) {
+            if (typeof rawCall.function.name === 'string') {
+              call.function.name = `${call.function.name ?? ''}${rawCall.function.name}`;
+            }
+            if (typeof rawCall.function.arguments === 'string') {
+              appendArguments(call, rawCall.function.arguments);
+            }
+          }
+        }
+      }
+      if (payload.type === 'response.output_text.delta' && typeof payload.delta === 'string') {
+        text += payload.delta;
+      }
+      if (
+        (payload.type === 'response.output_item.added' ||
+          payload.type === 'response.output_item.done') &&
+        isRecord(payload.item) &&
+        payload.item.type === 'function_call'
+      ) {
+        const item = payload.item;
+        const itemKey =
+          typeof item.id === 'string'
+            ? item.id
+            : typeof item.call_id === 'string'
+              ? item.call_id
+              : String(payload.output_index ?? 0);
+        const call = callFor(`response:${itemKey}`);
+        call.id =
+          typeof item.call_id === 'string'
+            ? item.call_id
+            : typeof item.id === 'string'
+              ? item.id
+              : call.id;
+        if (typeof item.name === 'string') call.function.name = item.name;
+        if (typeof item.arguments === 'string') call.function.arguments = item.arguments;
+      }
+      if (
+        payload.type === 'response.function_call_arguments.delta' &&
+        typeof payload.delta === 'string'
+      ) {
+        const itemKey =
+          typeof payload.item_id === 'string' ? payload.item_id : String(payload.output_index ?? 0);
+        appendArguments(callFor(`response:${itemKey}`), payload.delta);
+      }
+      if (
+        payload.type === 'content_block_start' &&
+        isRecord(payload.content_block) &&
+        payload.content_block.type === 'tool_use'
+      ) {
+        const block = payload.content_block;
+        const call = callFor(`anthropic:${String(payload.index ?? 0)}`);
+        if (typeof block.id === 'string') call.id = block.id;
+        if (typeof block.name === 'string') call.function.name = block.name;
+        if (block.input != null) call.function.arguments = block.input;
+      }
+      if (payload.type === 'content_block_delta' && isRecord(payload.delta)) {
+        if (typeof payload.delta.text === 'string') text += payload.delta.text;
+        if (
+          payload.delta.type === 'input_json_delta' &&
+          typeof payload.delta.partial_json === 'string'
+        ) {
+          appendArguments(
+            callFor(`anthropic:${String(payload.index ?? 0)}`),
+            payload.delta.partial_json,
+          );
+        }
+      }
+    } catch {
+      // Keep parsing later events when one provider emits a non-JSON line.
+    }
+  }
+  return text || toolCalls.length > 0
+    ? [
+        {
+          role: 'assistant',
+          content: text || null,
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        },
+      ]
+    : [];
 }
 
 export function extractResponseMessages(
-  responseBody: RecordingResponseBody | null | undefined,
+  responseBody: RecordedResponseBody | null | undefined,
 ): ChatMessage[] {
-  if (!responseBody || responseBody.type !== 'json' || !isRecord(responseBody.body)) return [];
-
-  const body = responseBody.body;
-  if (Array.isArray(body.choices)) {
-    for (const choice of body.choices) {
-      if (!isRecord(choice) || !isRecord(choice.message)) continue;
-      return [choice.message as ChatMessage];
-    }
-    return [];
+  if (responseBody?.type === 'stream' && responseBody.raw_sse) {
+    return extractStreamResponse(responseBody.raw_sse);
   }
+  return responseBody?.type === 'json' && isRecord(responseBody.body)
+    ? extractJsonResponse(responseBody.body)
+    : [];
+}
 
-  if (!Array.isArray(body.output)) return [];
-
-  const messages: ChatMessage[] = [];
-  for (const item of body.output) {
-    if (isRecord(item)) messages.push(...responsesOutputItemToMessages(item));
-  }
-  return messages;
+export function extractResponseToolCalls(
+  responseBody: RecordedResponseBody | null | undefined,
+): ToolCall[] {
+  return extractResponseMessages(responseBody).flatMap((message) => message.tool_calls ?? []);
 }
 
 export function extractRecordedConversationMessages(
   requestBody: Record<string, unknown> | null | undefined,
-  responseBody: RecordingResponseBody | null | undefined,
+  responseBody: RecordedResponseBody | null | undefined,
 ): ChatMessage[] {
-  const requestMessages = extractRequestMessages(requestBody);
-  if (detectRequestBodyFormat(requestBody) !== 'openai') return requestMessages;
-  return [...requestMessages, ...extractResponseMessages(responseBody)];
+  return [...extractRequestMessages(requestBody), ...extractResponseMessages(responseBody)];
 }

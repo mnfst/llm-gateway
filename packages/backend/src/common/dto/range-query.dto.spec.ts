@@ -10,7 +10,7 @@ describe('RangeQueryDto', () => {
   });
 
   it('validates with all accepted ranges', async () => {
-    for (const range of ['1h', '6h', '24h', '7d', '30d']) {
+    for (const range of ['1h', '6h', '24h', '7d', '30d', '90d', '365d']) {
       const dto = plainToInstance(RangeQueryDto, { range });
       const errors = await validate(dto);
       expect(errors).toHaveLength(0);

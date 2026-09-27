@@ -1,0 +1,111 @@
+/* ── Autofix announcement (AutofixAnnouncement.tsx) ─────
+   Sidebar card for self-healing / Autofix feature promotion. */
+
+.sidebar-autofix {
+  margin: var(--gap-sm);
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  cursor: default;
+  overflow: hidden;
+}
+
+.dark .sidebar-autofix {
+  background: hsl(var(--card));
+}
+
+.sidebar-autofix__header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  background: url('/banner-autofix-gradient.png') center / cover no-repeat;
+  margin-bottom: 0;
+}
+
+.sidebar-autofix__title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  line-height: 1.35;
+  color: #000;
+}
+
+.sidebar-autofix__dismiss {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  margin-top: -3px;
+  margin-right: -6px;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  color: #000;
+  background: none;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.sidebar-autofix__dismiss:hover,
+.sidebar-autofix__dismiss:focus-visible {
+  color: #000;
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.sidebar-autofix__benefits {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 14px;
+  padding-top: 12px;
+  list-style: none;
+}
+
+.sidebar-autofix__benefit-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: hsl(var(--muted-foreground));
+}
+
+.sidebar-autofix__benefit-item svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  width: 14px;
+  height: 14px;
+  color: hsl(var(--success));
+}
+
+.sidebar-autofix__btn {
+  display: block;
+  width: calc(100% - 28px);
+  padding: 8px 14px;
+  margin: 8px 14px 14px;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  font-family: var(--font-family);
+  color: hsl(var(--primary-foreground));
+  background: hsl(var(--primary));
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: center;
+  text-decoration: none;
+  transition: opacity var(--transition-fast);
+}
+
+.sidebar-autofix__btn:hover {
+  opacity: 0.9;
+}
+
+.sidebar-autofix__btn:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}

@@ -14,13 +14,27 @@ import type { AuthType, ModelCapability, ModelModality } from 'manifest-shared';
  */
 export const DEFAULT_CONTEXT_WINDOW = 128000;
 
+export interface LongContextPricing {
+  /** Default rates apply through this many prompt tokens; long-context rates apply above it. */
+  thresholdTokens: number;
+  inputPricePerToken: number;
+  outputPricePerToken: number;
+  cacheReadPricePerToken?: number;
+  cacheWritePricePerToken?: number;
+}
+
 export interface DiscoveredModel {
   id: string;
   displayName: string;
   provider: string;
   contextWindow: number;
+  /** Identifies context windows that can be recalculated without replacing provider metadata. */
+  contextWindowSource?: 'provider' | 'subscription_config';
   inputPricePerToken: number | null;
   outputPricePerToken: number | null;
+  cacheReadPricePerToken?: number;
+  cacheWritePricePerToken?: number;
+  longContextPricing?: LongContextPricing;
   capabilityReasoning: boolean;
   capabilityCode: boolean;
   capabilities?: readonly ModelCapability[];
@@ -29,6 +43,14 @@ export interface DiscoveredModel {
   supportedEndpoints?: readonly string[];
   qualityScore: number;
   authType?: AuthType;
+  /** Custom providers only: the display name the user gave the provider. */
+  providerName?: string;
+  /**
+   * Custom providers only: the alias `/v1/models` publishes the model under
+   * (`<providerAlias>/<model_name>`). Absent when the provider has no alias,
+   * in which case the internal `custom:<uuid>/<model_name>` id is published.
+   */
+  providerAlias?: string;
 }
 
 export interface FetcherConfig {

@@ -1,5 +1,6 @@
-import { ExecutionContext } from '@nestjs/common';
+import { CallHandler, ExecutionContext } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { firstValueFrom, Observable, of, ReplaySubject, throwError } from 'rxjs';
 import { UserCacheInterceptor } from './user-cache.interceptor';
 
 function createMockContext(
@@ -24,12 +25,78 @@ function createMockContext(
 
 describe('UserCacheInterceptor', () => {
   let interceptor: UserCacheInterceptor;
+  let cacheManager: { get: jest.Mock; set: jest.Mock };
 
   beforeEach(() => {
-    const mockCacheManager = {} as never;
+    cacheManager = {
+      get: jest.fn().mockResolvedValue(undefined),
+      set: jest.fn().mockResolvedValue(undefined),
+    };
     const mockReflector = new Reflector();
 
-    interceptor = new UserCacheInterceptor(mockCacheManager, mockReflector);
+    interceptor = new UserCacheInterceptor(cacheManager, mockReflector);
+  });
+
+  describe('intercept', () => {
+    it('forwards uncacheable requests without reading the cache', async () => {
+      const context = createMockContext({ tenantId: 'tenant-1' }, '/api/v1/overview', 'POST');
+      const next: CallHandler = { handle: jest.fn(() => of({ ok: true })) };
+
+      const response = await interceptor.intercept(context, next);
+
+      await expect(firstValueFrom(response)).resolves.toEqual({ ok: true });
+      expect(cacheManager.get).not.toHaveBeenCalled();
+      expect(next.handle).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares one handler execution between concurrent misses for the same key', async () => {
+      const context = createMockContext({ tenantId: 'tenant-1' }, '/api/v1/overview');
+      const source = new ReplaySubject<{ total: number }>(1);
+      const next: CallHandler = { handle: jest.fn(() => source) };
+
+      const first = await interceptor.intercept(context, next);
+      const second = await interceptor.intercept(context, next);
+      const firstResult = firstValueFrom(first);
+      const secondResult = firstValueFrom(second);
+
+      source.next({ total: 42 });
+      source.complete();
+
+      await expect(firstResult).resolves.toEqual({ total: 42 });
+      await expect(secondResult).resolves.toEqual({ total: 42 });
+      expect(cacheManager.get).toHaveBeenCalledTimes(1);
+      expect(next.handle).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not coalesce different cache keys', async () => {
+      const firstContext = createMockContext({ tenantId: 'tenant-1' }, '/api/v1/overview');
+      const secondContext = createMockContext({ tenantId: 'tenant-1' }, '/api/v1/tokens');
+      const next: CallHandler = { handle: jest.fn(() => of({ ok: true })) };
+
+      const first = await interceptor.intercept(firstContext, next);
+      const second = await interceptor.intercept(secondContext, next);
+
+      await Promise.all([firstValueFrom(first), firstValueFrom(second)]);
+      expect(next.handle).toHaveBeenCalledTimes(2);
+    });
+
+    it('clears a failed response so the next request can retry', async () => {
+      const context = createMockContext({ tenantId: 'tenant-1' }, '/api/v1/overview');
+      const failure = new Error('query failed');
+      const next: CallHandler = {
+        handle: jest
+          .fn<Observable<{ ok: boolean }>, []>()
+          .mockReturnValueOnce(throwError(() => failure))
+          .mockReturnValueOnce(of({ ok: true })),
+      };
+
+      const first = await interceptor.intercept(context, next);
+      await expect(firstValueFrom(first)).rejects.toThrow('query failed');
+
+      const retry = await interceptor.intercept(context, next);
+      await expect(firstValueFrom(retry)).resolves.toEqual({ ok: true });
+      expect(next.handle).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('trackBy', () => {

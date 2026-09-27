@@ -3,6 +3,7 @@ import { LiftCustomProvidersToUserLevel1791200000000 } from '../src/database/mig
 import { RenameProviderAccessToEnabledProviders1791800000000 } from '../src/database/migrations/1791800000000-RenameProviderAccessToEnabledProviders';
 import { TenantProviders1792500000000 } from '../src/database/migrations/1792500000000-TenantProviders';
 import { TenantScopedConfigs1792600000000 } from '../src/database/migrations/1792600000000-TenantScopedConfigs';
+import { AddRequestsAndProviderAttempts1801000000000 } from '../src/database/migrations/1801000000000-AddRequestsAndProviderAttempts';
 
 /**
  * Runs the REAL migration chain (synchronize:false) so LiftCustomProvidersToUserLevel
@@ -26,7 +27,7 @@ describe('LiftCustomProvidersToUserLevel under migration-built schema (e2e)', ()
       logging: false,
     });
     await ds.initialize();
-    await ds.runMigrations();
+    await ds.runMigrations({ transaction: 'each' });
   }, 60000);
 
   afterAll(async () => {
@@ -91,11 +92,14 @@ describe('LiftCustomProvidersToUserLevel data transformation (e2e)', () => {
       logging: false,
     });
     await ds.initialize();
-    await ds.runMigrations();
+    await ds.runMigrations({ transaction: 'each' });
 
     // Revert the later tenant re-scoping + table renames first (newest first)
     // so this historical migration can be replayed against the schema naming
     // it expects (user_providers / agent_provider_access / user_id columns).
+    const requestSchemaQr = ds.createQueryRunner();
+    await new AddRequestsAndProviderAttempts1801000000000().down(requestSchemaQr);
+    await requestSchemaQr.release();
     const tenantConfigsQr = ds.createQueryRunner();
     await new TenantScopedConfigs1792600000000().down(tenantConfigsQr);
     await tenantConfigsQr.release();

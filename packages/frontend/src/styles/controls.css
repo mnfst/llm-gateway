@@ -31,54 +31,6 @@
   color: hsl(var(--popover-foreground));
 }
 
-/* ── Cost Range Filter ─────────────────────────────── */
-.cost-range-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.cost-range-filter__input {
-  width: 80px;
-  height: 2.25rem;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  border: 1px solid hsl(var(--input));
-  border-radius: var(--radius);
-  padding: 0 0.5rem;
-  font-size: var(--font-size-sm);
-  font-family: var(--font-family);
-  transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.cost-range-filter__input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.cost-range-filter__input:focus-visible {
-  outline: none;
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
-}
-
-/* Hide number input spinners */
-.cost-range-filter__input::-webkit-inner-spin-button,
-.cost-range-filter__input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.cost-range-filter__input {
-  -moz-appearance: textfield;
-}
-
-.cost-range-filter__sep {
-  color: hsl(var(--muted-foreground));
-  font-size: var(--font-size-sm);
-  user-select: none;
-}
-
 /* ── Setup Steps (inline) ──────────────────────────── */
 .setup-steps {
   display: flex;
@@ -339,10 +291,9 @@
 }
 
 .header__logo-img {
-  width: 152px;
-  height: auto;
+  height: 28px;
+  width: auto;
   object-fit: contain;
-  margin-bottom: 9px;
 }
 
 .header__logo-img--dark {
@@ -366,6 +317,10 @@
   border-radius: var(--radius);
   background: hsl(var(--success) / 0.15);
   color: hsl(var(--success));
+  /* The header's left group shrinks around the breadcrumb on small screens;
+     the badge must stay one line rather than break "SELF-" / "HOSTED". */
+  white-space: nowrap;
+  flex-shrink: 0;
   line-height: 1;
   user-select: none;
 }
@@ -406,9 +361,21 @@
   height: 14px;
 }
 
+.header__breadcrumb-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.header__breadcrumb-label {
+  color: hsl(var(--muted-foreground));
+  font-weight: 400;
+}
+
 .dark .header__breadcrumb-icon[src*='openai'],
 .dark .header__breadcrumb-icon[src*='anthropic'],
 .dark .header__breadcrumb-icon[src*='vercel'],
+.dark .header__breadcrumb-icon[src*='hermes'],
 .dark .header__breadcrumb-icon[src*='other'] {
   filter: invert(1);
 }
@@ -469,10 +436,22 @@
 }
 
 .header__dropdown-name {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
   font-size: var(--font-size-sm);
   font-weight: 600;
   color: hsl(var(--foreground));
+}
+
+.header__pro-badge {
+  padding: 1px 6px;
+  border-radius: 2px;
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
 }
 
 .header__dropdown-email {

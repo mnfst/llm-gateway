@@ -107,6 +107,7 @@ describe("CustomProviderForm", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Groq",
+        alias: null,
         base_url: "https://api.groq.com/v1",
         api_kind: "openai",
         apiKey: undefined,
@@ -172,6 +173,7 @@ describe("CustomProviderForm", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Groq",
+        alias: null,
         base_url: "https://api.groq.com/v1",
         api_kind: "openai",
         apiKey: "gsk_test123",
@@ -206,6 +208,7 @@ describe("CustomProviderForm", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Groq",
+        alias: null,
         base_url: "https://api.groq.com/v1",
         api_kind: "openai",
         apiKey: undefined,
@@ -246,6 +249,7 @@ describe("CustomProviderForm", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Groq",
+        alias: null,
         base_url: "https://api.groq.com/v1",
         api_kind: "openai",
         apiKey: undefined,
@@ -426,6 +430,7 @@ describe("CustomProviderForm", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Test",
+        alias: "test",
         base_url: "https://api.example.com/v1",
         api_kind: "openai",
         apiKey: undefined,
@@ -637,6 +642,7 @@ describe("CustomProviderForm — Fetch models probe", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Mammouth AI",
+        alias: "mammouth-ai",
         base_url: "https://api.mammouth.ai/v1",
         api_kind: "openai",
         apiKey: undefined,
@@ -767,6 +773,7 @@ describe("CustomProviderForm — prefill from URL params", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Groq",
+        alias: null,
         base_url: "https://api.groq.com/v1",
         api_kind: "openai",
         apiKey: undefined,
@@ -897,6 +904,7 @@ describe("CustomProviderForm — edit mode", () => {
     await waitFor(() => {
       expect(mockUpdateCustomProvider).toHaveBeenCalledWith("test-agent", "cp-1", {
         name: "Updated Groq",
+        alias: null,
         base_url: "https://api.groq.com/openai/v1",
         models: [
           {
@@ -936,6 +944,7 @@ describe("CustomProviderForm — edit mode", () => {
     await waitFor(() => {
       expect(mockUpdateCustomProvider).toHaveBeenCalledWith("test-agent", "cp-1", {
         name: "Groq",
+        alias: null,
         base_url: "https://api.groq.com/openai/v1",
         apiKey: "new-key-123",
         models: [
@@ -1424,6 +1433,7 @@ describe("CustomProviderForm — API format selector", () => {
     await waitFor(() => {
       expect(mockCreateCustomProvider).toHaveBeenCalledWith("test-agent", {
         name: "Azure Claude",
+        alias: "azure-claude",
         base_url: "https://api.anthropic.com",
         api_kind: "anthropic",
         apiKey: undefined,
@@ -1544,6 +1554,7 @@ describe("CustomProviderForm — edit mode: extra API key + delete UI branches",
     await waitFor(() => {
       expect(mockUpdateCustomProvider).toHaveBeenCalledWith("test-agent", "cp-1", {
         name: "Groq",
+        alias: null,
         base_url: "https://api.groq.com/openai/v1",
         apiKey: undefined,
         models: [
@@ -1627,6 +1638,114 @@ describe("CustomProviderForm — edit mode: extra API key + delete UI branches",
 
     await waitFor(() => {
       expect(container.querySelector('[role="dialog"]')).toBeNull();
+    });
+  });
+});
+
+describe("CustomProviderForm — alias", () => {
+  const onCreated = vi.fn();
+  const onBack = vi.fn();
+
+  const aliasInput = () => screen.getByPlaceholderText("e.g. vercel-ai-gateway") as HTMLInputElement;
+  const nameInput = () => screen.getByPlaceholderText("e.g. Groq, Together, Azure");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreateCustomProvider.mockResolvedValue({});
+    mockUpdateCustomProvider.mockResolvedValue({});
+  });
+
+  it("derives the alias from the name while creating and previews the model id", () => {
+    render(() => (
+      <CustomProviderForm agentName="test-agent" onCreated={onCreated} onBack={onBack} />
+    ));
+    expect(aliasInput().value).toBe("");
+    expect(screen.getByTestId("cp-alias-hint").textContent).toContain("custom:<provider-id>/<model>");
+
+    fireEvent.input(nameInput(), { target: { value: "Vercel AI Gateway" } });
+    expect(aliasInput().value).toBe("vercel-ai-gateway");
+    expect(screen.getByTestId("cp-alias-hint").textContent).toContain("vercel-ai-gateway/<model>");
+  });
+
+  it("stops following the name once the alias was edited by hand", () => {
+    render(() => (
+      <CustomProviderForm agentName="test-agent" onCreated={onCreated} onBack={onBack} />
+    ));
+    fireEvent.input(aliasInput(), { target: { value: "gw" } });
+    fireEvent.input(nameInput(), { target: { value: "Vercel AI Gateway" } });
+    expect(aliasInput().value).toBe("gw");
+  });
+
+  it("derives the alias from a prefilled name", () => {
+    render(() => (
+      <CustomProviderForm
+        agentName="test-agent"
+        onCreated={onCreated}
+        onBack={onBack}
+        prefill={{ name: "Mammouth AI", baseUrl: "https://api.mammouth.ai/v1", models: [] }}
+      />
+    ));
+    expect(aliasInput().value).toBe("mammouth-ai");
+  });
+
+  it("sends a null alias when the field is cleared", async () => {
+    render(() => (
+      <CustomProviderForm agentName="test-agent" onCreated={onCreated} onBack={onBack} />
+    ));
+    fireEvent.input(nameInput(), { target: { value: "Groq" } });
+    fireEvent.input(screen.getByPlaceholderText("https://api.example.com/v1"), {
+      target: { value: "https://api.groq.com/v1" },
+    });
+    fireEvent.input(screen.getByPlaceholderText("Model name"), {
+      target: { value: "llama-3.1-70b" },
+    });
+    fireEvent.input(aliasInput(), { target: { value: "   " } });
+
+    fireEvent.click(screen.getByText("Connect"));
+
+    await waitFor(() => {
+      expect(mockCreateCustomProvider).toHaveBeenCalledWith(
+        "test-agent",
+        expect.objectContaining({ alias: null }),
+      );
+    });
+  });
+
+  it("shows the stored alias in edit mode, leaves it alone on rename, and sends it normalised", async () => {
+    render(() => (
+      <CustomProviderForm
+        agentName="test-agent"
+        onCreated={onCreated}
+        onBack={onBack}
+        initialData={{
+          id: "cp-1",
+          name: "Groq",
+          alias: "groq",
+          base_url: "https://api.groq.com/openai/v1",
+          api_kind: "openai",
+          has_api_key: true,
+          models: [{ model_name: "llama-3.1-70b" }],
+          created_at: "2026-03-04T00:00:00Z",
+        }}
+      />
+    ));
+    expect(aliasInput().value).toBe("groq");
+    expect(screen.getByTestId("cp-alias-hint").textContent).toContain(
+      "Changing the alias changes the model ids your clients use.",
+    );
+
+    fireEvent.input(nameInput(), { target: { value: "Groq Cloud" } });
+    expect(aliasInput().value).toBe("groq");
+
+    fireEvent.input(aliasInput(), { target: { value: " Groq-Cloud " } });
+    fireEvent.click(screen.getByText("Save changes"));
+
+    await waitFor(() => {
+      expect(mockUpdateCustomProvider).toHaveBeenCalledWith(
+        "test-agent",
+        "cp-1",
+        expect.objectContaining({ name: "Groq Cloud", alias: "groq-cloud" }),
+      );
     });
   });
 });

@@ -5,6 +5,7 @@ const mockNavigate = vi.fn();
 
 vi.mock("@solidjs/router", () => ({
   useNavigate: () => mockNavigate,
+  useLocation: () => ({ pathname: "/overview", search: "" }),
 }));
 
 vi.mock("../../src/services/auth-client.js", () => ({
@@ -31,7 +32,7 @@ describe("AuthGuard failure path", () => {
     ));
 
     await vi.waitFor(() => {
-      expect(mockNavigate).toHaveBeenCalledWith("/login", { replace: true });
+      expect(mockNavigate).toHaveBeenCalledWith("/login?redirect=%2Foverview", { replace: true });
     });
   });
 });

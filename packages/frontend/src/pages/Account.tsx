@@ -1,17 +1,93 @@
-import { createSignal, onMount, type Component } from 'solid-js';
-import { useNavigate } from '@solidjs/router';
+import {
+  createEffect,
+  createResource,
+  createSignal,
+  onMount,
+  Show,
+  type Component,
+} from 'solid-js';
+import { useNavigate, useSearchParams } from '@solidjs/router';
 import { Title, Meta } from '@solidjs/meta';
 import { authClient } from '../services/auth-client.js';
+import { getBillingStatus, updateBillingEmailPreferences } from '../services/api/billing.js';
+import { toast } from '../services/toast-store.js';
+import {
+  FREE_REQUEST_LIMIT_LABEL,
+  formatBillingPriceWithInterval,
+} from '../services/billing-display.js';
 
 const Account: Component = () => {
   const navigate = useNavigate();
   const session = authClient.useSession();
   const [copied, setCopied] = createSignal(false);
   const [theme, setTheme] = createSignal<'light' | 'dark' | 'system'>('system');
+  const [currentPassword, setCurrentPassword] = createSignal('');
+  const [newPassword, setNewPassword] = createSignal('');
+  const [confirmPassword, setConfirmPassword] = createSignal('');
+  const [pwError, setPwError] = createSignal('');
+  const [pwBusy, setPwBusy] = createSignal(false);
+
+  const handleChangePassword = async (e: Event) => {
+    e.preventDefault();
+    setPwError('');
+
+    const current = currentPassword();
+    const next = newPassword();
+
+    if (next !== confirmPassword()) {
+      setPwError('New passwords do not match');
+      return;
+    }
+    if (next.length < 8) {
+      setPwError('New password must be at least 8 characters');
+      return;
+    }
+    if (next === current) {
+      setPwError('New password must differ from the current password');
+      return;
+    }
+
+    setPwBusy(true);
+    try {
+      const { error } = await authClient.changePassword({
+        currentPassword: current,
+        newPassword: next,
+        revokeOtherSessions: true,
+      });
+
+      if (error) {
+        setPwError(error.message ?? 'Failed to change password');
+        return;
+      }
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      toast.success('Password changed. Other devices have been signed out.');
+    } catch {
+      setPwError('Failed to change password');
+    } finally {
+      setPwBusy(false);
+    }
+  };
+  const [billing, { refetch: refetchBilling }] = createResource(() => getBillingStatus());
+  const [accounts] = createResource(() => authClient.listAccounts());
+  const hasCredentialAccount = () =>
+    (accounts()?.data ?? []).some((a) => a.providerId === 'credential');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [billingBusy, setBillingBusy] = createSignal(false);
+  const [emailPrefsBusy, setEmailPrefsBusy] = createSignal(false);
+  const [usageAlertsEnabled, setUsageAlertsEnabled] = createSignal(true);
 
   const userName = () => session()?.data?.user?.name ?? '';
   const userEmail = () => session()?.data?.user?.email ?? '';
   const userId = () => session()?.data?.user?.id ?? '';
+  const proPriceWithInterval = () => formatBillingPriceWithInterval(billing()?.priceMonthly);
+
+  createEffect(() => {
+    const prefs = billing()?.emailPreferences;
+    if (prefs) setUsageAlertsEnabled(prefs.usageAlerts);
+  });
 
   onMount(() => {
     const stored = localStorage.getItem('theme');
@@ -20,7 +96,63 @@ const Account: Component = () => {
     } else {
       setTheme('system');
     }
+
+    if (searchParams['upgraded'] === '1') {
+      toast.success('Welcome to Pro!');
+      setSearchParams({ upgraded: undefined }, { replace: true });
+    }
   });
+
+  const handleUpgrade = async () => {
+    setBillingBusy(true);
+    try {
+      const origin = window.location.origin;
+      const res = await authClient.subscription.upgrade({
+        plan: 'pro',
+        successUrl: `${origin}/account?upgraded=1`,
+        cancelUrl: `${origin}/account`,
+      });
+      const error = (res as { error?: unknown } | undefined)?.error;
+      if (error) throw error;
+    } catch {
+      toast.error('Could not start the upgrade. Please try again.');
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const handleManageBilling = async () => {
+    setBillingBusy(true);
+    // Open the tab synchronously inside the click handler so it keeps the user
+    // activation — a popup blocker would kill a window.open() that ran after the
+    // awaited portal call. We navigate this placeholder once the URL resolves.
+    // Drop `opener` for the same isolation `noopener` would give us.
+    const tab = window.open('about:blank', '_blank');
+    if (tab) tab.opener = null;
+    try {
+      // disableRedirect returns the portal URL instead of navigating the current
+      // tab, so we can send the new tab there and keep the dashboard open.
+      const res = await authClient.subscription.billingPortal({
+        returnUrl: `${window.location.origin}/account`,
+        disableRedirect: true,
+      });
+      const url = res?.data?.url;
+      if (url) {
+        if (tab) tab.location.href = url;
+        else window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        tab?.close();
+        toast.error('Could not open the billing portal. Please try again.');
+      }
+    } catch {
+      tab?.close();
+      toast.error('Could not open the billing portal. Please try again.');
+    } finally {
+      setBillingBusy(false);
+    }
+  };
+
+  const fmt = (n: number) => n.toLocaleString('en-US');
 
   const applyTheme = (value: 'light' | 'dark' | 'system') => {
     setTheme(value);
@@ -38,6 +170,22 @@ const Account: Component = () => {
     navigator.clipboard.writeText(userId());
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleUsageAlertsChange = async (enabled: boolean) => {
+    const previous = usageAlertsEnabled();
+    setUsageAlertsEnabled(enabled);
+    setEmailPrefsBusy(true);
+    try {
+      const saved = await updateBillingEmailPreferences({ usageAlerts: enabled });
+      setUsageAlertsEnabled(saved.usageAlerts);
+      await refetchBilling();
+      toast.success('Email preferences saved');
+    } catch {
+      setUsageAlertsEnabled(previous);
+    } finally {
+      setEmailPrefsBusy(false);
+    }
   };
 
   return (
@@ -87,9 +235,7 @@ const Account: Component = () => {
           <div class="settings-card__row">
             <div class="settings-card__label">
               <span class="settings-card__label-title">Email</span>
-              <span class="settings-card__label-desc">
-                Used for account notifications and limit alerts.
-              </span>
+              <span class="settings-card__label-desc">Used for account notifications.</span>
             </div>
             <div class="settings-card__control">
               <input
@@ -107,6 +253,75 @@ const Account: Component = () => {
             </span>
           </div>
         </div>
+
+        {/* Security */}
+        <Show when={hasCredentialAccount()}>
+          <h2 class="settings-section__title">Security</h2>
+
+          <form class="settings-card" onSubmit={handleChangePassword}>
+            <div class="settings-card__row">
+              <div class="settings-card__label">
+                <span class="settings-card__label-title">Current password</span>
+                <span class="settings-card__label-desc">Confirm the password you use today.</span>
+              </div>
+              <div class="settings-card__control">
+                <input
+                  class="settings-card__input"
+                  type="password"
+                  autocomplete="current-password"
+                  aria-label="Current password"
+                  value={currentPassword()}
+                  onInput={(e) => setCurrentPassword(e.currentTarget.value)}
+                  required
+                />
+              </div>
+            </div>
+            <div class="settings-card__row">
+              <div class="settings-card__label">
+                <span class="settings-card__label-title">New password</span>
+                <span class="settings-card__label-desc">At least 8 characters.</span>
+              </div>
+              <div class="settings-card__control">
+                <input
+                  class="settings-card__input"
+                  type="password"
+                  autocomplete="new-password"
+                  aria-label="New password"
+                  value={newPassword()}
+                  onInput={(e) => setNewPassword(e.currentTarget.value)}
+                  required
+                  minLength={8}
+                />
+              </div>
+            </div>
+            <div class="settings-card__row">
+              <div class="settings-card__label">
+                <span class="settings-card__label-title">Confirm new password</span>
+                <span class="settings-card__label-desc">Re-enter the new password to confirm.</span>
+              </div>
+              <div class="settings-card__control">
+                <input
+                  class="settings-card__input"
+                  type="password"
+                  autocomplete="new-password"
+                  aria-label="Confirm new password"
+                  value={confirmPassword()}
+                  onInput={(e) => setConfirmPassword(e.currentTarget.value)}
+                  required
+                  minLength={8}
+                />
+              </div>
+            </div>
+            <div class="settings-card__footer account-security-footer">
+              <span class="account-security-error" role="alert">
+                {pwError()}
+              </span>
+              <button class="btn btn--primary btn--sm" type="submit" disabled={pwBusy()}>
+                {pwBusy() ? <span class="spinner" /> : 'Change password'}
+              </button>
+            </div>
+          </form>
+        </Show>
 
         {/* Workspace ID */}
         <h2 class="settings-section__title">Workspace</h2>
@@ -159,6 +374,133 @@ const Account: Component = () => {
             </div>
           </div>
         </div>
+
+        {/* Billing */}
+        <Show when={billing()?.enabled}>
+          <h2 class="settings-section__title" id="billing">
+            Billing
+          </h2>
+
+          <div class="settings-card">
+            <div class="billing-stats">
+              <div class="billing-stat">
+                <span class="billing-stat__label">Current plan</span>
+                <span class="billing-stat__value">
+                  {billing()!.plan === 'pro' ? 'Pro' : 'Free'}
+                  {billing()!.plan === 'pro' && proPriceWithInterval()
+                    ? ` · ${proPriceWithInterval()}`
+                    : ''}
+                </span>
+                <Show when={billing()!.cancelAtPeriodEnd && billing()!.subscriptionPeriodEnd}>
+                  <span class="billing-stat__cancel">
+                    You'll keep Pro access until{' '}
+                    {new Date(billing()!.subscriptionPeriodEnd!).toLocaleDateString(undefined, {
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric',
+                    })}
+                  </span>
+                </Show>
+              </div>
+
+              <div class="billing-stat">
+                <span class="billing-stat__label">Requests</span>
+                <span class="billing-stat__value">
+                  {billing()!.requests.limit != null
+                    ? billing()!.requests.used != null
+                      ? `${fmt(billing()!.requests.used!)} / ${fmt(billing()!.requests.limit!)}`
+                      : fmt(billing()!.requests.limit!)
+                    : 'Unlimited'}
+                </span>
+                <Show when={billing()!.requests.limit != null && billing()!.requests.periodEnd}>
+                  <span class="billing-stat__meta">
+                    Resets{' '}
+                    {new Date(billing()!.requests.periodEnd!).toLocaleDateString(undefined, {
+                      month: 'short',
+                      day: 'numeric',
+                    })}
+                  </span>
+                </Show>
+              </div>
+            </div>
+
+            <div class="settings-card__footer billing-footer">
+              <span class="billing-footer__note">
+                {billing()!.plan === 'free'
+                  ? `Free: ${FREE_REQUEST_LIMIT_LABEL} requests/mo · Pro: unlimited requests`
+                  : 'Update your payment method and view invoices.'}
+              </span>
+              <Show
+                when={billing()!.plan === 'free'}
+                fallback={
+                  <div class="billing-footer__actions">
+                    <button
+                      class="btn btn--outline btn--sm"
+                      disabled={billingBusy()}
+                      onClick={handleManageBilling}
+                    >
+                      {billingBusy() ? <span class="spinner" /> : 'Manage subscription'}
+                    </button>
+                    <button
+                      class="btn btn--outline btn--sm"
+                      disabled={billingBusy()}
+                      onClick={handleManageBilling}
+                    >
+                      {billingBusy() ? <span class="spinner" /> : 'View invoices'}
+                    </button>
+                  </div>
+                }
+              >
+                <button
+                  class="btn btn--primary btn--sm"
+                  disabled={billingBusy()}
+                  onClick={handleUpgrade}
+                >
+                  Upgrade to Pro
+                  {proPriceWithInterval() ? ` · ${proPriceWithInterval()}` : ''}
+                </button>
+              </Show>
+            </div>
+          </div>
+        </Show>
+
+        {/* Email Preferences */}
+        <Show when={billing()?.enabled}>
+          <h2 class="settings-section__title" id="email-preferences">
+            Email preferences
+          </h2>
+
+          <div class="settings-card">
+            <div class="settings-card__row">
+              <div class="settings-card__label">
+                <span class="settings-card__label-title">Usage alert emails</span>
+                <span class="settings-card__label-desc">
+                  Receive emails at 80% usage and when the monthly request limit is reached.
+                </span>
+              </div>
+              <div class="settings-card__control settings-card__control--end">
+                <label
+                  class="notification-toggle account-email-toggle"
+                  classList={{ 'account-email-toggle--disabled': emailPrefsBusy() }}
+                  title="Usage alert emails"
+                >
+                  <input
+                    type="checkbox"
+                    checked={usageAlertsEnabled()}
+                    disabled={emailPrefsBusy()}
+                    onChange={(e) => void handleUsageAlertsChange(e.currentTarget.checked)}
+                  />
+                  <span class="notification-toggle__slider" aria-hidden="true" />
+                  <span class="sr-only">Receive usage alert emails</span>
+                </label>
+              </div>
+            </div>
+            <div class="settings-card__footer account-email-footer">
+              Plan confirmations, plan changes, and cancellation confirmations remain on as billing
+              lifecycle emails.
+            </div>
+          </div>
+        </Show>
 
         {/* Appearance */}
         <h2 class="settings-section__title">Appearance</h2>

@@ -1,6 +1,6 @@
 import type { Repository } from 'typeorm';
 import { ReasoningContentCacheEntry } from '../../../entities/reasoning-content-cache-entry.entity';
-import { ReasoningContentCache } from '../reasoning-content-cache';
+import { ReasoningContentCache, MAX_CACHE_ENTRIES } from '../reasoning-content-cache';
 
 const makeRepo = () =>
   ({
@@ -149,17 +149,205 @@ describe('ReasoningContentCache', () => {
       ],
     };
 
-    const result = await sharedCache.reinjectMissingReasoningContent(
-      body,
-      'session-1',
-      'deepseek',
-      'deepseek-chat',
-    );
+    const result = await sharedCache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-chat');
 
     const messages = result.messages as Array<Record<string, unknown>>;
     const originalMessages = body.messages as Array<Record<string, unknown>>;
     expect(messages[0].reasoning_content).toBe('shared thinking');
     expect(originalMessages[0].reasoning_content).toBeUndefined();
+  });
+
+  it('does not re-inject reasoning_content into assistant messages without tool calls', async () => {
+    const body = {
+      messages: [{ role: 'assistant', content: 'The answer is 42.' }],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    expect(result).toBe(body);
+    expect((body.messages[0] as Record<string, unknown>).reasoning_content).toBeUndefined();
+  });
+
+  it('replays an empty reasoning_content key onto non-tool assistant turns in a tool conversation', async () => {
+    const body = {
+      messages: [
+        { role: 'user', content: 'read the file' },
+        { role: 'assistant', content: 'on it' },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: 'contents' },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    const messages = result.messages as Array<Record<string, unknown>>;
+    // DeepSeek's thinking mode rejects the request when any assistant turn omits
+    // the key once tools are in play, so the plain turn is replayed empty too.
+    expect(messages[1].reasoning_content).toBe('');
+    expect(messages[2].reasoning_content).toBe('');
+    expect(messages[0].reasoning_content).toBeUndefined();
+    expect(messages[3].reasoning_content).toBeUndefined();
+  });
+
+  it('leaves an existing non-tool reasoning_content untouched in a tool conversation', async () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          content: 'on it',
+          reasoning_content: 'client thinking',
+        },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0].reasoning_content).toBe('client thinking');
+  });
+
+  it('leaves request bodies without messages unchanged', async () => {
+    const body = { prompt: 'The answer is 42.' };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    expect(result).toBe(body);
+  });
+
+  it('synthesizes empty reasoning_content when the client dropped it and no cache exists', async () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0].reasoning_content).toBe('');
+    expect(result).not.toBe(body);
+  });
+
+  it('keeps an existing empty fallback without copying the request', async () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          reasoning_content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    expect(result).toBe(body);
+  });
+
+  it('keeps exact client reasoning_content without copying the request', async () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          reasoning_content: 'client thinking',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    expect(result).toBe(body);
+  });
+
+  it('replaces empty client reasoning_content with an exact cache hit', async () => {
+    cache.store('session-1', 'call_1', 'cached thinking');
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          reasoning_content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0].reasoning_content).toBe('cached thinking');
+  });
+
+  it('synthesizes empty reasoning_content when the first tool call has no cache key', async () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          tool_calls: [{ type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0].reasoning_content).toBe('');
+  });
+
+  it('uses empty reasoning_content when a tool call id is ambiguous in one request', async () => {
+    cache.store('session-1', 'call_1', 'cached thinking');
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+        { role: 'tool', tool_call_id: 'call_1', content: '{}' },
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'deepseek', 'deepseek-v4-flash');
+
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0].reasoning_content).toBe('');
+    expect(messages[2].reasoning_content).toBe('');
+    expect(result).not.toBe(body);
+  });
+
+  it('does not re-inject reasoning_content into strict providers', async () => {
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(body, 'session-1', 'mistral', 'mistral-large');
+
+    expect(result).toBe(body);
+    expect((body.messages[0] as Record<string, unknown>).reasoning_content).toBeUndefined();
   });
 
   it('does not query shared cache for strict providers', async () => {
@@ -174,15 +362,22 @@ describe('ReasoningContentCache', () => {
       ],
     };
 
-    const result = await sharedCache.reinjectMissingReasoningContent(
-      body,
-      'session-1',
-      'mistral',
-      'mistral-large',
-    );
+    const result = await sharedCache.prepareRequest(body, 'session-1', 'mistral', 'mistral-large');
 
     expect(result).toBe(body);
     expect(repo.find).not.toHaveBeenCalled();
+  });
+
+  it('evicts the oldest in-memory entries once MAX_CACHE_ENTRIES is exceeded', () => {
+    for (let i = 0; i < MAX_CACHE_ENTRIES + 5; i++) {
+      cache.store('session', `call_${i}`, `content-${i}`);
+    }
+
+    // The five oldest entries are evicted FIFO; the cap holds and recent entries survive.
+    expect(cache.retrieve('session', 'call_0')).toBeNull();
+    expect(cache.retrieve('session', 'call_4')).toBeNull();
+    expect(cache.retrieve('session', 'call_5')).not.toBeNull();
+    expect(cache.retrieve('session', `call_${MAX_CACHE_ENTRIES + 4}`)).not.toBeNull();
   });
 
   it('evicts expired entries lazily when cleanup interval has elapsed', () => {
@@ -200,5 +395,57 @@ describe('ReasoningContentCache', () => {
     expect(localCache.retrieve('s2', 'call_2')).toBe('second');
 
     Date.now = realNow;
+  });
+});
+
+describe('ReasoningContentCache catalog wiring', () => {
+  const zenCatalog = {
+    isReasoningModel: (_endpointKey: string, model: string) =>
+      model.toLowerCase().endsWith('big-pickle') ? true : undefined,
+  };
+
+  it('prepares Zen codename tool turns the catalog marks as reasoning', async () => {
+    const cache = new ReasoningContentCache(undefined, zenCatalog);
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(
+      body,
+      'session-1',
+      'opencode-zen',
+      'opencode-zen/big-pickle',
+    );
+
+    const messages = result.messages as Array<Record<string, unknown>>;
+    expect(messages[0].reasoning_content).toBe('');
+  });
+
+  it('leaves Zen slugs alone when the catalog does not know them', async () => {
+    const cache = new ReasoningContentCache(undefined, zenCatalog);
+    const body = {
+      messages: [
+        {
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'call_1', type: 'function', function: {} }],
+        },
+      ],
+    };
+
+    const result = await cache.prepareRequest(
+      body,
+      'session-1',
+      'opencode-zen',
+      'opencode-zen/mystery-slug',
+    );
+
+    expect(result).toBe(body);
   });
 });

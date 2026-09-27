@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Response as ExpressResponse } from 'express';
 import { Tier } from '../../scoring/types';
 import type { ResponseMode } from 'manifest-shared';
+import type { ManifestErrorCode } from '../../common/errors/error-codes';
 
 export interface FriendlyForward {
   response: Response;
@@ -20,6 +21,14 @@ export interface FriendlyResult {
     confidence: number;
     reason: string;
     response_mode: ResponseMode;
+    /**
+     * Set when this 200 envelope is really a Manifest error dressed as an
+     * assistant message. The controller reads it to record the row through
+     * recordManifestBlockedRequest instead of the success path.
+     */
+    manifest_error_code?: ManifestErrorCode;
+    /** The rendered `[🦚 Manifest M100] …` text, persisted verbatim as error_message. */
+    manifest_error_message?: string;
   };
 }
 
@@ -41,7 +50,8 @@ export function getDashboardUrl(
 export function buildFriendlyResponse(
   content: string,
   stream: boolean,
-  reason = 'friendly_error',
+  reason = 'manifest_internal_error',
+  errorCode?: ManifestErrorCode,
 ): FriendlyResult {
   const id = `chatcmpl-manifest-${randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
@@ -53,6 +63,8 @@ export function buildFriendlyResponse(
     confidence: 1,
     reason,
     response_mode: stream ? 'stream' : 'buffered',
+    manifest_error_code: errorCode,
+    manifest_error_message: content,
   };
 
   if (stream) {

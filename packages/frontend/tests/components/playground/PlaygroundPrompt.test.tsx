@@ -33,6 +33,7 @@ interface PropsOverride {
   onRecallPrevious?: () => void;
   onHeightChange?: (h: number) => void;
   historyOpen?: boolean;
+  ref?: (el: HTMLTextAreaElement) => void;
 }
 
 function setup(o: PropsOverride = {}) {
@@ -49,6 +50,7 @@ function setup(o: PropsOverride = {}) {
       onRecallPrevious={onRecallPrevious}
       onHeightChange={o.onHeightChange}
       historyOpen={o.historyOpen}
+      ref={o.ref}
     />
   ));
   const textarea = utils.container.querySelector('textarea') as HTMLTextAreaElement;
@@ -250,5 +252,24 @@ describe('PlaygroundPrompt autoGrow', () => {
     Object.defineProperty(textarea, 'scrollHeight', { configurable: true, value: 88 });
     fireEvent.input(textarea, { target: { value: 'line1\nline2' } });
     expect(textarea.style.height).toBe('88px');
+  });
+});
+
+/* ── ref forwarding ────────────────────────────────────────────── */
+
+describe('PlaygroundPrompt ref forwarding', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('calls the ref callback with the textarea element on mount', () => {
+    const refFn = vi.fn();
+    const { textarea } = setup({ ref: refFn });
+    expect(refFn).toHaveBeenCalledTimes(1);
+    expect(refFn).toHaveBeenCalledWith(textarea);
+  });
+
+  it('does not throw when ref prop is not provided', () => {
+    expect(() => setup()).not.toThrow();
   });
 });

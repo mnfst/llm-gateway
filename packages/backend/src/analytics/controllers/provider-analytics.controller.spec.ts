@@ -49,6 +49,11 @@ describe('ProviderAnalyticsController', () => {
     getAgentNamesByAuthType: jest.Mock;
   };
   let providerRepo: { findOne: jest.Mock };
+  let autofixStats: { getConnectionTimeseries: jest.Mock };
+  let attemptStats: {
+    getConnectionStatusTimeseries: jest.Mock;
+    getConnectionAttemptsByAgentTimeseries: jest.Mock;
+  };
   let messageRepo: { createQueryBuilder: jest.Mock };
   let controller: ProviderAnalyticsController;
 
@@ -69,11 +74,30 @@ describe('ProviderAnalyticsController', () => {
       getAgentNamesByAuthType: jest.fn().mockResolvedValue(['agent-1']),
     };
     providerRepo = { findOne: jest.fn() };
-    messageRepo = { createQueryBuilder: jest.fn() };
+    autofixStats = {
+      getConnectionTimeseries: jest
+        .fn()
+        .mockResolvedValue({ range: '7d', by: 'disposition', keys: [], buckets: [] }),
+    };
+    attemptStats = {
+      getConnectionStatusTimeseries: jest
+        .fn()
+        .mockResolvedValue({ range: '7d', by: 'metric', keys: ['success', 'error'], buckets: [] }),
+      getConnectionAttemptsByAgentTimeseries: jest
+        .fn()
+        .mockResolvedValue({ agents: [], timeseries: [] }),
+    };
+    messageRepo = {
+      createQueryBuilder: jest
+        .fn()
+        .mockReturnValue(makeQb({ rawOne: { total: 0, successful: 0 } })),
+    };
 
     controller = new ProviderAnalyticsController(
       aggregation as unknown as AggregationService,
       timeseries as unknown as TimeseriesQueriesService,
+      autofixStats as never,
+      attemptStats as never,
       providerRepo as unknown as Repository<TenantProvider>,
       messageRepo as unknown as Repository<AgentMessage>,
     );
@@ -109,6 +133,14 @@ describe('ProviderAnalyticsController', () => {
       expect(out.token_usage).toEqual([{ hour: '01' }]);
     });
 
+    it('defaults missing provider-attempt reliability aggregates to zero', async () => {
+      messageRepo.createQueryBuilder.mockReturnValueOnce(makeQb({ rawOne: undefined }));
+
+      const out = await controller.getAnalytics(ctx, 'subscription');
+
+      expect(out.attempts).toEqual({ total: 0, successful: 0, success_rate: 0 });
+    });
+
     it('honors 7d range (non-hourly) and agent + provider filters', async () => {
       await controller.getAnalytics(ctx, 'api_key', '7d', 'agent-x', 'openai');
       expect(timeseries.getTimeseries).toHaveBeenCalledWith(
@@ -128,6 +160,20 @@ describe('ProviderAnalyticsController', () => {
       await controller.getAnalytics(ctx, undefined, '30d');
       expect(aggregation.getSummaryMetrics).toHaveBeenCalledWith(
         '30d',
+        'tenant-1',
+        undefined,
+        undefined,
+        undefined,
+        true,
+        undefined,
+        undefined,
+      );
+    });
+
+    it.each(['90d', '365d'])('honors the Connection Detail %s range', async (range) => {
+      await controller.getAnalytics(ctx, undefined, range);
+      expect(aggregation.getSummaryMetrics).toHaveBeenCalledWith(
+        range,
         'tenant-1',
         undefined,
         undefined,
@@ -243,6 +289,19 @@ describe('ProviderAnalyticsController', () => {
         false,
         'api_key',
         'anthropic',
+        undefined,
+        undefined,
+      );
+    });
+
+    it('uses 365d for matching provider timeseries endpoints', async () => {
+      await controller.getPerAgentMessageTimeseries(ctx, 'api_key', 'openai', '365d');
+      expect(timeseries.getPerAgentMessageTimeseries).toHaveBeenCalledWith(
+        '365d',
+        'tenant-1',
+        false,
+        'api_key',
+        'openai',
         undefined,
         undefined,
       );

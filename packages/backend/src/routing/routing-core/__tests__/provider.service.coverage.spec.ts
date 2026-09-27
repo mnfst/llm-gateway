@@ -198,11 +198,32 @@ describe('ProviderService — coverage completion', () => {
     const row = provRow({
       provider: 'openrouter',
       cached_models: [{ id: 'Foo-Model' }] as unknown as TenantProvider['cached_models'],
-      priority: 1,
+      priority: 0,
     });
     expect(
       priv().routeBelongsToProviderRows({ authType: 'api_key', model: 'foo-model' }, [row]),
     ).toBe(true);
+  });
+
+  it('routeBelongsToProviderRows rejects providerless routes for the wrong key', () => {
+    const row = provRow({
+      provider: 'openrouter',
+      auth_type: 'subscription',
+      cached_models: [{ id: 'Foo-Model' }] as unknown as TenantProvider['cached_models'],
+      priority: 0,
+    });
+    expect(
+      priv().routeBelongsToProviderRows({ authType: 'api_key', model: 'foo-model' }, [row]),
+    ).toBe(false);
+
+    const secondary = provRow({
+      provider: 'openrouter',
+      cached_models: [{ id: 'Foo-Model' }] as unknown as TenantProvider['cached_models'],
+      priority: 1,
+    });
+    expect(
+      priv().routeBelongsToProviderRows({ authType: 'api_key', model: 'foo-model' }, [secondary]),
+    ).toBe(false);
   });
 
   it('normalizeLabel rejects empty and local custom labels', () => {

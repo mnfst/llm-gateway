@@ -1,4 +1,5 @@
 import type { ForwardResult, ProviderClient } from '../routing/proxy/provider-client';
+import { unwrapCodeAssistStreamPayload } from '../routing/oauth/gemini/codeassist-envelope';
 import { createSsePayloadParser } from '../routing/proxy/sse-parser';
 import { parseUsageObject, type StreamUsage } from '../routing/proxy/stream-writer';
 
@@ -21,12 +22,15 @@ export interface ConsumeStreamResult {
 type ChunkTransform = (event: string) => string | null;
 
 function buildChunkTransform(
-  forward: Pick<ForwardResult, 'isGoogle' | 'isAnthropic' | 'isChatGpt'>,
+  forward: Pick<ForwardResult, 'isGoogle' | 'isAnthropic' | 'isChatGpt' | 'isCodeAssist'>,
   model: string,
   providerClient: ProviderClient,
 ): ChunkTransform {
   if (forward.isGoogle) {
-    return (event) => providerClient.convertGoogleStreamChunk(event, model).chunk;
+    return (event) => {
+      const innerEvent = forward.isCodeAssist ? unwrapCodeAssistStreamPayload(event) : event;
+      return providerClient.convertGoogleStreamChunk(innerEvent, model).chunk;
+    };
   }
   if (forward.isAnthropic) {
     // Stateful: must be created once per stream and fed events in order.
@@ -34,7 +38,8 @@ function buildChunkTransform(
     return (event) => transformer(event);
   }
   if (forward.isChatGpt) {
-    return (event) => providerClient.convertChatGptStreamChunk(event, model);
+    // Stateful: must be created once per stream and fed events in order.
+    return providerClient.createChatGptStreamTransformer(model);
   }
   // OpenAI-compatible passthrough: re-wrap the bare JSON payload so the same
   // line parser below handles every provider uniformly.
@@ -78,7 +83,7 @@ const MAX_STREAM_BUFFER = 1_048_576;
  */
 export async function consumeProviderStream(
   body: ReadableStream<Uint8Array>,
-  forward: Pick<ForwardResult, 'isGoogle' | 'isAnthropic' | 'isChatGpt'>,
+  forward: Pick<ForwardResult, 'isGoogle' | 'isAnthropic' | 'isChatGpt' | 'isCodeAssist'>,
   model: string,
   providerClient: ProviderClient,
   onDelta: (text: string) => void,

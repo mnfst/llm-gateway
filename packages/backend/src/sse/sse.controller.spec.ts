@@ -26,6 +26,16 @@ describe('SseController', () => {
     controller = module.get<SseController>(SseController);
   });
 
+  it('is excluded from the global throttler so the live stream is not rate-limited', () => {
+    // `@SkipThrottle()` (no args) defaults to `{ default: true }`, which the
+    // decorator stores as Reflect metadata under `${THROTTLER_SKIP}${key}` —
+    // i.e. the literal `THROTTLER:SKIPdefault`. The ThrottlerGuard reads this
+    // to bypass the limiter. Asserting it here pins the behavior: the SSE
+    // stream (one long-lived connection + EventSource reconnects) must never
+    // count against the 100-req/60s budget shared with dashboard polling.
+    expect(Reflect.getMetadata('THROTTLER:SKIPdefault', SseController)).toBe(true);
+  });
+
   it('subscribes to the bus scoped to the request tenant', () => {
     controller.events({ tenantId: 'tenant-1', userId: 'user-1' });
     expect(forTenant).toHaveBeenCalledWith('tenant-1');

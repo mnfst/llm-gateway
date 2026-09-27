@@ -2,259 +2,29 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
-import { AgentMessage } from '../entities/agent-message.entity';
-import { LlmCall } from '../entities/llm-call.entity';
-import { ToolExecution } from '../entities/tool-execution.entity';
-import { AgentLog } from '../entities/agent-log.entity';
-import { ApiKey } from '../entities/api-key.entity';
+import { entities, migrations } from './data-source-definitions';
+// Entities referenced directly below via TypeOrmModule.forFeature(); the full
+// registry for the DataSource lives in ./data-source-definitions.
 import { Tenant } from '../entities/tenant.entity';
 import { Agent } from '../entities/agent.entity';
 import { AgentApiKey } from '../entities/agent-api-key.entity';
-import { NotificationRule } from '../entities/notification-rule.entity';
-import { NotificationLog } from '../entities/notification-log.entity';
-import { EmailProviderConfig } from '../entities/email-provider-config.entity';
+import { AgentMessage } from '../entities/agent-message.entity';
+import { ManifestRequest } from '../entities/request.entity';
+import { ApiKey } from '../entities/api-key.entity';
 import { TenantProvider } from '../entities/tenant-provider.entity';
 import { TierAssignment } from '../entities/tier-assignment.entity';
 import { CustomProvider } from '../entities/custom-provider.entity';
 import { SpecificityAssignment } from '../entities/specificity-assignment.entity';
 import { HeaderTier } from '../entities/header-tier.entity';
-import { InstallMetadata } from '../entities/install-metadata.entity';
-import { BackfillState } from '../entities/backfill-state.entity';
-import { MessageRecording } from '../entities/message-recording.entity';
 import { AgentModelParams } from '../entities/agent-model-params.entity';
-import { PlaygroundRun } from '../entities/playground-run.entity';
-import { PlaygroundColumn } from '../entities/playground-column.entity';
 import { ReasoningContentCacheEntry } from '../entities/reasoning-content-cache-entry.entity';
 import { AgentEnabledProvider } from '../entities/agent-enabled-provider.entity';
 import { DatabaseSeederService } from './database-seeder.service';
+import { DbTuningService } from './db-tuning.service';
 import { ModelPricesModule } from '../model-prices/model-prices.module';
 import { shouldRetryDbConnection } from '../common/utils/db-retry';
-import { InitialSchema1771464895790 } from './migrations/1771464895790-InitialSchema';
-import { HashApiKeys1771500000000 } from './migrations/1771500000000-HashApiKeys';
-import { ModelPricingImprovements1771600000000 } from './migrations/1771600000000-ModelPricingImprovements';
-import { EmailProviderConfigs1771700000000 } from './migrations/1771700000000-EmailProviderConfigs';
-import { AddNotificationEmailAndOptionalDomain1771800000000 } from './migrations/1771800000000-AddNotificationEmailAndOptionalDomain';
-import { AddModelCapabilities1771600000000 } from './migrations/1771600000000-AddModelCapabilities';
-import { AddRoutingTables1771700000000 } from './migrations/1771700000000-AddRoutingTables';
-import { AddQualityScore1771800000000 } from './migrations/1771800000000-AddQualityScore';
-import { SeedQualityScores1771800100000 } from './migrations/1771800100000-SeedQualityScores';
-import { EncryptApiKeys1771900000000 } from './migrations/1771900000000-EncryptApiKeys';
-import { MakeApiKeyNullable1772000000000 } from './migrations/1772000000000-MakeApiKeyNullable';
-import { AddRoutingTier1772100000000 } from './migrations/1772100000000-AddRoutingTier';
-import { AddLimitAction1772200000000 } from './migrations/1772200000000-AddLimitAction';
-import { AddRoutingReason1772300000000 } from './migrations/1772300000000-AddRoutingReason';
-import { AddAgentDisplayName1772400000000 } from './migrations/1772400000000-AddAgentDisplayName';
-import { PerAgentRouting1772500000000 } from './migrations/1772500000000-PerAgentRouting';
-import { AddCustomProviders1772668898071 } from './migrations/1772668898071-AddCustomProviders';
-import { NullablePricing1772682112419 } from './migrations/1772682112419-NullablePricing';
-import { AddPerformanceIndexes1772843035514 } from './migrations/1772843035514-AddPerformanceIndexes';
-import { AddProviderAuthType1772900000000 } from './migrations/1772900000000-AddProviderAuthType';
-import { AddDashboardIndexes1772905146384 } from './migrations/1772905146384-AddDashboardIndexes';
-import { AddFallbacks1772905260464 } from './migrations/1772905260464-AddFallbacks';
-import { AddModelDisplayName1772920000000 } from './migrations/1772920000000-AddModelDisplayName';
-import { DropRedundantIndexes1772940000000 } from './migrations/1772940000000-DropRedundantIndexes';
-import { BackfillTenantId1772948502780 } from './migrations/1772948502780-BackfillTenantId';
-import { DropUnusedIndexes1772960000000 } from './migrations/1772960000000-DropUnusedIndexes';
-import { PurgeNonCuratedModels1772960000000 } from './migrations/1772960000000-PurgeNonCuratedModels';
-import { ExpandProviderUniqueKey1773000000000 } from './migrations/1773000000000-ExpandProviderUniqueKey';
-import { AddOverrideAuthType1773100000000 } from './migrations/1773100000000-AddOverrideAuthType';
-import { AddMessageAuthType1773200000000 } from './migrations/1773200000000-AddMessageAuthType';
-import { AddModelsAgentIndex1773202787708 } from './migrations/1773202787708-AddModelsAgentIndex';
-import { AddEmailProviderKeyPrefix1773300000000 } from './migrations/1773300000000-AddEmailProviderKeyPrefix';
-import { AddProviderModelCache1773400000000 } from './migrations/1773400000000-AddProviderModelCache';
-import { DropModelPricingTables1773500000000 } from './migrations/1773500000000-DropModelPricingTables';
-import { AddOverrideProvider1773600000000 } from './migrations/1773600000000-AddOverrideProvider';
-import { AddProviderRegion1773650000000 } from './migrations/1773650000000-AddProviderRegion';
-import { DropSecurityEventTable1773700000000 } from './migrations/1773700000000-DropSecurityEventTable';
-import { FixNegativeCosts1773800000000 } from './migrations/1773800000000-FixNegativeCosts';
-import { AddKeyPrefixIndex1773900000000 } from './migrations/1773900000000-AddKeyPrefixIndex';
-import { WidenKeyHashColumn1774000000000 } from './migrations/1774000000000-WidenKeyHashColumn';
-import { WidenApiKeyColumn1774896789000 } from './migrations/1774896789000-WidenApiKeyColumn';
-import { AddErrorHttpStatus1775000000000 } from './migrations/1775000000000-AddErrorHttpStatus';
-import { AddAgentType1775100000000 } from './migrations/1775100000000-AddAgentType';
-import { AddSpecificityAssignments1775200000000 } from './migrations/1775200000000-AddSpecificityAssignments';
-import { AddSpecificityCategory1775300000000 } from './migrations/1775300000000-AddSpecificityCategory';
-import { AddCallerAttribution1775400000000 } from './migrations/1775400000000-AddCallerAttribution';
-import { AddMessageProvider1775500000000 } from './migrations/1775500000000-AddMessageProvider';
-import { AddMessageFeedback1775600000000 } from './migrations/1775600000000-AddMessageFeedback';
-import { AddInstallMetadata1775700000000 } from './migrations/1775700000000-AddInstallMetadata';
-import { CleanupOrphanedCustomProviderRefs1776679833383 } from './migrations/1776679833383-CleanupOrphanedCustomProviderRefs';
-import { AddMessageRequestHeaders1776700000000 } from './migrations/1776700000000-AddMessageRequestHeaders';
-import { AddHeaderTiers1776710000000 } from './migrations/1776710000000-AddHeaderTiers';
-import { AddSpecificityMiscategorized1777000000000 } from './migrations/1777000000000-AddSpecificityMiscategorized';
-import { AddComplexityRoutingFlag1777100000000 } from './migrations/1777100000000-AddComplexityRoutingFlag';
-import { AddHeaderTierEnabled1777100000000 } from './migrations/1777100000000-AddHeaderTierEnabled';
-import { AddCustomProviderApiKind1777200000000 } from './migrations/1777200000000-AddCustomProviderApiKind';
-import { CanonicalizeTileProviderMessages1777200000000 } from './migrations/1777200000000-CanonicalizeTileProviderMessages';
-import { BackfillLocalAuthType1777200000000 } from './migrations/1777200000000-BackfillLocalAuthType';
-import { BackfillLocalCustomProviders1777300000000 } from './migrations/1777300000000-BackfillLocalCustomProviders';
-import { DropComplexityRoutingFlag1780000000000 } from './migrations/1780000000000-DropComplexityRoutingFlag';
-import { ReAddComplexityRoutingFlag1781000000000 } from './migrations/1781000000000-ReAddComplexityRoutingFlag';
-import { RetuneSpecificityMiscategorizedIndex1782000000000 } from './migrations/1782000000000-RetuneSpecificityMiscategorizedIndex';
-import { AddAgentSoftDelete1782200000000 } from './migrations/1782200000000-AddAgentSoftDelete';
-import { AddModelRouteColumns1783000000000 } from './migrations/1783000000000-AddModelRouteColumns';
-import { DropLegacyRoutingColumns1784000000000 } from './migrations/1784000000000-DropLegacyRoutingColumns';
-import { AddParamDefaultsColumns1785000000000 } from './migrations/1785000000000-AddParamDefaultsColumns';
-import { AddProviderKeyLabelAndPriority1785000000000 } from './migrations/1785000000000-AddProviderKeyLabelAndPriority';
-import { AddProviderKeyLabelToAgentMessages1785100000000 } from './migrations/1785100000000-AddProviderKeyLabelToAgentMessages';
-import { AddRequestParamsColumn1786000000000 } from './migrations/1786000000000-AddRequestParamsColumn';
-import { AddAgentRecordMessages1786100000000 } from './migrations/1786100000000-AddAgentRecordMessages';
-import { AddMessageRecordings1786200000000 } from './migrations/1786200000000-AddMessageRecordings';
-import { DefaultRecordMessagesTrue1786300000000 } from './migrations/1786300000000-DefaultRecordMessagesTrue';
-import { AddAgentModelParams1787000000000 } from './migrations/1787000000000-AddAgentModelParams';
-import { AddBenchmarkHistory1788000000000 } from './migrations/1788000000000-AddBenchmarkHistory';
-import { RenameBenchmarkToPlayground1789000000000 } from './migrations/1789000000000-RenameBenchmarkToPlayground';
-import { AddOAuthPendingFlows1789100000000 } from './migrations/1789100000000-AddOAuthPendingFlows';
-import { ScopeAgentModelParams1789200000000 } from './migrations/1789200000000-ScopeAgentModelParams';
-import { EnableRecordMessagesForAll1789300000000 } from './migrations/1789300000000-EnableRecordMessagesForAll';
-import { AddRoutingOutputControls1789300000000 } from './migrations/1789300000000-AddRoutingOutputControls';
-import { AddAgentApiKeyPrefixActiveIndex1790000000000 } from './migrations/1790000000000-AddAgentApiKeyPrefixActiveIndex';
-import { AddReasoningContentCache1790100000000 } from './migrations/1790100000000-AddReasoningContentCache';
-import { AddDedupCompositeIndex1790200000000 } from './migrations/1790200000000-AddDedupCompositeIndex';
-import { AddErrorsPartialIndex1790300000000 } from './migrations/1790300000000-AddErrorsPartialIndex';
-import { DropRedundantAgentApiKeyPrefixIndex1790400000000 } from './migrations/1790400000000-DropRedundantAgentApiKeyPrefixIndex';
-import { LiftProvidersToUserLevel1791000000000 } from './migrations/1791000000000-LiftProvidersToUserLevel';
-import { LiftCustomProvidersToUserLevel1791200000000 } from './migrations/1791200000000-LiftCustomProvidersToUserLevel';
-import { SeedPlaygroundAgents1791400000000 } from './migrations/1791400000000-SeedPlaygroundAgents';
-import { DropProviderRateLimits1791600000000 } from './migrations/1791600000000-DropProviderRateLimits';
-import { DropSavingsBaselineColumns1791700000000 } from './migrations/1791700000000-DropSavingsBaselineColumns';
-import { RenameProviderAccessToEnabledProviders1791800000000 } from './migrations/1791800000000-RenameProviderAccessToEnabledProviders';
-import { RenameIsSystemToIsPlayground1791900000000 } from './migrations/1791900000000-RenameIsSystemToIsPlayground';
-import { AddUserProviderIdToAgentMessages1792000000000 } from './migrations/1792000000000-AddUserProviderIdToAgentMessages';
-import { AddCustomProviderFkToUserProviders1792100000000 } from './migrations/1792100000000-AddCustomProviderFkToUserProviders';
-import { TenantOwnerColumn1792400000000 } from './migrations/1792400000000-TenantOwnerColumn';
-import { TenantProviders1792500000000 } from './migrations/1792500000000-TenantProviders';
-import { TenantScopedConfigs1792600000000 } from './migrations/1792600000000-TenantScopedConfigs';
-import { DropUserScopeFromRouting1792700000000 } from './migrations/1792700000000-DropUserScopeFromRouting';
-import { AddBackfillStateTable1792800000000 } from './migrations/1792800000000-AddBackfillStateTable';
-
-const entities = [
-  AgentMessage,
-  LlmCall,
-  ToolExecution,
-  AgentLog,
-  ApiKey,
-  Tenant,
-  Agent,
-  AgentApiKey,
-  NotificationRule,
-  NotificationLog,
-  EmailProviderConfig,
-  TenantProvider,
-  TierAssignment,
-  CustomProvider,
-  SpecificityAssignment,
-  HeaderTier,
-  InstallMetadata,
-  MessageRecording,
-  AgentModelParams,
-  PlaygroundRun,
-  PlaygroundColumn,
-  ReasoningContentCacheEntry,
-  AgentEnabledProvider,
-  BackfillState,
-];
-
-const migrations = [
-  InitialSchema1771464895790,
-  HashApiKeys1771500000000,
-  ModelPricingImprovements1771600000000,
-  EmailProviderConfigs1771700000000,
-  AddNotificationEmailAndOptionalDomain1771800000000,
-  AddModelCapabilities1771600000000,
-  AddRoutingTables1771700000000,
-  AddQualityScore1771800000000,
-  SeedQualityScores1771800100000,
-  EncryptApiKeys1771900000000,
-  MakeApiKeyNullable1772000000000,
-  AddRoutingTier1772100000000,
-  AddLimitAction1772200000000,
-  AddRoutingReason1772300000000,
-  AddAgentDisplayName1772400000000,
-  PerAgentRouting1772500000000,
-  AddCustomProviders1772668898071,
-  NullablePricing1772682112419,
-  AddPerformanceIndexes1772843035514,
-  AddProviderAuthType1772900000000,
-  AddDashboardIndexes1772905146384,
-  AddFallbacks1772905260464,
-  AddModelDisplayName1772920000000,
-  DropRedundantIndexes1772940000000,
-  BackfillTenantId1772948502780,
-  DropUnusedIndexes1772960000000,
-  PurgeNonCuratedModels1772960000000,
-  ExpandProviderUniqueKey1773000000000,
-  AddOverrideAuthType1773100000000,
-  AddMessageAuthType1773200000000,
-  AddModelsAgentIndex1773202787708,
-  AddEmailProviderKeyPrefix1773300000000,
-  AddProviderModelCache1773400000000,
-  DropModelPricingTables1773500000000,
-  AddOverrideProvider1773600000000,
-  AddProviderRegion1773650000000,
-  DropSecurityEventTable1773700000000,
-  FixNegativeCosts1773800000000,
-  AddKeyPrefixIndex1773900000000,
-  WidenKeyHashColumn1774000000000,
-  WidenApiKeyColumn1774896789000,
-  AddErrorHttpStatus1775000000000,
-  AddAgentType1775100000000,
-  AddSpecificityAssignments1775200000000,
-  AddSpecificityCategory1775300000000,
-  AddCallerAttribution1775400000000,
-  AddMessageProvider1775500000000,
-  AddMessageFeedback1775600000000,
-  AddInstallMetadata1775700000000,
-  CleanupOrphanedCustomProviderRefs1776679833383,
-  AddMessageRequestHeaders1776700000000,
-  AddHeaderTiers1776710000000,
-  AddSpecificityMiscategorized1777000000000,
-  AddComplexityRoutingFlag1777100000000,
-  AddHeaderTierEnabled1777100000000,
-  AddCustomProviderApiKind1777200000000,
-  CanonicalizeTileProviderMessages1777200000000,
-  BackfillLocalAuthType1777200000000,
-  BackfillLocalCustomProviders1777300000000,
-  DropComplexityRoutingFlag1780000000000,
-  ReAddComplexityRoutingFlag1781000000000,
-  RetuneSpecificityMiscategorizedIndex1782000000000,
-  AddAgentSoftDelete1782200000000,
-  AddModelRouteColumns1783000000000,
-  DropLegacyRoutingColumns1784000000000,
-  AddParamDefaultsColumns1785000000000,
-  AddProviderKeyLabelAndPriority1785000000000,
-  AddProviderKeyLabelToAgentMessages1785100000000,
-  AddRequestParamsColumn1786000000000,
-  AddAgentRecordMessages1786100000000,
-  AddMessageRecordings1786200000000,
-  DefaultRecordMessagesTrue1786300000000,
-  AddAgentModelParams1787000000000,
-  AddBenchmarkHistory1788000000000,
-  RenameBenchmarkToPlayground1789000000000,
-  AddOAuthPendingFlows1789100000000,
-  ScopeAgentModelParams1789200000000,
-  EnableRecordMessagesForAll1789300000000,
-  AddRoutingOutputControls1789300000000,
-  AddAgentApiKeyPrefixActiveIndex1790000000000,
-  AddReasoningContentCache1790100000000,
-  AddDedupCompositeIndex1790200000000,
-  AddErrorsPartialIndex1790300000000,
-  DropRedundantAgentApiKeyPrefixIndex1790400000000,
-  LiftProvidersToUserLevel1791000000000,
-  LiftCustomProvidersToUserLevel1791200000000,
-  SeedPlaygroundAgents1791400000000,
-  DropProviderRateLimits1791600000000,
-  DropSavingsBaselineColumns1791700000000,
-  RenameProviderAccessToEnabledProviders1791800000000,
-  RenameIsSystemToIsPlayground1791900000000,
-  AddUserProviderIdToAgentMessages1792000000000,
-  AddCustomProviderFkToUserProviders1792100000000,
-  TenantOwnerColumn1792400000000,
-  TenantProviders1792500000000,
-  TenantScopedConfigs1792600000000,
-  DropUserScopeFromRouting1792700000000,
-  AddBackfillStateTable1792800000000,
-];
+import { RequestRecordingRetentionService } from './request-recording-retention.service';
+import { SecretReencryptionService } from './secret-reencryption.service';
 
 @Module({
   imports: [
@@ -266,14 +36,20 @@ const migrations = [
         url: config.get<string>('app.databaseUrl'),
         entities,
         synchronize: false,
-        // Run migrations on every boot. `synchronize: false` is permanent, so
-        // committed migrations are the only source of schema changes — there's
-        // no scenario where production should boot with pending migrations
-        // unapplied (the dashboard 500s on missing tables). Previously this
-        // was gated on AUTO_MIGRATE=true / NODE_ENV, which broke fresh
-        // production installs whose env didn't set the var (see #1551 / 5.45.1).
-        migrationsRun: true,
-        migrationsTransactionMode: 'all' as const,
+        // Run migrations on boot by default. `synchronize: false` is permanent,
+        // so committed migrations are the only source of schema changes, and a
+        // single instance (dev, self-hosted) must boot with the schema applied
+        // (the dashboard 500s on missing tables). On multi-replica deploys this
+        // is turned off (RUN_MIGRATIONS_ON_BOOT=false) so replicas don't migrate
+        // concurrently over PgBouncer — a pre-deploy step migrates once over a
+        // direct connection instead. Previously this was hardcoded true, which
+        // deadlocked when several replicas migrated at once on the same deploy.
+        migrationsRun: config.get<boolean>('app.runMigrationsOnBoot'),
+        // 'each' (per-migration transaction), not 'all': the agent_messages index
+        // migrations run CONCURRENTLY and declare `transaction = false`, which
+        // TypeORM forbids under 'all'. CONCURRENTLY avoids the ACCESS EXCLUSIVE
+        // lock that deadlocks against live writes during a deploy.
+        migrationsTransactionMode: 'each' as const,
         migrations,
         // A failed migration must not go through the connection-retry loop:
         // @nestjs/typeorm checks toRetry before logging, so returning false
@@ -283,7 +59,7 @@ const migrations = [
         toRetry: shouldRetryDbConnection,
         logging: false,
         extra: {
-          // app.config.ts always resolves dbPoolMax (default 20), so there is no
+          // app.config.ts always resolves dbPoolMax (default 10), so there is no
           // undefined case to fall back from — keep that file the single source
           // of truth for the pool size.
           max: config.get<number>('app.dbPoolMax'),
@@ -302,20 +78,25 @@ const migrations = [
       Agent,
       AgentApiKey,
       AgentMessage,
+      ManifestRequest,
       ApiKey,
       TenantProvider,
       TierAssignment,
       CustomProvider,
       SpecificityAssignment,
       HeaderTier,
-      MessageRecording,
       AgentModelParams,
       ReasoningContentCacheEntry,
       AgentEnabledProvider,
     ]),
     ModelPricesModule,
   ],
-  providers: [DatabaseSeederService],
+  providers: [
+    DatabaseSeederService,
+    DbTuningService,
+    RequestRecordingRetentionService,
+    SecretReencryptionService,
+  ],
   exports: [DatabaseSeederService],
 })
 export class DatabaseModule {}

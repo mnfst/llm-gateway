@@ -2,8 +2,16 @@ import { randomUUID } from 'crypto';
 
 import { DEFAULT_INSTRUCTIONS } from './chatgpt-helpers';
 import { OpenAIMessage } from './proxy-types';
+import { deduplicateCallIds } from './responses-call-ids';
+import { chatToolName, chatTools, responsesToolNames, ResponsesToolNames } from './responses-tools';
 
 type JsonRecord = Record<string, unknown>;
+
+interface ChatCompletionToResponsesOptions {
+  toolNames?: ResponsesToolNames;
+  structuredOutputToolName?: string;
+  textFormat?: JsonRecord;
+}
 
 function isRecord(value: unknown): value is JsonRecord {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -36,7 +44,7 @@ function toChatContent(content: unknown, role: string): unknown {
   return converted;
 }
 
-function responseInputItemToMessage(item: JsonRecord): OpenAIMessage[] {
+function responseInputItemToMessage(item: JsonRecord, names: ResponsesToolNames): OpenAIMessage[] {
   if (item.type === 'function_call') {
     return [
       {
@@ -47,7 +55,7 @@ function responseInputItemToMessage(item: JsonRecord): OpenAIMessage[] {
             id: typeof item.call_id === 'string' ? item.call_id : randomUUID(),
             type: 'function',
             function: {
-              name: typeof item.name === 'string' ? item.name : 'unknown',
+              name: chatToolName(item, names),
               arguments: typeof item.arguments === 'string' ? item.arguments : '{}',
             },
           },
@@ -71,12 +79,26 @@ function responseInputItemToMessage(item: JsonRecord): OpenAIMessage[] {
     ];
   }
 
-  const role = typeof item.role === 'string' ? item.role : 'user';
-  return [{ role, content: toChatContent(item.content, role) }];
+  // Typed items with no chat-completions equivalent — `reasoning` (whose
+  // `encrypted_content` is opaque outside OpenAI), `item_reference`,
+  // `web_search_call`, and friends. Dropping them is the only safe mapping:
+  // falling through would emit `{ role: 'user' }` with no `content`, which
+  // strictly-validating providers reject with 400/422.
+  if (!isNativeResponsesMessageItem(item)) return [];
+
+  const rawRole = typeof item.role === 'string' ? item.role : 'user';
+  const role = rawRole === 'developer' ? 'system' : rawRole;
+  const content = toChatContent(item.content, role);
+  // A message item carrying no content at all is the same wire hazard: the
+  // key is omitted on serialization and `{ role: 'user' }` goes out again.
+  if (content === undefined) return [];
+
+  return [{ role, content }];
 }
 
 export function toChatCompletionsRequest(body: JsonRecord): JsonRecord {
   const messages: OpenAIMessage[] = [];
+  const names = responsesToolNames(body.tools);
   const instructions = body.instructions;
   if (typeof instructions === 'string' && instructions.trim()) {
     messages.push({ role: 'system', content: instructions });
@@ -90,7 +112,16 @@ export function toChatCompletionsRequest(body: JsonRecord): JsonRecord {
       if (typeof item === 'string') {
         messages.push({ role: 'user', content: item });
       } else if (isRecord(item)) {
-        messages.push(...responseInputItemToMessage(item));
+        const converted = responseInputItemToMessage(item, names);
+        const previous = messages[messages.length - 1];
+        const next = converted[0];
+        // Parallel Responses calls are separate items, but Chat Completions
+        // requires one assistant turn followed by all matching tool results.
+        if (previous?.tool_calls && next?.tool_calls) {
+          previous.tool_calls.push(...next.tool_calls);
+        } else {
+          messages.push(...converted);
+        }
       }
     }
   }
@@ -110,30 +141,40 @@ export function toChatCompletionsRequest(body: JsonRecord): JsonRecord {
   }
 
   if (body.max_output_tokens !== undefined) chatBody.max_tokens = body.max_output_tokens;
-  if (Array.isArray(body.tools)) chatBody.tools = toChatTools(body.tools);
-  if (body.tool_choice !== undefined) chatBody.tool_choice = toChatToolChoice(body.tool_choice);
+  const responseFormat = toChatResponseFormat(body.text);
+  if (responseFormat) chatBody.response_format = responseFormat;
+  if (Array.isArray(body.tools)) chatBody.tools = chatTools(body.tools, names);
+  const toolChoice = toChatToolChoice(body.tool_choice, names);
+  if (toolChoice !== undefined) chatBody.tool_choice = toolChoice;
 
   return chatBody;
 }
 
-function toChatTools(tools: unknown[]): JsonRecord[] {
-  return tools.filter(isRecord).map((tool) => {
-    if (tool.type !== 'function') return tool;
-    return {
-      type: 'function',
-      function: {
-        name: tool.name,
-        ...(tool.description !== undefined && { description: tool.description }),
-        ...(tool.parameters !== undefined && { parameters: tool.parameters }),
-        ...(tool.strict !== undefined && { strict: tool.strict }),
-      },
-    };
-  });
+function toChatResponseFormat(text: unknown): JsonRecord | undefined {
+  if (!isRecord(text) || !isRecord(text.format)) return undefined;
+
+  const format = text.format;
+  if (format.type === 'json_object') {
+    return { type: 'json_object' };
+  }
+  if (format.type !== 'json_schema') return undefined;
+
+  const jsonSchema: JsonRecord = {};
+  if (format.name !== undefined) jsonSchema.name = format.name;
+  if (format.schema !== undefined) jsonSchema.schema = format.schema;
+  if (format.strict !== undefined) jsonSchema.strict = format.strict;
+  if (typeof format.description === 'string' && format.description) {
+    jsonSchema.description = format.description;
+  }
+  return { type: 'json_schema', json_schema: jsonSchema };
 }
 
-function toChatToolChoice(toolChoice: unknown): unknown {
-  if (!isRecord(toolChoice) || toolChoice.type !== 'function') return toolChoice;
-  return { type: 'function', function: { name: toolChoice.name } };
+function toChatToolChoice(toolChoice: unknown, names: ResponsesToolNames): unknown {
+  if (toolChoice === 'auto' || toolChoice === 'none' || toolChoice === 'required')
+    return toolChoice;
+  // A hosted tool removed from tools cannot remain as a forced tool choice.
+  if (!isRecord(toolChoice) || toolChoice.type !== 'function') return undefined;
+  return { type: 'function', function: { name: chatToolName(toolChoice, names) } };
 }
 
 /**
@@ -184,6 +225,14 @@ export function toNativeResponsesRequest(
     request.input = toNativeResponsesInput(body.input);
   } else if (body.input !== undefined) {
     request.input = normalizeNativeResponsesInput(body.input);
+  }
+  // `previous_response_id` means the provider holds the earlier turns, so the
+  // ids in this request can pair with items we cannot see. Leave them alone.
+  if (
+    Array.isArray(request.input) &&
+    (typeof request.previous_response_id !== 'string' || !request.previous_response_id)
+  ) {
+    request.input = deduplicateCallIds(request.input);
   }
   if (
     opts?.defaultInstructions &&
@@ -260,31 +309,76 @@ function extractImageDetail(part: JsonRecord): { detail?: string } {
   return typeof detail === 'string' ? { detail } : {};
 }
 
-export function fromChatCompletionResponse(body: JsonRecord, model: string): JsonRecord {
+function findStructuredOutputToolCall(
+  toolCalls: unknown,
+  toolName: string | undefined,
+): JsonRecord | null {
+  if (!toolName || !Array.isArray(toolCalls)) return null;
+  for (const toolCall of toolCalls) {
+    if (!isRecord(toolCall) || !isRecord(toolCall.function)) continue;
+    if (toolCall.function.name === toolName) return toolCall;
+  }
+  return null;
+}
+
+function toolCallArguments(toolCall: JsonRecord | null): string | null {
+  const fn = isRecord(toolCall?.function) ? toolCall.function : null;
+  if (!fn) return null;
+  return typeof fn.arguments === 'string' ? fn.arguments : '{}';
+}
+
+function responseTextFormat(format: unknown): JsonRecord {
+  if (!isRecord(format)) return { type: 'text' };
+  if (format.type === 'json_object') return { type: 'json_object' };
+  if (format.type !== 'json_schema') return { type: 'text' };
+
+  const out: JsonRecord = { type: 'json_schema' };
+  if (format.name !== undefined) out.name = format.name;
+  if (format.schema !== undefined) out.schema = format.schema;
+  if (format.strict !== undefined) out.strict = format.strict;
+  if (typeof format.description === 'string' && format.description) {
+    out.description = format.description;
+  }
+  return out;
+}
+
+export function fromChatCompletionResponse(
+  body: JsonRecord,
+  model: string,
+  options: ChatCompletionToResponsesOptions = {},
+): JsonRecord {
   const choices = Array.isArray(body.choices) ? body.choices : [];
   const firstChoice = isRecord(choices[0]) ? choices[0] : {};
   const message = isRecord(firstChoice.message) ? firstChoice.message : {};
   const output: JsonRecord[] = [];
+  const structuredToolCall = findStructuredOutputToolCall(
+    message.tool_calls,
+    options.structuredOutputToolName,
+  );
+  const structuredText = toolCallArguments(structuredToolCall);
   const contentText = textFromContent(message.content);
+  const outputText = structuredText ?? contentText;
 
-  if (contentText) {
+  if (outputText || structuredText !== null) {
     output.push({
       type: 'message',
       id: `msg_${randomUUID().replace(/-/g, '')}`,
       status: 'completed',
       role: 'assistant',
-      content: [{ type: 'output_text', text: contentText, annotations: [] }],
+      content: [{ type: 'output_text', text: outputText, annotations: [] }],
     });
   }
 
   if (Array.isArray(message.tool_calls)) {
     for (const toolCall of message.tool_calls) {
       if (!isRecord(toolCall) || !isRecord(toolCall.function)) continue;
+      if (toolCall === structuredToolCall) continue;
       output.push({
         type: 'function_call',
         id: `fc_${randomUUID().replace(/-/g, '')}`,
         call_id: typeof toolCall.id === 'string' ? toolCall.id : randomUUID(),
         name: typeof toolCall.function.name === 'string' ? toolCall.function.name : '',
+        ...options.toolNames?.get(String(toolCall.function.name)),
         arguments:
           typeof toolCall.function.arguments === 'string' ? toolCall.function.arguments : '{}',
         status: 'completed',
@@ -310,7 +404,7 @@ export function fromChatCompletionResponse(body: JsonRecord, model: string): Jso
     reasoning: { effort: null, summary: null },
     store: false,
     temperature: null,
-    text: { format: { type: 'text' } },
+    text: { format: responseTextFormat(options.textFormat) },
     tool_choice: 'auto',
     tools: [],
     top_p: null,
@@ -330,10 +424,15 @@ function toResponsesUsage(usage: unknown): JsonRecord | null {
     typeof usage.total_tokens === 'number' ? usage.total_tokens : promptTokens + completionTokens;
   const cachedTokens =
     typeof usage.cache_read_tokens === 'number' ? usage.cache_read_tokens : undefined;
+  const cacheWriteTokens =
+    typeof usage.cache_creation_tokens === 'number' ? usage.cache_creation_tokens : undefined;
 
   return {
     input_tokens: promptTokens,
-    input_tokens_details: { cached_tokens: cachedTokens ?? 0 },
+    input_tokens_details: {
+      cached_tokens: cachedTokens ?? 0,
+      cache_write_tokens: cacheWriteTokens ?? 0,
+    },
     output_tokens: completionTokens,
     output_tokens_details: { reasoning_tokens: 0 },
     total_tokens: totalTokens,
@@ -507,13 +606,35 @@ export interface ResponsesStreamTransformer {
   finalize: () => string | null;
 }
 
+export interface ResponsesStreamTransformerOptions {
+  toolNames?: ResponsesToolNames;
+  structuredOutputToolName?: string;
+  textFormat?: JsonRecord;
+}
+
+interface StreamFunctionCall {
+  id: string;
+  callId: string;
+  name: string;
+  arguments: string;
+  outputIndex?: number;
+}
+
 interface ResponsesStreamState {
+  toolNames?: ResponsesToolNames;
+  toolCalls: Map<number, StreamFunctionCall>;
+  nextOutputIndex: number;
+  messageOutputIndex: number;
+
   responseId: string;
   itemId: string;
   model: string;
   createdAt: number;
   usage: unknown;
   text: string;
+  structuredOutputToolName?: string;
+  structuredToolCallIndexes: Set<number>;
+  textFormat?: JsonRecord;
   createdEmitted: boolean;
   itemOpened: boolean;
   completed: boolean;
@@ -535,8 +656,15 @@ interface ResponsesStreamState {
  * the terminal `data: [DONE]`. When a `finalize` is supplied, `pipeStream`
  * delegates termination to it (it does not add its own `[DONE]`).
  */
-export function createResponsesStreamTransformer(model: string): ResponsesStreamTransformer {
+export function createResponsesStreamTransformer(
+  model: string,
+  options: ResponsesStreamTransformerOptions = {},
+): ResponsesStreamTransformer {
   const state: ResponsesStreamState = {
+    toolNames: options.toolNames,
+    toolCalls: new Map(),
+    nextOutputIndex: 0,
+    messageOutputIndex: 0,
     responseId: `resp_${randomUUID().replace(/-/g, '')}`,
     itemId: `msg_${randomUUID().replace(/-/g, '')}`,
     model,
@@ -546,6 +674,9 @@ export function createResponsesStreamTransformer(model: string): ResponsesStream
     createdAt: Math.floor(Date.now() / 1000),
     usage: undefined,
     text: '',
+    structuredOutputToolName: options.structuredOutputToolName,
+    structuredToolCallIndexes: new Set(),
+    textFormat: options.textFormat,
     createdEmitted: false,
     itemOpened: false,
     completed: false,
@@ -561,6 +692,7 @@ function inProgressResponse(state: ResponsesStreamState): JsonRecord {
   const response = fromChatCompletionResponse(
     { model: state.model, created: state.createdAt, choices: [{ message: { content: '' } }] },
     state.model,
+    { textFormat: state.textFormat },
   );
   response.id = state.responseId;
   response.status = 'in_progress';
@@ -582,10 +714,11 @@ function emitCreated(state: ResponsesStreamState): string[] {
 function emitItemOpen(state: ResponsesStreamState): string[] {
   if (state.itemOpened) return [];
   state.itemOpened = true;
+  state.messageOutputIndex = state.nextOutputIndex++;
   return [
     formatResponsesEvent('response.output_item.added', {
       type: 'response.output_item.added',
-      output_index: 0,
+      output_index: state.messageOutputIndex,
       item: {
         id: state.itemId,
         type: 'message',
@@ -597,11 +730,115 @@ function emitItemOpen(state: ResponsesStreamState): string[] {
     formatResponsesEvent('response.content_part.added', {
       type: 'response.content_part.added',
       item_id: state.itemId,
-      output_index: 0,
+      output_index: state.messageOutputIndex,
       content_index: 0,
       part: { type: 'output_text', text: '', annotations: [] },
     }),
   ];
+}
+
+function structuredOutputTextDelta(toolCalls: unknown, state: ResponsesStreamState): string {
+  if (!state.structuredOutputToolName || !Array.isArray(toolCalls)) return '';
+
+  let text = '';
+  for (const toolCall of toolCalls) {
+    if (!isRecord(toolCall)) continue;
+    const index = typeof toolCall.index === 'number' ? toolCall.index : 0;
+    const fn = isRecord(toolCall.function) ? toolCall.function : null;
+    if (!fn) continue;
+    if (fn.name === state.structuredOutputToolName) {
+      state.structuredToolCallIndexes.add(index);
+    }
+    if (
+      state.structuredToolCallIndexes.has(index) &&
+      typeof fn.arguments === 'string' &&
+      fn.arguments.length > 0
+    ) {
+      text += fn.arguments;
+    }
+  }
+  return text;
+}
+
+function emitOutputTextDelta(state: ResponsesStreamState, delta: string): string[] {
+  if (!delta) return [];
+  const events = emitItemOpen(state);
+  state.text += delta;
+  events.push(
+    formatResponsesEvent('response.output_text.delta', {
+      type: 'response.output_text.delta',
+      item_id: state.itemId,
+      output_index: state.messageOutputIndex,
+      content_index: 0,
+      delta,
+    }),
+  );
+  return events;
+}
+
+function functionCallItem(
+  call: StreamFunctionCall,
+  state: ResponsesStreamState,
+  status: string,
+): JsonRecord {
+  return {
+    type: 'function_call',
+    id: call.id,
+    call_id: call.callId,
+    name: call.name,
+    ...state.toolNames?.get(call.name),
+    arguments: status === 'in_progress' ? '' : call.arguments,
+    status,
+  };
+}
+
+function openFunctionCall(call: StreamFunctionCall, state: ResponsesStreamState): string[] {
+  if (call.outputIndex !== undefined) return [];
+  call.outputIndex = state.nextOutputIndex++;
+  return [
+    formatResponsesEvent('response.output_item.added', {
+      type: 'response.output_item.added',
+      output_index: call.outputIndex,
+      item: functionCallItem(call, state, 'in_progress'),
+    }),
+  ];
+}
+
+function toolCallDeltas(toolCalls: unknown, state: ResponsesStreamState): string[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const events: string[] = [];
+  for (const delta of toolCalls) {
+    if (!isRecord(delta) || !isRecord(delta.function)) continue;
+    const index = typeof delta.index === 'number' ? delta.index : 0;
+    let call = state.toolCalls.get(index);
+    if (!call) {
+      call = { id: `fc_${randomUUID().replace(/-/g, '')}`, callId: '', name: '', arguments: '' };
+      state.toolCalls.set(index, call);
+    }
+    if (typeof delta.id === 'string') call.callId = delta.id;
+    if (typeof delta.function.name === 'string') call.name += delta.function.name;
+    const args = typeof delta.function.arguments === 'string' ? delta.function.arguments : '';
+    call.arguments += args;
+    if (call.name === state.structuredOutputToolName) continue;
+    // Production forwards the declared names, so complete names can open
+    // immediately even before arguments. Undeclared/partial names wait for
+    // finalization; an arguments delta does not prove the name is complete.
+    if (!call.name || !call.callId) continue;
+    if (state.toolNames ? !state.toolNames.has(call.name) : !call.arguments) continue;
+    const first = call.outputIndex === undefined;
+    events.push(...openFunctionCall(call, state));
+    const text = first ? call.arguments : args;
+    if (text)
+      events.push(
+        formatResponsesEvent('response.function_call_arguments.delta', {
+          type: 'response.function_call_arguments.delta',
+          item_id: call.id,
+          output_index: call.outputIndex,
+          delta: text,
+        }),
+      );
+  }
+  return events;
 }
 
 function transformResponsesStreamChunk(chunk: string, state: ResponsesStreamState): string | null {
@@ -622,17 +859,13 @@ function transformResponsesStreamChunk(chunk: string, state: ResponsesStreamStat
     const delta = isRecord(choice?.delta) ? choice.delta : {};
 
     if (typeof delta.content === 'string' && delta.content.length > 0) {
-      events.push(...emitItemOpen(state));
-      state.text += delta.content;
-      events.push(
-        formatResponsesEvent('response.output_text.delta', {
-          type: 'response.output_text.delta',
-          item_id: state.itemId,
-          output_index: 0,
-          content_index: 0,
-          delta: delta.content,
-        }),
-      );
+      events.push(...emitOutputTextDelta(state, delta.content));
+    }
+
+    events.push(...toolCallDeltas(delta.tool_calls, state));
+    const structuredDelta = structuredOutputTextDelta(delta.tool_calls, state);
+    if (structuredDelta) {
+      events.push(...emitOutputTextDelta(state, structuredDelta));
     }
   }
 
@@ -650,20 +883,20 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
       formatResponsesEvent('response.output_text.done', {
         type: 'response.output_text.done',
         item_id: state.itemId,
-        output_index: 0,
+        output_index: state.messageOutputIndex,
         content_index: 0,
         text: state.text,
       }),
       formatResponsesEvent('response.content_part.done', {
         type: 'response.content_part.done',
         item_id: state.itemId,
-        output_index: 0,
+        output_index: state.messageOutputIndex,
         content_index: 0,
         part: { type: 'output_text', text: state.text, annotations: [] },
       }),
       formatResponsesEvent('response.output_item.done', {
         type: 'response.output_item.done',
-        output_index: 0,
+        output_index: state.messageOutputIndex,
         item: {
           id: state.itemId,
           type: 'message',
@@ -671,6 +904,28 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
           role: 'assistant',
           content: [{ type: 'output_text', text: state.text, annotations: [] }],
         },
+      }),
+    );
+  }
+
+  const toolOutput: { index: number; item: JsonRecord }[] = [];
+  for (const call of state.toolCalls.values()) {
+    if (!call.name || call.name === state.structuredOutputToolName) continue;
+    if (!call.callId) call.callId = randomUUID();
+    events.push(...openFunctionCall(call, state));
+    const item = functionCallItem(call, state, 'completed');
+    toolOutput.push({ index: call.outputIndex!, item });
+    events.push(
+      formatResponsesEvent('response.function_call_arguments.done', {
+        type: 'response.function_call_arguments.done',
+        item_id: call.id,
+        output_index: call.outputIndex,
+        arguments: call.arguments,
+      }),
+      formatResponsesEvent('response.output_item.done', {
+        type: 'response.output_item.done',
+        output_index: call.outputIndex,
+        item,
       }),
     );
   }
@@ -683,6 +938,10 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
       choices: [{ message: { content: state.text } }],
     },
     state.model,
+    {
+      structuredOutputToolName: state.structuredOutputToolName,
+      textFormat: state.textFormat,
+    },
   );
   response.id = state.responseId;
   // `created_at` is the stream-start stamp (shared across every snapshot for
@@ -693,6 +952,14 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
     const message = response.output.find((item) => isRecord(item) && item.type === 'message');
     if (isRecord(message)) message.id = state.itemId;
   }
+
+  const output = (response.output as JsonRecord[]).map((item) => ({
+    index: state.messageOutputIndex,
+    item,
+  }));
+  response.output = [...output, ...toolOutput]
+    .sort((a, b) => a.index - b.index)
+    .map(({ item }) => item);
 
   events.push(
     formatResponsesEvent('response.completed', { type: 'response.completed', response }),

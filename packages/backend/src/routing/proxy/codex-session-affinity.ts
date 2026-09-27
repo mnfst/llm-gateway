@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 
 import { Injectable } from '@nestjs/common';
 
@@ -10,19 +10,36 @@ const MAX_ENTRIES = 10_000;
 // keys (MAX_ENTRIES bounds the count, this bounds each key's size).
 const MAX_CACHE_KEY_LEN = 512;
 
+/**
+ * Deterministic v4-shaped UUID for a caller cache key. The version and
+ * variant bits are set so the value passes UUID validation on the backend,
+ * and the namespace keeps session-id and thread-id distinct for one key.
+ */
+function derivedUuid(namespace: 'session-id' | 'thread-id', cacheKey: string): string {
+  const digest = createHash('sha256').update(`${namespace}\u0000${cacheKey}`).digest();
+  digest[6] = (digest[6] & 0x0f) | 0x40;
+  digest[8] = (digest[8] & 0x3f) | 0x80;
+  const hex = digest.subarray(0, 16).toString('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
 interface CodexSession {
   sessionId: string;
   threadId: string;
   promptCacheKey: string;
   turnState?: string;
   expiresAt: number;
+  /** Bumped on every replacement so a capture from a request that outlived its entry is ignored. */
+  incarnation: number;
 }
 
 export interface CodexAffinityRequest {
   /** Headers to merge into the upstream request. */
   headers: Record<string, string>;
   /** Key under which `capture()` stores the response's turn-state token. */
-  storeKey: string;
+  storeKey?: string;
+  /** Incarnation of the entry `prepare()` resolved; `capture()` ignores a stale one. */
+  incarnation?: number;
 }
 
 /**
@@ -36,35 +53,45 @@ export interface CodexAffinityRequest {
  * `x-codex-turn-state` sticky-routing token returned by each response on the
  * next request. Manifest sent none of these, so every request landed on an
  * arbitrary shard and `cached_tokens` was always 0 — agentic tool loops
- * re-paid their full prompt prefix on every step (mnfst/manifest#2217).
+ * re-paid their full prompt prefix on every step (mnfst/llm-gateway#2217).
  *
  * This service closes that gap:
  * - `prepare()` resolves a session for the subscription token + the caller's
- *   `prompt_cache_key` (injecting a stable default when the caller sent none,
- *   exactly like the CLI) and attaches its ids plus the last seen turn-state
- *   token.
+ *   `prompt_cache_key` and attaches its ids plus the last seen turn-state
+ *   token. Requests without a caller cache key receive request-local affinity
+ *   because the subscription token is a credential, not a conversation scope.
  * - `capture()` stores the response's turn-state token for the next request,
  *   and drops it on upstream errors so a poisoned token can't wedge a session.
  *
- * Session ids are random, never derived from the credential — the token is
- * only used as an in-memory map key and never flows into any hash or header.
- * Sessions live in-memory with a sliding TTL: ids only need to outlive the
- * upstream prompt cache they pin (minutes), so losing them on restart or
- * expiry just means one cold-cache request, which is today's behavior on
- * every request. The CLI scopes turn-state to a single turn, but a proxy
- * cannot see turn boundaries; the TTL bounds how far a token can outlive its
- * turn to the window where the cache it routes to is still warm. Tokens are
- * per-instance — in a multi-replica deployment each replica converges on its
- * own affinity, which degrades to today's behavior at worst.
+ * Session and thread ids are a pure function of the caller's
+ * `prompt_cache_key` (a v4-shaped UUID derived from its SHA-256), so every
+ * replica and every process restart sends the same ids for the same
+ * conversation without any shared state. The Codex backend routes on those
+ * ids: measured directly against the backend, stable ids alone serve cache
+ * hits from the second request on, while ids that change between requests
+ * never hit even when `prompt_cache_key` and the turn-state token are
+ * replayed. Random per-process ids therefore cost one cold request per
+ * replica per conversation, and the sticky token captured on one replica
+ * was useless on the others. The credential is never hashed — it is only
+ * used as an in-memory map key for the turn-state token. Requests without a
+ * caller cache key keep random request-local ids.
+ *
+ * The turn-state token still lives in-memory with a sliding TTL: the CLI
+ * scopes it to a single turn, but a proxy cannot see turn boundaries, so the
+ * TTL bounds how far a token can outlive its turn to the window where the
+ * cache it routes to is still warm. The token is a best-effort, per-instance
+ * optimisation on top of the deterministic ids, not the routing primitive.
  */
 @Injectable()
 export class CodexSessionAffinity {
   private readonly sessions = new Map<string, CodexSession>();
+  /** Monotonic so a replacement never reuses the incarnation of a swept or evicted entry. */
+  private nextIncarnation = 1;
   private lastCleanup = Date.now();
 
   /**
    * Resolve affinity headers for an outgoing Codex-backend request and inject
-   * a stable `prompt_cache_key` into `requestBody` when the caller sent none.
+   * a request-local `prompt_cache_key` into `requestBody` when the caller sent none.
    */
   prepare(apiKey: string, requestBody: Record<string, unknown>): CodexAffinityRequest {
     const callerKey = requestBody.prompt_cache_key;
@@ -72,9 +99,10 @@ export class CodexSessionAffinity {
       typeof callerKey === 'string' && callerKey && callerKey.length <= MAX_CACHE_KEY_LEN
         ? callerKey
         : null;
-    const storeKey = cacheKey ? `${apiKey}\u0000${cacheKey}` : apiKey;
-
-    const session = this.getOrCreateSession(storeKey, cacheKey);
+    const storeKey = cacheKey ? `${apiKey}\u0000${cacheKey}` : undefined;
+    const session = storeKey
+      ? this.getOrCreateSession(storeKey, cacheKey)
+      : this.createSession(null);
     requestBody.prompt_cache_key = session.promptCacheKey;
 
     const headers: Record<string, string> = {
@@ -83,18 +111,23 @@ export class CodexSessionAffinity {
     };
     if (session.turnState) headers['x-codex-turn-state'] = session.turnState;
 
-    return { headers, storeKey };
+    return storeKey ? { headers, storeKey, incarnation: session.incarnation } : { headers };
   }
 
   /**
    * Store the response's sticky-routing token for the next request in this
    * session, or evict the stale one when the upstream rejected the request.
    */
-  capture(storeKey: string, response: Response): void {
+  capture(storeKey: string | undefined, response: Response, incarnation?: number): void {
+    if (!storeKey) return;
     const session = this.sessions.get(storeKey);
     // The session can be gone when a request outlives the TTL; the next
     // prepare() starts a fresh one, so there is nothing to record here.
     if (!session) return;
+    // A request that outlived its entry (expired or evicted, then replaced
+    // under the same key) must not hand its token to the replacement: the
+    // ids match, but the token belongs to a turn the new entry never saw.
+    if (incarnation !== undefined && incarnation !== session.incarnation) return;
     if (!response.ok) {
       delete session.turnState;
       return;
@@ -121,14 +154,29 @@ export class CodexSessionAffinity {
       const oldest = this.sessions.keys().next().value as string;
       this.sessions.delete(oldest);
     }
-    const session: CodexSession = {
-      sessionId: randomUUID(),
-      threadId: randomUUID(),
-      promptCacheKey: callerCacheKey ?? randomUUID(),
-      expiresAt: Date.now() + SESSION_TTL_MS,
-    };
+    const session = this.createSession(callerCacheKey);
+    session.incarnation = this.nextIncarnation++;
     this.sessions.set(storeKey, session);
     return session;
+  }
+
+  private createSession(callerCacheKey: string | null): CodexSession {
+    if (callerCacheKey === null) {
+      return {
+        sessionId: randomUUID(),
+        threadId: randomUUID(),
+        promptCacheKey: randomUUID(),
+        expiresAt: Date.now() + SESSION_TTL_MS,
+        incarnation: 0,
+      };
+    }
+    return {
+      sessionId: derivedUuid('session-id', callerCacheKey),
+      threadId: derivedUuid('thread-id', callerCacheKey),
+      promptCacheKey: callerCacheKey,
+      expiresAt: Date.now() + SESSION_TTL_MS,
+      incarnation: 0,
+    };
   }
 
   /** Lazily evict expired entries to avoid unbounded growth. */

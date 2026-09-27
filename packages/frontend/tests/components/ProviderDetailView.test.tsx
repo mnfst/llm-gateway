@@ -60,7 +60,7 @@ vi.mock('../../src/components/ProviderKeyForm.js', () => ({
       data-validation-error={props.validationError() ?? ''}
     />
   ),
-  MAX_KEYS_PER_PROVIDER: 5,
+  MAX_KEYS_PER_PROVIDER: 50,
 }));
 
 vi.mock('../../src/components/OAuthDetailView.js', () => ({
@@ -326,6 +326,58 @@ describe('ProviderDetailView', () => {
     });
   });
 
+  describe('providers closed to new subscriptions (Google)', () => {
+    const googleSub = (overrides: Partial<RoutingProvider> = {}): RoutingProvider => ({
+      id: 'p1',
+      provider: 'gemini',
+      auth_type: 'subscription',
+      is_active: true,
+      has_api_key: true,
+      connected_at: '2025-01-01',
+      ...overrides,
+    });
+
+    it('shows only the closure note when there is no connection', () => {
+      const props = createTestProps({ provId: 'gemini', selectedAuthType: 'subscription' });
+      render(() => <ProviderDetailView {...props} />);
+      expect(screen.getByRole('note').textContent).toContain(
+        'no longer allows new Gemini sign-ins',
+      );
+      expect(screen.queryByTestId('oauth-detail-view')).toBeNull();
+      expect(screen.queryByTestId('provider-key-form')).toBeNull();
+    });
+
+    it('keeps an existing connection manageable but offers no new one', () => {
+      const props = createTestProps({
+        provId: 'gemini',
+        providers: [googleSub()],
+        selectedAuthType: 'subscription',
+      });
+      render(() => <ProviderDetailView {...props} />);
+      expect(screen.getByTestId('oauth-detail-view')).toBeDefined();
+      expect(screen.getByRole('note')).toBeDefined();
+      expect(screen.queryByText('Add connection')).toBeNull();
+    });
+
+    it('still offers another connection for open providers', () => {
+      const props = createTestProps({
+        provId: 'openai',
+        providers: [googleSub({ provider: 'openai' })],
+        selectedAuthType: 'subscription',
+      });
+      render(() => <ProviderDetailView {...props} />);
+      expect(screen.getByText('Add connection')).toBeDefined();
+      expect(screen.queryByRole('note')).toBeNull();
+    });
+
+    it('leaves the Google API key flow untouched', () => {
+      const props = createTestProps({ provId: 'gemini', selectedAuthType: 'api_key' });
+      render(() => <ProviderDetailView {...props} />);
+      expect(screen.getByTestId('provider-key-form')).toBeDefined();
+      expect(screen.queryByRole('note')).toBeNull();
+    });
+  });
+
   describe('Anthropic subscription renders paste-code OAuth flow', () => {
     it('renders AnthropicOAuthDetailView for popup_paste subscription flow', () => {
       const connectedAnthropicSub: RoutingProvider[] = [
@@ -398,6 +450,24 @@ describe('ProviderDetailView', () => {
     expect(screen.getByTestId('provider-key-form')).toBeDefined();
   });
 
+  it('keeps the add-key action available after 5 active keys', () => {
+    const providers: RoutingProvider[] = Array.from({ length: 6 }, (_, index) => ({
+      id: `p${index + 1}`,
+      provider: 'openai',
+      auth_type: 'api_key',
+      is_active: true,
+      has_api_key: true,
+      label: `Key ${index + 1}`,
+      priority: index,
+      connected_at: '2026-01-01',
+    }));
+    const props = createTestProps({ provId: 'openai', providers });
+
+    render(() => <ProviderDetailView {...props} />);
+
+    expect(screen.getByText('Add another key')).toBeDefined();
+  });
+
   describe('per-provider refresh button', () => {
     const connectedAnthropicSub: RoutingProvider[] = [
       {
@@ -426,7 +496,7 @@ describe('ProviderDetailView', () => {
       });
       render(() => <ProviderDetailView {...props} />);
       expect(screen.getByLabelText('Refresh models from Anthropic')).toBeDefined();
-      expect(screen.getByText(/12 models – last refreshed: 5m ago/)).toBeDefined();
+      expect(screen.getByText(/12 models - last refreshed: 5m ago/)).toBeDefined();
     });
 
     it('calls refreshProviderModels with the provider and auth type and shows a success toast', async () => {
@@ -447,6 +517,58 @@ describe('ProviderDetailView', () => {
         );
         expect(toast.success).toHaveBeenCalledWith('Anthropic: refreshed 3 models');
         expect(props.onUpdate).toHaveBeenCalled();
+      });
+    });
+
+    it('updates the model count immediately after a successful refresh', async () => {
+      const props = createTestProps({
+        provId: 'anthropic',
+        providers: connectedAnthropicSub,
+        selectedAuthType: 'subscription',
+      });
+      const [providers, setProviders] = createSignal(connectedAnthropicSub);
+      props.onUpdate.mockImplementation(() => {
+        setProviders([
+          {
+            ...connectedAnthropicSub[0]!,
+            cached_model_count: 3,
+            models_fetched_at: '2026-04-12T10:00:00Z',
+          },
+        ]);
+      });
+      render(() => <ProviderDetailView {...props} providers={providers()} />);
+
+      fireEvent.click(screen.getByLabelText('Refresh models from Anthropic'));
+
+      await waitFor(() => {
+        expect(screen.getByText(/3 models - last refreshed: 5m ago/)).toBeDefined();
+      });
+    });
+
+    it('keeps refreshing until the parent model catalog has reloaded', async () => {
+      const props = createTestProps({
+        provId: 'anthropic',
+        providers: connectedAnthropicSub,
+        selectedAuthType: 'subscription',
+      });
+      let finishUpdate!: () => void;
+      props.onUpdate.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            finishUpdate = resolve;
+          }),
+      );
+      render(() => <ProviderDetailView {...props} />);
+
+      fireEvent.click(screen.getByLabelText('Refresh models from Anthropic'));
+
+      await waitFor(() => {
+        expect(screen.getByText('Refreshing…')).toBeDefined();
+      });
+      finishUpdate();
+
+      await waitFor(() => {
+        expect(screen.getByText('Refresh models')).toBeDefined();
       });
     });
 

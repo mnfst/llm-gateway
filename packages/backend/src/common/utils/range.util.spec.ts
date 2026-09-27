@@ -7,6 +7,8 @@ describe('rangeToInterval', () => {
     ['24h', '24 hours'],
     ['7d', '7 days'],
     ['30d', '30 days'],
+    ['90d', '90 days'],
+    ['365d', '365 days'],
   ])('maps %s to %s', (input, expected) => {
     expect(rangeToInterval(input)).toBe(expected);
   });
@@ -24,6 +26,8 @@ describe('rangeToPreviousInterval', () => {
     ['24h', '48 hours'],
     ['7d', '14 days'],
     ['30d', '60 days'],
+    ['90d', '180 days'],
+    ['365d', '730 days'],
   ])('maps %s to %s', (input, expected) => {
     expect(rangeToPreviousInterval(input)).toBe(expected);
   });
@@ -43,6 +47,8 @@ describe('isHourlyRange', () => {
   it('returns false for daily ranges', () => {
     expect(isHourlyRange('7d')).toBe(false);
     expect(isHourlyRange('30d')).toBe(false);
+    expect(isHourlyRange('90d')).toBe(false);
+    expect(isHourlyRange('365d')).toBe(false);
   });
 
   it('returns false for unknown ranges', () => {

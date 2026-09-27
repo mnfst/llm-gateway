@@ -36,7 +36,7 @@ describe('Agent duplication under migration-built schema (e2e)', () => {
       logging: false,
     });
     await ds.initialize();
-    await ds.runMigrations();
+    await ds.runMigrations({ transaction: 'each' });
 
     const cacheStub = {
       invalidateAgent: () => undefined,

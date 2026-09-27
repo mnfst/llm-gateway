@@ -10,6 +10,13 @@ import {
   stripCustomPrefix,
 } from '../services/routing-utils.js';
 import { PROVIDERS } from '../services/providers.js';
+import InfoTooltip from './InfoTooltip.jsx';
+import {
+  attemptSuccessRate,
+  totalAttemptsTooltip,
+  MODEL_SUCCESS_RATE_TOOLTIP,
+  type ModelReliabilityRow,
+} from '../services/api/analytics.js';
 
 interface CostByModelRow {
   model: string;
@@ -24,6 +31,11 @@ interface CostByModelRow {
 
 interface CostByModelTableProps {
   rows: CostByModelRow[];
+  /** Doctor availability drives the Total attempts tooltip wording. */
+  doctorAvailable?: boolean;
+  /** Per-model reliability (Total attempts · Success rate). The three columns
+      render only when reliability data is provided. */
+  reliability?: ModelReliabilityRow[];
 }
 
 function resolveRowProvider(row: CostByModelRow): string | undefined {
@@ -48,11 +60,13 @@ const CostByModelTable: Component<CostByModelTableProps> = (props) => {
     [...props.rows].sort((a, b) => b.estimated_cost - a.estimated_cost),
   );
 
+  const relFor = (model: string) => props.reliability?.find((r) => r.model === model);
+
   return (
     <div class="panel" style="margin-top: var(--gap-lg);">
-      <div class="panel__title">Cost by Model</div>
+      <div class="panel__title">Model usage</div>
       <p style="font-size: var(--font-size-xs); color: hsl(var(--muted-foreground)); margin: -8px 0 12px;">
-        How much each model costs you
+        The models used and what they cost you
       </p>
       <table class="data-table">
         <thead>
@@ -61,6 +75,18 @@ const CostByModelTable: Component<CostByModelTableProps> = (props) => {
             <th>Tokens</th>
             <th>% of total</th>
             <th>Cost</th>
+            {props.reliability && (
+              <>
+                <th class="rel-col">
+                  Total attempts
+                  <InfoTooltip text={totalAttemptsTooltip(props.doctorAvailable ?? false)} />
+                </th>
+                <th class="rel-col">
+                  Success rate
+                  <InfoTooltip text={MODEL_SUCCESS_RATE_TOOLTIP} />
+                </th>
+              </>
+            )}
           </tr>
         </thead>
         <tbody>
@@ -137,7 +163,6 @@ const CostByModelTable: Component<CostByModelTableProps> = (props) => {
                   </div>
                 </td>
                 <td
-                  style="font-weight: 600;"
                   title={
                     row.estimated_cost > 0 && row.estimated_cost < 0.01
                       ? `$${row.estimated_cost.toFixed(6)}`
@@ -146,6 +171,23 @@ const CostByModelTable: Component<CostByModelTableProps> = (props) => {
                 >
                   {formatCost(row.estimated_cost) ?? '\u2014'}
                 </td>
+                {props.reliability && (
+                  <>
+                    <td class="rel-col">
+                      {(() => {
+                        const rel = relFor(row.model);
+                        return rel ? formatNumber(rel.attempts) : '\u2014';
+                      })()}
+                    </td>
+                    <td class="rel-col">
+                      {(() => {
+                        const rel = relFor(row.model);
+                        const rate = rel ? attemptSuccessRate(rel) : null;
+                        return rate == null ? '\u2014' : `${(rate * 100).toFixed(1)}%`;
+                      })()}
+                    </td>
+                  </>
+                )}
               </tr>
             )}
           </For>

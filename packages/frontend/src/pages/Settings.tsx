@@ -6,7 +6,10 @@ import ErrorState from '../components/ErrorState.jsx';
 import AgentTypeGrid from '../components/AgentTypeGrid.jsx';
 import SetupStepAddProvider from '../components/SetupStepAddProvider.jsx';
 import SetupModal from '../components/SetupModal.jsx';
+import SettingsAutofixSection from './SettingsAutofixSection.jsx';
+import SettingsRecordingSection from './SettingsRecordingSection.jsx';
 import { agentDisplayName } from '../services/agent-display-name.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import {
   deleteAgent,
   getAgentInfo,
@@ -84,41 +87,6 @@ const Settings: Component = () => {
   const keyData = () => (apiKeyData.error ? undefined : apiKeyData());
   const fullKey = () => rotatedKey() ?? keyData()?.apiKey ?? null;
 
-  const logging = () => agentInfo()?.record_messages === true;
-  const [togglingLogs, setTogglingLogs] = createSignal(false);
-  const [showDisableLogsModal, setShowDisableLogsModal] = createSignal(false);
-
-  const handleToggleLogs = async (next: boolean) => {
-    if (togglingLogs()) return;
-    if (!next) {
-      setShowDisableLogsModal(true);
-      return;
-    }
-    setTogglingLogs(true);
-    try {
-      await updateAgent(agentName(), { record_messages: true });
-      await refetchInfo();
-      toast.success('Logs enabled');
-    } catch {
-      /* error toast handled by fetchMutate */
-    } finally {
-      setTogglingLogs(false);
-    }
-  };
-
-  const confirmDisableLogs = async () => {
-    setShowDisableLogsModal(false);
-    setTogglingLogs(true);
-    try {
-      await updateAgent(agentName(), { record_messages: false });
-      await refetchInfo();
-      toast.success('Logs disabled');
-    } catch {
-      /* error toast handled by fetchMutate */
-    } finally {
-      setTogglingLogs(false);
-    }
-  };
   const displayedKey = () => {
     const key = fullKey();
     if (!key) return `${keyData()?.keyPrefix ?? '...'}...`;
@@ -126,9 +94,7 @@ const Settings: Component = () => {
   };
 
   const baseUrl = () => {
-    const host = window.location.hostname;
-    if (host === 'app.manifest.build') return 'https://app.manifest.build/v1';
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const handleDeleteAgent = async () => {
@@ -238,7 +204,7 @@ const Settings: Component = () => {
                   alt=""
                   width="18"
                   height="18"
-                  class="settings-type__icon"
+                  class="platform-icon settings-type__icon"
                 />
               </Show>
               {currentPlatform()
@@ -259,6 +225,12 @@ const Settings: Component = () => {
           </div>
         </div>
       </div>
+
+      {/* -- Autofix ---------------------------------- */}
+      <SettingsAutofixSection agentName={agentName} />
+
+      {/* -- Message recording ------------------------- */}
+      <SettingsRecordingSection agentName={agentName} />
 
       {/* -- API Key ----------------------------------- */}
       <ErrorBoundary
@@ -366,50 +338,6 @@ const Settings: Component = () => {
       <div class="settings-card settings-card--danger">
         <div class="settings-card__row">
           <div class="settings-card__label">
-            <Show
-              when={logging()}
-              fallback={
-                <>
-                  <span class="settings-card__label-title">Enable message logs</span>
-                  <span class="settings-card__label-desc">
-                    Capture every request and response to get full visibility on your harness's
-                    conversations, model choices, and performance.
-                  </span>
-                </>
-              }
-            >
-              <span class="settings-card__label-title">Disable message logs</span>
-              <span class="settings-card__label-desc">
-                Stop capturing requests and responses. You will lose visibility on conversations and
-                troubleshooting data.
-              </span>
-            </Show>
-          </div>
-          <div class="settings-card__control">
-            <Show
-              when={logging()}
-              fallback={
-                <button
-                  class="btn btn--danger btn--sm"
-                  onClick={() => handleToggleLogs(true)}
-                  disabled={togglingLogs() || agentInfo.loading}
-                >
-                  {togglingLogs() ? <span class="spinner" /> : 'Enable logs'}
-                </button>
-              }
-            >
-              <button
-                class="btn btn--danger btn--sm"
-                onClick={() => handleToggleLogs(false)}
-                disabled={togglingLogs() || agentInfo.loading}
-              >
-                {togglingLogs() ? <span class="spinner" /> : 'Disable logs'}
-              </button>
-            </Show>
-          </div>
-        </div>
-        <div class="settings-card__row">
-          <div class="settings-card__label">
             <span class="settings-card__label-title">Delete this harness</span>
             <span class="settings-card__label-desc">
               Permanently delete this harness, its API key, and all messages and analytics. This
@@ -515,80 +443,6 @@ const Settings: Component = () => {
                 'Delete this harness'
               )}
             </button>
-          </div>
-        </div>
-      </Show>
-
-      {/* -- Disable Logs Modal ------------------------ */}
-      <Show when={showDisableLogsModal()}>
-        <div
-          class="modal-overlay"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) setShowDisableLogsModal(false);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setShowDisableLogsModal(false);
-          }}
-        >
-          <div
-            class="modal-card"
-            style="max-width: 440px;"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="disable-logs-modal-title"
-          >
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: var(--gap-lg);">
-              <h3 id="disable-logs-modal-title" style="margin: 0; font-size: var(--font-size-lg);">
-                Disable logs
-              </h3>
-              <button
-                style="background: none; border: none; cursor: pointer; color: hsl(var(--muted-foreground)); padding: 4px;"
-                onClick={() => setShowDisableLogsModal(false)}
-                aria-label="Close"
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M18 6 6 18" />
-                  <path d="m6 6 12 12" />
-                </svg>
-              </button>
-            </div>
-            <p style="font-size: var(--font-size-sm); color: hsl(var(--muted-foreground)); margin-bottom: var(--gap-sm);">
-              Without logs, you will lose visibility on:
-            </p>
-            <ul style="font-size: var(--font-size-sm); color: hsl(var(--muted-foreground)); margin: 0 0 var(--gap-md) 0; padding-left: 20px; line-height: 1.7;">
-              <li>
-                <strong style="color: hsl(var(--foreground));">Conversation context:</strong> no way
-                to review what your harness sent or received
-              </li>
-              <li>
-                <strong style="color: hsl(var(--foreground));">Troubleshooting:</strong> no data to
-                diagnose unexpected responses
-              </li>
-            </ul>
-            <p style="font-size: var(--font-size-sm); color: hsl(var(--muted-foreground)); margin-bottom: var(--gap-lg);">
-              Existing logs will be kept.
-            </p>
-            <div style="display: flex; gap: var(--gap-sm); justify-content: flex-end;">
-              <button
-                class="btn btn--primary btn--sm"
-                onClick={() => setShowDisableLogsModal(false)}
-              >
-                Cancel
-              </button>
-              <button class="btn btn--danger btn--sm" onClick={confirmDisableLogs}>
-                Disable logs
-              </button>
-            </div>
           </div>
         </div>
       </Show>

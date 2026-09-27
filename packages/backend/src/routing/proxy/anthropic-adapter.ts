@@ -6,7 +6,7 @@
 import { randomUUID } from 'crypto';
 
 import { OpenAIMessage, ThinkingBlockLookup } from './proxy-types';
-import type { ThinkingBlock } from './thinking-block-cache';
+import type { ThinkingBlock, ThinkingBlockRouteContext } from './thinking-block-cache';
 
 interface ContentBlock {
   type: string;
@@ -19,7 +19,8 @@ interface ContentBlock {
   content?: unknown;
   cache_control?: { type: string };
   // Extended-thinking fields. Only populated on `thinking` /
-  // `redacted_thinking` blocks. We never inspect them beyond pass-through.
+  // `redacted_thinking` blocks. Anthropic `thinking` blocks must carry a
+  // non-empty signature to be replayed to Anthropic.
   thinking?: string;
   signature?: string;
   data?: string;
@@ -34,29 +35,7 @@ interface AnthropicTool {
 
 const CACHE = { type: 'ephemeral' } as const;
 const MAX_CACHE_CONTROL_BLOCKS = 4;
-const ANTHROPIC_PREFIX = 'anthropic/';
 const DATA_IMAGE_URL_RE = /^data:([^;,]+)(?:;[^,]*)?;base64,(.*)$/is;
-
-function bareAnthropicModel(model: string): string {
-  return model.startsWith(ANTHROPIC_PREFIX) ? model.slice(ANTHROPIC_PREFIX.length) : model;
-}
-
-function isClaudeHaikuModel(model: string): boolean {
-  const bare = bareAnthropicModel(model).replace(/\./g, '-');
-  return bare.startsWith('claude-haiku-');
-}
-
-function shouldForwardAnthropicThinking(thinking: unknown, model: string): boolean {
-  if (
-    thinking &&
-    typeof thinking === 'object' &&
-    !Array.isArray(thinking) &&
-    (thinking as Record<string, unknown>).type === 'adaptive'
-  ) {
-    return !isClaudeHaikuModel(model);
-  }
-  return true;
-}
 
 /**
  * System prompt required by Anthropic's subscription OAuth API to unlock
@@ -90,6 +69,17 @@ function countCacheControlBlocks(value: unknown): number {
   return count;
 }
 
+function hasOneHourCacheControl(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+
+  if (!Array.isArray(value)) {
+    const cacheControl = (value as Record<string, unknown>).cache_control;
+    if (isObjectRecord(cacheControl) && cacheControl.ttl === '1h') return true;
+  }
+  const children = Array.isArray(value) ? value : Object.values(value);
+  return children.some(hasOneHourCacheControl);
+}
+
 function tryAddCacheControl(
   block: { cache_control?: unknown } | undefined,
   budget: { remaining: number },
@@ -99,15 +89,32 @@ function tryAddCacheControl(
   budget.remaining -= 1;
 }
 
-function isClaudeSonnetModel(model: string | undefined): boolean {
-  if (!model) return false;
-  return bareAnthropicModel(model).replace(/\./g, '-').startsWith('claude-sonnet-');
+export function applyAnthropicAutomaticCacheControl(body: Record<string, unknown>): void {
+  if (body.cache_control !== undefined) return;
+  if (countCacheControlBlocks(body) >= MAX_CACHE_CONTROL_BLOCKS) return;
+  // Anthropic rejects a default five-minute automatic breakpoint when the
+  // final explicit breakpoint uses a one-hour TTL. Preserve the caller's
+  // explicit cache plan instead of risking a provider-side 400.
+  if (hasOneHourCacheControl(body)) return;
+  body.cache_control = CACHE;
 }
 
-function normalizeOutputConfigForModel(outputConfig: unknown, model: string | undefined): unknown {
-  if (!isObjectRecord(outputConfig)) return outputConfig;
-  if (outputConfig.effort !== 'xhigh' || !isClaudeSonnetModel(model)) return outputConfig;
-  return { ...outputConfig, effort: 'high' };
+function hasReplayableThinkingSignature(block: ContentBlock): boolean {
+  return typeof block.signature === 'string' && block.signature.trim().length > 0;
+}
+
+function stripUnsignedThinkingBlocks(content: ContentBlock[]): {
+  content: ContentBlock[];
+  changed: boolean;
+} {
+  let changed = false;
+  const filtered = content.filter((block) => {
+    if (block.type !== 'thinking') return true;
+    if (hasReplayableThinkingSignature(block)) return true;
+    changed = true;
+    return false;
+  });
+  return changed ? { content: filtered, changed } : { content, changed: false };
 }
 
 /* ── Request helpers ── */
@@ -200,6 +207,7 @@ function toContentBlocks(content: unknown, includeImages = false): ContentBlock[
 function convertMessage(
   msg: OpenAIMessage,
   thinkingLookup?: ThinkingBlockLookup,
+  thinkingRouteContext?: ThinkingBlockRouteContext,
 ): { role: 'user' | 'assistant'; content: ContentBlock[] } | null {
   if (msg.role === 'system' || msg.role === 'developer') return null;
 
@@ -228,7 +236,9 @@ function convertMessage(
     // tool_call ids back unchanged.
     const firstToolCallId = Array.isArray(msg.tool_calls) && msg.tool_calls[0]?.id;
     if (thinkingLookup && typeof firstToolCallId === 'string' && firstToolCallId) {
-      const cached = thinkingLookup(firstToolCallId);
+      const cached = thinkingRouteContext
+        ? thinkingLookup(firstToolCallId, thinkingRouteContext)
+        : thinkingLookup(firstToolCallId);
       if (cached) {
         for (const block of cached) blocks.push(block as ContentBlock);
       }
@@ -257,11 +267,115 @@ function convertTools(tools?: Array<Record<string, unknown>>): AnthropicTool[] |
   const out: AnthropicTool[] = [];
   for (const t of tools) {
     const fn = t.function as
-      | { name: string; description?: string; parameters?: unknown }
-      | undefined;
+      { name: string; description?: string; parameters?: unknown } | undefined;
     if (fn) out.push({ name: fn.name, description: fn.description, input_schema: fn.parameters });
   }
   return out.length > 0 ? out : undefined;
+}
+
+/**
+ * JSON Schema keywords whose value is a subschema, an array of subschemas, or a
+ * map of subschemas. Only these recurse: `enum`/`default`/`examples`/`const` hold
+ * data values that can look like schemas and must pass through untouched.
+ */
+const ANTHROPIC_SCHEMA_KEYWORDS = new Set([
+  'items',
+  'contains',
+  'additionalProperties',
+  'additionalItems',
+  'unevaluatedProperties',
+  'unevaluatedItems',
+  'propertyNames',
+  'not',
+  'if',
+  'then',
+  'else',
+  'contentSchema',
+]);
+const ANTHROPIC_SCHEMA_LIST_KEYWORDS = new Set(['allOf', 'anyOf', 'oneOf', 'prefixItems']);
+const ANTHROPIC_SCHEMA_MAP_KEYWORDS = new Set([
+  'properties',
+  'patternProperties',
+  '$defs',
+  'definitions',
+  'dependentSchemas',
+  'dependencies',
+]);
+
+/**
+ * Anthropic structured outputs reject any object schema that omits
+ * `additionalProperties` ("For 'object' type, 'additionalProperties' must be
+ * explicitly set to false"). Clients and our own `json_object` fallback routinely
+ * emit a bare `{ type: 'object' }`, so close every object node while leaving an
+ * author's explicit value untouched. Only schema-valued keywords recurse, so data
+ * in `enum`/`default`/`examples` is never rewritten, and entries are copied with
+ * `Object.fromEntries` so a property literally named `__proto__` survives.
+ */
+export function closeAnthropicObjectSchemas(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(closeAnthropicObjectSchemas);
+  if (!isObjectRecord(schema)) return schema;
+
+  const entries: Array<[string, unknown]> = [];
+  for (const [key, value] of Object.entries(schema)) {
+    if (ANTHROPIC_SCHEMA_KEYWORDS.has(key)) {
+      entries.push([key, closeAnthropicObjectSchemas(value)]);
+    } else if (ANTHROPIC_SCHEMA_LIST_KEYWORDS.has(key) && Array.isArray(value)) {
+      entries.push([key, value.map(closeAnthropicObjectSchemas)]);
+    } else if (ANTHROPIC_SCHEMA_MAP_KEYWORDS.has(key) && isObjectRecord(value)) {
+      entries.push([
+        key,
+        Object.fromEntries(
+          Object.entries(value).map(([name, sub]) => [name, closeAnthropicObjectSchemas(sub)]),
+        ),
+      ]);
+    } else {
+      entries.push([key, value]);
+    }
+  }
+
+  const result = Object.fromEntries(entries) as Record<string, unknown>;
+  const type = result.type;
+  const isObjectType =
+    type === 'object' || (Array.isArray(type) && type.some((entry) => entry === 'object'));
+  // `properties` without an explicit `type` still describes an object.
+  const isObject = isObjectType || (result.properties !== undefined && type === undefined);
+  if (isObject && result.additionalProperties === undefined) {
+    result.additionalProperties = false;
+  }
+  return result;
+}
+
+/** Close object schemas on an Anthropic `output_config` (returns a new object). */
+function closeOutputConfigObjectSchemas(
+  outputConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  const format = outputConfig.format;
+  if (!isObjectRecord(format) || !('schema' in format)) return outputConfig;
+  return {
+    ...outputConfig,
+    format: { ...format, schema: closeAnthropicObjectSchemas(format.schema) },
+  };
+}
+
+function toAnthropicOutputConfig(
+  responseFormat: unknown,
+  outputConfig: unknown,
+): Record<string, unknown> | undefined {
+  const out: Record<string, unknown> = isObjectRecord(outputConfig) ? { ...outputConfig } : {};
+  if (isObjectRecord(responseFormat)) {
+    if (responseFormat.type === 'json_object') {
+      // Anthropic has no `json_object` shorthand; use native JSON output with
+      // an unconstrained object schema instead of forcing tool use.
+      out.format = { type: 'json_schema', schema: { type: 'object' } };
+    } else if (responseFormat.type === 'json_schema') {
+      const jsonSchema = isObjectRecord(responseFormat.json_schema)
+        ? responseFormat.json_schema
+        : {};
+      out.format = { type: 'json_schema', schema: jsonSchema.schema ?? { type: 'object' } };
+    }
+  }
+  // Also closes an `output_config` that arrived already shaped on the inbound body.
+  return Object.keys(out).length > 0 ? closeOutputConfigObjectSchemas(out) : undefined;
 }
 
 /* ── Request conversion ── */
@@ -271,8 +385,8 @@ export interface AnthropicRequestOptions {
   injectSubscriptionIdentity?: boolean;
   /** Lookup for re-injecting cached extended-thinking blocks. */
   thinkingLookup?: ThinkingBlockLookup;
-  /** Resolved Anthropic upstream model, used for model-specific body normalization. */
-  targetModel?: string;
+  /** Route context for replaying only compatible cached thinking blocks. */
+  thinkingRouteContext?: ThinkingBlockRouteContext;
 }
 
 export function toAnthropicRequest(
@@ -293,10 +407,13 @@ export function toAnthropicRequest(
   }
 
   const thinkingLookup = options?.thinkingLookup;
-  const converted = messages.map((msg) => convertMessage(msg, thinkingLookup)).filter(Boolean);
+  const thinkingRouteContext = options?.thinkingRouteContext;
+  const converted = messages
+    .map((msg) => convertMessage(msg, thinkingLookup, thinkingRouteContext))
+    .filter(Boolean);
   const result: Record<string, unknown> = {
     messages: converted,
-    max_tokens: (body.max_tokens as number) || 4096,
+    max_tokens: resolveAnthropicMaxTokens(body),
   };
   if (systemBlocks.length > 0) result.system = systemBlocks;
 
@@ -305,10 +422,15 @@ export function toAnthropicRequest(
   // bypass translation entirely via applyAnthropicMessagesMutations, so
   // server tools never reach this code path and the OpenAI function-shape
   // assumption is safe.
-  const tools = convertTools(body.tools as Array<Record<string, unknown>> | undefined);
-  if (tools) {
+  const tools = convertTools(body.tools as Array<Record<string, unknown>> | undefined) ?? [];
+  if (tools.length > 0) {
     tools[tools.length - 1].cache_control = CACHE;
     result.tools = tools;
+  }
+
+  const outputConfig = toAnthropicOutputConfig(body.response_format, body.output_config);
+  if (outputConfig) {
+    result.output_config = outputConfig;
   }
 
   if (body.temperature !== undefined) result.temperature = body.temperature;
@@ -316,8 +438,9 @@ export function toAnthropicRequest(
   if (body.top_k !== undefined) result.top_k = body.top_k;
   // Anthropic-native fields forwarded when the inbound request originated as
   // Anthropic Messages (POST /v1/messages). Chat-completions clients won't
-  // set these, so this is a no-op for the OpenAI-compat path.
-  if (body.thinking !== undefined && shouldForwardAnthropicThinking(body.thinking, _model)) {
+  // set these, so this is a no-op for the OpenAI-compat path. Model-specific
+  // rejection fixes belong in Autofix, not in this protocol adapter.
+  if (body.thinking !== undefined) {
     result.thinking = body.thinking;
   }
   // chat_completions `stop` accepts string OR string[]; Anthropic
@@ -371,6 +494,7 @@ export function extractThinkingBlocksFromMessagesResponse(
  * - Default `max_tokens` to 4096 if unset.
  * - Inject the subscription-identity system block for OAuth tokens.
  * - Place a `cache_control` breakpoint on the last system block and last tool.
+ * - Strip unsigned `thinking` blocks that are not replayable to Anthropic.
  * - Replay cached extended-thinking blocks at the head of assistant turns
  *   whose first content block is a `tool_use`.
  */
@@ -379,8 +503,22 @@ export function applyAnthropicMessagesMutations(
   options?: AnthropicRequestOptions,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = { ...body };
+  result.max_tokens = resolveAnthropicMaxTokens(body);
+  delete result.max_completion_tokens;
+  // Anthropic rejects structured-output schemas whose object nodes omit
+  // `additionalProperties`; native Messages clients pass `output_config` straight
+  // through, so close those schemas here too (not just on the translated path).
+  if (isObjectRecord(result.output_config)) {
+    result.output_config = closeOutputConfigObjectSchemas(result.output_config);
+  }
+  // Anthropic processes breakpoints in tools → system → messages order and
+  // rejects a one-hour breakpoint that follows a five-minute one. A caller that
+  // uses one-hour TTLs (Claude Code does, on system) has planned its own cache,
+  // so adding our default five-minute breakpoints would only produce a 400.
   const cacheBudget = {
-    remaining: Math.max(0, MAX_CACHE_CONTROL_BLOCKS - countCacheControlBlocks(body)),
+    remaining: hasOneHourCacheControl(body)
+      ? 0
+      : Math.max(0, MAX_CACHE_CONTROL_BLOCKS - countCacheControlBlocks(body)),
   };
 
   // Normalize `system` to a content-block array so cache_control + identity
@@ -417,37 +555,64 @@ export function applyAnthropicMessagesMutations(
     result.tools = tools;
   }
 
-  if (result.max_tokens === undefined) result.max_tokens = 4096;
-  if (result.output_config !== undefined) {
-    result.output_config = normalizeOutputConfigForModel(
-      result.output_config,
-      options?.targetModel,
-    );
-  }
-
   const thinkingLookup = options?.thinkingLookup;
-  if (thinkingLookup && Array.isArray(body.messages)) {
-    result.messages = (body.messages as Array<Record<string, unknown>>).map((m) => {
-      if (m.role !== 'assistant' || !Array.isArray(m.content)) return m;
-      const content = m.content as ContentBlock[];
-      const firstToolUse = content.find((b) => b.type === 'tool_use');
-      if (!firstToolUse || typeof firstToolUse.id !== 'string') return m;
-      // Native Messages clients may already echo the previous assistant's
-      // signed thinking blocks before the tool_use block. Prepending the
-      // cached copy in that case would duplicate signed blocks and the
-      // upstream would reject the conversation. Only replay when the turn
-      // is missing the thinking prelude.
-      const alreadyHasThinking = content.some(
-        (b) => b.type === 'thinking' || b.type === 'redacted_thinking',
-      );
-      if (alreadyHasThinking) return m;
-      const cached = thinkingLookup(firstToolUse.id);
-      if (!cached || cached.length === 0) return m;
-      return { ...m, content: [...(cached as ContentBlock[]), ...content] };
-    });
+  const thinkingRouteContext = options?.thinkingRouteContext;
+  if (Array.isArray(body.messages)) {
+    let messagesChanged = false;
+    const messages = (body.messages as Array<Record<string, unknown>>)
+      .map((m): Record<string, unknown> | null => {
+        if (m.role !== 'assistant' || !Array.isArray(m.content)) return m;
+        const sanitized = stripUnsignedThinkingBlocks(m.content as ContentBlock[]);
+        const content = sanitized.content;
+        const messageChanged = sanitized.changed;
+        if (messageChanged && content.length === 0) {
+          messagesChanged = true;
+          return null;
+        }
+
+        const firstToolUse = content.find((b) => b.type === 'tool_use');
+        if (!firstToolUse || typeof firstToolUse.id !== 'string' || !thinkingLookup) {
+          if (!messageChanged) return m;
+          messagesChanged = true;
+          return { ...m, content };
+        }
+        // Native Messages clients may already echo the previous assistant's
+        // signed thinking blocks before the tool_use block. Prepending the
+        // cached copy in that case would duplicate signed blocks and the
+        // upstream would reject the conversation. Only replay when the turn
+        // is missing the thinking prelude. Unsigned `thinking` blocks can be
+        // produced by non-Anthropic upstreams in Anthropic-compatible sessions;
+        // strip them before this check so they do not suppress valid replay or
+        // reach Anthropic with an invalid signature.
+        const alreadyHasThinking = content.some(
+          (b) => b.type === 'thinking' || b.type === 'redacted_thinking',
+        );
+        if (alreadyHasThinking) {
+          if (!messageChanged) return m;
+          messagesChanged = true;
+          return { ...m, content };
+        }
+        const cached = thinkingRouteContext
+          ? thinkingLookup(firstToolUse.id, thinkingRouteContext)
+          : thinkingLookup(firstToolUse.id);
+        if (!cached || cached.length === 0) {
+          if (!messageChanged) return m;
+          messagesChanged = true;
+          return { ...m, content };
+        }
+        messagesChanged = true;
+        return { ...m, content: [...(cached as ContentBlock[]), ...content] };
+      })
+      .filter((m): m is Record<string, unknown> => m !== null);
+    if (messagesChanged) result.messages = messages;
   }
 
   return result;
+}
+
+function resolveAnthropicMaxTokens(body: Record<string, unknown>): number {
+  const value = body.max_tokens ?? body.max_completion_tokens;
+  return (value as number) || 4096;
 }
 
 /* ── Response conversion ── */

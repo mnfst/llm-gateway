@@ -1,4 +1,4 @@
-import { ThinkingBlockCache, ThinkingBlock } from '../thinking-block-cache';
+import { ThinkingBlockCache, ThinkingBlock, MAX_CACHE_ENTRIES } from '../thinking-block-cache';
 
 describe('ThinkingBlockCache', () => {
   let cache: ThinkingBlockCache;
@@ -20,6 +20,75 @@ describe('ThinkingBlockCache', () => {
 
     const retrieved = cache.retrieve('session-1', 'toolu_1');
     expect(retrieved).toBe(blocks);
+  });
+
+  it('retrieves route-scoped blocks only for the same provider auth and model', () => {
+    const blocks: ThinkingBlock[] = [
+      { type: 'thinking', thinking: 'reasoning...', signature: 'sig_1' },
+    ];
+    const routeContext = {
+      provider: 'anthropic',
+      authType: 'subscription',
+      model: 'claude-sonnet-4-5-20250929',
+    };
+
+    cache.store('session-1', 'toolu_1', blocks, routeContext);
+
+    expect(cache.retrieve('session-1', 'toolu_1', routeContext)).toBe(blocks);
+    expect(
+      cache.retrieve('session-1', 'toolu_1', {
+        provider: 'anthropic',
+        authType: 'api_key',
+        model: 'claude-sonnet-4-5-20250929',
+      }),
+    ).toBeNull();
+    expect(
+      cache.retrieve('session-1', 'toolu_1', {
+        provider: 'minimax',
+        authType: 'subscription',
+        model: 'claude-sonnet-4-5-20250929',
+      }),
+    ).toBeNull();
+    expect(
+      cache.retrieve('session-1', 'toolu_1', {
+        provider: 'anthropic',
+        authType: 'subscription',
+        model: 'claude-opus-4-1-20250805',
+      }),
+    ).toBeNull();
+
+    // Incompatible attempts do not consume or mutate the cached blocks.
+    expect(cache.retrieve('session-1', 'toolu_1', routeContext)).toBe(blocks);
+  });
+
+  it('normalizes route context case and defaults missing auth type to api_key', () => {
+    const blocks: ThinkingBlock[] = [{ type: 'thinking', thinking: 'ok', signature: 'sig' }];
+    cache.store('session-1', 'toolu_1', blocks, {
+      provider: 'Anthropic',
+      model: 'Claude-Sonnet-4-5-20250929',
+    });
+
+    expect(
+      cache.retrieve('session-1', 'toolu_1', {
+        provider: 'anthropic',
+        authType: 'api_key',
+        model: 'claude-sonnet-4-5-20250929',
+      }),
+    ).toBe(blocks);
+  });
+
+  it('does not replay an unscoped entry into a scoped lookup', () => {
+    const blocks: ThinkingBlock[] = [{ type: 'thinking', thinking: 'legacy', signature: 'sig' }];
+    cache.store('session-1', 'toolu_1', blocks);
+
+    expect(
+      cache.retrieve('session-1', 'toolu_1', {
+        provider: 'anthropic',
+        authType: 'subscription',
+        model: 'claude-sonnet-4-5-20250929',
+      }),
+    ).toBeNull();
+    expect(cache.retrieve('session-1', 'toolu_1')).toBe(blocks);
   });
 
   it('returns null for a non-existent key', () => {
@@ -100,6 +169,19 @@ describe('ThinkingBlockCache', () => {
     cache.store('session-1', 'toolu_1', newBlocks);
 
     expect(cache.retrieve('session-1', 'toolu_1')).toBe(newBlocks);
+  });
+
+  it('evicts the oldest entries once MAX_CACHE_ENTRIES is exceeded', () => {
+    const block: ThinkingBlock[] = [{ type: 'thinking', thinking: 't', signature: 's' }];
+    for (let i = 0; i < MAX_CACHE_ENTRIES + 5; i++) {
+      cache.store('session', `toolu_${i}`, block);
+    }
+
+    // The five oldest entries are evicted FIFO; the cap holds and recent entries survive.
+    expect(cache.retrieve('session', 'toolu_0')).toBeNull();
+    expect(cache.retrieve('session', 'toolu_4')).toBeNull();
+    expect(cache.retrieve('session', 'toolu_5')).not.toBeNull();
+    expect(cache.retrieve('session', `toolu_${MAX_CACHE_ENTRIES + 4}`)).not.toBeNull();
   });
 
   describe('maybeCleanup (lazy eviction)', () => {

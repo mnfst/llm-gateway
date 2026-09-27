@@ -35,8 +35,8 @@
 }
 
 .auth-logo__img {
-  width: 140px;
-  height: auto;
+  height: 32px;
+  width: auto;
   object-fit: contain;
 }
 
@@ -148,6 +148,17 @@
   cursor: not-allowed;
 }
 
+.auth-form__submit--secondary {
+  background: transparent;
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+.auth-form__submit--secondary:hover:not(:disabled) {
+  background: hsl(var(--muted));
+  opacity: 1;
+}
+
 .auth-form__error {
   padding: var(--gap-sm) var(--gap-md);
   background: hsl(var(--destructive) / 0.1);
@@ -171,6 +182,22 @@
   border-radius: var(--radius);
   font-size: var(--font-size-xs);
   line-height: 1.5;
+}
+
+.auth-form__notice {
+  padding: var(--gap-sm) var(--gap-md);
+  background: hsl(var(--muted) / 0.5);
+  color: hsl(var(--muted-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.auth-form__notice-link {
+  color: hsl(var(--primary));
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .auth-form__link-btn {
@@ -324,6 +351,182 @@
 
 .auth-terms__link:hover {
   text-decoration: underline;
+}
+
+/* ── Plan Picker (accordion in auth card) ────────── */
+.plan-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-sm);
+  margin-bottom: var(--gap-lg);
+}
+
+.plan-picker__card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: var(--gap-md);
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--input));
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-family);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+.plan-picker__card:hover {
+  border-color: hsl(var(--foreground) / 0.25);
+}
+
+.plan-picker__card--expanded {
+  border-color: hsl(var(--foreground));
+}
+
+.plan-picker__card--pro.plan-picker__card--expanded {
+  border-color: hsl(var(--foreground));
+}
+
+.plan-picker__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
+.plan-picker__name {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.plan-picker__radio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid hsl(var(--input));
+  flex-shrink: 0;
+  transition: border-color var(--transition-fast);
+}
+
+.plan-picker__card--expanded .plan-picker__radio {
+  border-color: hsl(var(--primary));
+}
+
+.plan-picker__radio-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: hsl(var(--primary));
+}
+
+.plan-picker__badge {
+  padding: 3px 5px;
+  border-radius: 2px;
+  background: #2632ef;
+  color: #ffffff;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.plan-picker__price-inline {
+  display: flex;
+  align-items: baseline;
+  gap: 2px;
+}
+
+.plan-picker__amount {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.plan-picker__period {
+  font-size: var(--font-size-xs);
+  color: hsl(var(--muted-foreground));
+}
+
+.plan-picker__details {
+  margin-top: var(--gap-md);
+  padding-top: var(--gap-md);
+  border-top: 1px solid hsl(var(--border));
+  animation: planDetailsIn 200ms ease-out both;
+}
+
+@keyframes planDetailsIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.plan-picker__usage {
+  margin: 0 0 var(--gap-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: hsl(var(--foreground));
+}
+
+.plan-picker__features {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-picker__features li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: hsl(var(--foreground));
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.plan-picker__features i,
+.plan-picker__features svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.plan-picker__section-header {
+  margin-bottom: var(--gap-md);
+}
+
+.plan-picker__section-title {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.plan-picker__section-subtitle {
+  margin: 2px 0 0;
+  font-size: var(--font-size-xs);
+  color: hsl(var(--muted-foreground));
+}
+
+.plan-picker__cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
 }
 
 /* ── Auth responsive ─────────────────────────────── */

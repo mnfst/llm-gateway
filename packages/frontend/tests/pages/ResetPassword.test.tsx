@@ -4,6 +4,7 @@ import { render, screen, fireEvent } from "@solidjs/testing-library";
 let mockSearchParamsValue: Record<string, string> = {};
 const mockRequestPasswordReset = vi.fn();
 const mockResetPassword = vi.fn();
+const mockCheckEmailConfigured = vi.fn().mockResolvedValue(true);
 
 vi.mock("@solidjs/router", () => ({
   A: (props: any) => <a href={props.href} class={props.class}>{props.children}</a>,
@@ -22,11 +23,16 @@ vi.mock("../../src/services/auth-client.js", () => ({
   },
 }));
 
+vi.mock("../../src/services/setup-status.js", () => ({
+  checkEmailConfigured: (...args: unknown[]) => mockCheckEmailConfigured(...args),
+}));
+
 import ResetPassword from "../../src/pages/ResetPassword";
 
 describe("ResetPassword - Request form (no token)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCheckEmailConfigured.mockResolvedValue(true);
     mockSearchParamsValue = {};
   });
 
@@ -102,9 +108,43 @@ describe("ResetPassword - Request form (no token)", () => {
   });
 });
 
+describe("ResetPassword - Request form (no email provider)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCheckEmailConfigured.mockResolvedValue(false);
+    mockSearchParamsValue = {};
+  });
+
+  it("shows the unavailable notice instead of the form", async () => {
+    const { container } = render(() => <ResetPassword />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain(
+        "Password reset by email isn't available on this install",
+      );
+    });
+    expect(container.querySelector("form")).toBeNull();
+    expect(container.querySelector('input[type="email"]')).toBeNull();
+  });
+
+  it("swaps the subtitle to explain email is not set up", async () => {
+    const { container } = render(() => <ResetPassword />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain("Email isn't set up on this server");
+    });
+  });
+
+  it("links to the Account page for a signed-in change-password path", async () => {
+    const { container } = render(() => <ResetPassword />);
+    await vi.waitFor(() => {
+      expect(container.querySelector('a[href="/account"]')).not.toBeNull();
+    });
+  });
+});
+
 describe("ResetPassword - Set new password form (with token)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCheckEmailConfigured.mockResolvedValue(true);
     mockSearchParamsValue = { token: "test-token-123" };
   });
 

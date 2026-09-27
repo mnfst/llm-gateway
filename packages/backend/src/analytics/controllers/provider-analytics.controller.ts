@@ -3,6 +3,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TenantCtx, TenantContext } from '../../common/decorators/tenant-context.decorator';
 import { AggregationService } from '../services/aggregation.service';
+import { AutofixStatsService } from '../services/autofix-stats.service';
+import { AttemptStatsService } from '../services/attempt-stats.service';
 import { TimeseriesQueriesService } from '../services/timeseries-queries.service';
 import { TenantProvider } from '../../entities/tenant-provider.entity';
 import { AgentMessage } from '../../entities/agent-message.entity';
@@ -10,20 +12,111 @@ import {
   selectMessageRowColumns,
   filterByTenantProviderId,
   excludePlaygroundAgents,
+  sqlCountMessages,
+  addTenantFilter,
+  scopeToConnection,
+  sqlIsCompletedStatus,
+  sqlIsSuccessStatus,
 } from '../services/query-helpers';
 import { computeCutoff } from '../../common/utils/postgres-sql';
 import { sqlCastFloat, sqlSanitizeCost } from '../../common/utils/postgres-sql';
+import { rangeToInterval } from '../../common/utils/range.util';
 
 @Controller('api/v1/provider-analytics')
 export class ProviderAnalyticsController {
   constructor(
     private readonly aggregation: AggregationService,
     private readonly timeseries: TimeseriesQueriesService,
+    private readonly autofixStats: AutofixStatsService,
+    private readonly attemptStats: AttemptStatsService,
     @InjectRepository(TenantProvider)
     private readonly providerRepo: Repository<TenantProvider>,
     @InjectRepository(AgentMessage)
     private readonly messageRepo: Repository<AgentMessage>,
   ) {}
+
+  /**
+   * Attempt-status timeseries for ONE connection: the Attempts chart's
+   * By attempt status view. Every provider call counts where it ran.
+   */
+  @Get('attempt-status-timeseries')
+  async getAttemptStatusTimeseries(
+    @TenantCtx() ctx: TenantContext,
+    @Query('range') range?: string,
+    @Query('auth_type') authType?: string,
+    @Query('provider') provider?: string,
+    @Query('label') label?: string,
+    @Query('connection_id') connectionId?: string,
+  ) {
+    return this.attemptStats.getConnectionStatusTimeseries({
+      tenantId: ctx.tenantId,
+      range,
+      authType,
+      provider,
+      label,
+      tenantProviderId: connectionId,
+    });
+  }
+
+  /** Attempts by HTTP status over time for ONE connection. */
+  @Get('attempt-http-status-timeseries')
+  async getAttemptHttpStatusTimeseries(
+    @TenantCtx() ctx: TenantContext,
+    @Query('range') range?: string,
+    @Query('auth_type') authType?: string,
+    @Query('provider') provider?: string,
+    @Query('label') label?: string,
+    @Query('connection_id') connectionId?: string,
+  ) {
+    return this.attemptStats.getConnectionHttpStatusTimeseries({
+      tenantId: ctx.tenantId,
+      range,
+      authType,
+      provider,
+      label,
+      tenantProviderId: connectionId,
+    });
+  }
+
+  /** Header-card breakdown for ONE connection (totals + retry families). */
+  @Get('attempt-breakdown')
+  async getAttemptBreakdown(
+    @TenantCtx() ctx: TenantContext,
+    @Query('range') range?: string,
+    @Query('auth_type') authType?: string,
+    @Query('provider') provider?: string,
+    @Query('label') label?: string,
+    @Query('connection_id') connectionId?: string,
+  ) {
+    return this.attemptStats.getConnectionBreakdown({
+      tenantId: ctx.tenantId,
+      range,
+      authType,
+      provider,
+      label,
+      tenantProviderId: connectionId,
+    });
+  }
+
+  /** Attempts per harness over time for ONE connection (By harness view). */
+  @Get('attempts-by-agent-timeseries')
+  async getAttemptsByAgentTimeseries(
+    @TenantCtx() ctx: TenantContext,
+    @Query('range') range?: string,
+    @Query('auth_type') authType?: string,
+    @Query('provider') provider?: string,
+    @Query('label') label?: string,
+    @Query('connection_id') connectionId?: string,
+  ) {
+    return this.attemptStats.getConnectionAttemptsByAgentTimeseries({
+      tenantId: ctx.tenantId,
+      range,
+      authType,
+      provider,
+      label,
+      tenantProviderId: connectionId,
+    });
+  }
 
   @Get()
   async getAnalytics(
@@ -42,7 +135,7 @@ export class ProviderAnalyticsController {
     const hourly = validRange === '24h';
     const agent = agentName || undefined;
 
-    const [summary, ts] = await Promise.all([
+    const [summary, ts, attempts] = await Promise.all([
       // excludePlayground=true: Playground (is_playground) usage must not pollute
       // provider analytics aggregates.
       this.aggregation.getSummaryMetrics(
@@ -66,6 +159,15 @@ export class ProviderAnalyticsController {
         label,
         connectionId,
       ),
+      this.getAttemptReliability(
+        validRange,
+        ctx.tenantId,
+        agent,
+        authType,
+        provider,
+        label,
+        connectionId,
+      ),
     ]);
 
     return {
@@ -75,6 +177,39 @@ export class ProviderAnalyticsController {
       },
       token_usage: ts.tokenUsage,
       message_usage: ts.messageUsage,
+      attempts,
+    };
+  }
+
+  private async getAttemptReliability(
+    range: string,
+    tenantId: string | null,
+    agentName?: string,
+    authType?: string,
+    provider?: string,
+    label?: string,
+    connectionId?: string,
+  ): Promise<{ total: number; successful: number; success_rate: number }> {
+    const qb = this.messageRepo
+      .createQueryBuilder('at')
+      .select('COUNT(*)', 'total')
+      .addSelect(`COUNT(*) FILTER (WHERE ${sqlIsSuccessStatus('at.status')})`, 'successful')
+      .where('at.timestamp >= :attemptCutoff', {
+        attemptCutoff: computeCutoff(rangeToInterval(range)),
+      })
+      .andWhere(sqlIsCompletedStatus('at.status'));
+    addTenantFilter(qb, tenantId, agentName);
+    if (authType) qb.andWhere('at.auth_type = :attemptAuthType', { attemptAuthType: authType });
+    if (provider) qb.andWhere('at.provider = :attemptProvider', { attemptProvider: provider });
+    excludePlaygroundAgents(qb);
+    scopeToConnection(qb, connectionId, label);
+    const row = await qb.getRawOne();
+    const total = Number(row?.total ?? 0);
+    const successful = Number(row?.successful ?? 0);
+    return {
+      total,
+      successful,
+      success_rate: total === 0 ? 0 : (successful / total) * 100,
     };
   }
 
@@ -87,7 +222,7 @@ export class ProviderAnalyticsController {
     @Query('label') label?: string,
     @Query('connection_id') connectionId?: string,
   ) {
-    const validRange = range === '30d' ? '30d' : range === '7d' ? '7d' : '24h';
+    const validRange = this.validateRange(range);
     const hourly = validRange === '24h';
 
     return this.timeseries.getPerAgentTimeseries(
@@ -110,7 +245,7 @@ export class ProviderAnalyticsController {
     @Query('label') label?: string,
     @Query('connection_id') connectionId?: string,
   ) {
-    const validRange = range === '30d' ? '30d' : range === '7d' ? '7d' : '24h';
+    const validRange = this.validateRange(range);
     const hourly = validRange === '24h';
 
     return this.timeseries.getPerAgentMessageTimeseries(
@@ -133,7 +268,7 @@ export class ProviderAnalyticsController {
     @Query('label') label?: string,
     @Query('connection_id') connectionId?: string,
   ) {
-    const validRange = range === '30d' ? '30d' : range === '7d' ? '7d' : '24h';
+    const validRange = this.validateRange(range);
     const hourly = validRange === '24h';
 
     return this.timeseries.getPerAgentCostTimeseries(
@@ -205,9 +340,14 @@ export class ProviderAnalyticsController {
       .select('at.agent_name', 'agent_name')
       .addSelect('COALESCE(SUM(at.input_tokens + at.output_tokens), 0)', 'tokens')
       .addSelect(`COALESCE(SUM(${costExpr}), 0)`, 'cost')
-      .addSelect('COUNT(*)', 'messages')
+      .addSelect(sqlCountMessages(), 'messages')
       .addSelect('MAX(at.timestamp)', 'last_used')
       .addSelect('MAX(a.agent_platform)', 'agent_platform')
+      // Attempt-world reliability columns: every provider call this
+      // connection served for the harness counts, by its own outcome.
+      // Healing is a request concept and does not belong here.
+      .addSelect('COUNT(*)', 'attempts')
+      .addSelect(`COUNT(*) FILTER (WHERE ${sqlIsSuccessStatus('at.status')})`, 'succeeded')
       // Join on agent identity, not name: a soft-deleted agent sharing a slug
       // with a live one would otherwise match twice and double this breakdown's
       // per-agent tokens/cost/message counts. This one-to-(0/1) join is only for
@@ -217,6 +357,7 @@ export class ProviderAnalyticsController {
       .leftJoin('agents', 'a', 'a.id = at.agent_id')
       .where('at.tenant_id = :tid', { tid: tenantId })
       .andWhere('at.timestamp >= :cutoff', { cutoff: cutoff30d })
+      .andWhere(sqlIsCompletedStatus('at.status'))
       .andWhere('at.agent_name IS NOT NULL');
     // Exclude the reserved Playground (is_playground) agent from the breakdown.
     excludePlaygroundAgents(agentQb);
@@ -229,7 +370,7 @@ export class ProviderAnalyticsController {
       .select('at.model', 'model')
       .addSelect('COALESCE(SUM(at.input_tokens + at.output_tokens), 0)', 'tokens')
       .addSelect(`COALESCE(SUM(${costExpr}), 0)`, 'cost')
-      .addSelect('COUNT(*)', 'messages')
+      .addSelect(sqlCountMessages(), 'messages')
       .where('at.tenant_id = :tid', { tid: tenantId })
       .andWhere('at.timestamp >= :cutoff', { cutoff: cutoff30d })
       .andWhere('at.model IS NOT NULL');
@@ -279,6 +420,8 @@ export class ProviderAnalyticsController {
             tokens_30d: tokens,
             cost_30d: Number(r['cost'] ?? 0),
             messages_30d: Number(r['messages'] ?? 0),
+            attempts_30d: Number(r['attempts'] ?? 0),
+            succeeded_30d: Number(r['succeeded'] ?? 0),
             pct_of_total: totalAgentTokens > 0 ? Math.round((tokens / totalAgentTokens) * 100) : 0,
             last_used: r['last_used']
               ? r['last_used'] instanceof Date
@@ -303,6 +446,6 @@ export class ProviderAnalyticsController {
   }
 
   private validateRange(range?: string): string {
-    return range === '30d' ? '30d' : range === '7d' ? '7d' : '24h';
+    return range === '7d' || range === '30d' || range === '90d' || range === '365d' ? range : '24h';
   }
 }

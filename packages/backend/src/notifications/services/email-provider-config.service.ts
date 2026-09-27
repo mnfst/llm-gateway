@@ -3,7 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { DataSource } from 'typeorm';
 import { v4 as uuid } from 'uuid';
 import { render } from '@react-email/render';
-import { encrypt, decrypt, isEncrypted, getEncryptionSecret } from '../../common/utils/crypto.util';
+import {
+  encrypt,
+  decryptWithAny,
+  isEncrypted,
+  getEncryptionSecret,
+  getDecryptionSecrets,
+} from '../../common/utils/crypto.util';
 import { TenantCacheService } from '../../common/services/tenant-cache.service';
 import { TenantContext } from '../../common/decorators/tenant-context.decorator';
 import { validateProviderConfig } from './email-provider-validation';
@@ -43,7 +49,7 @@ export class EmailProviderConfigService {
 
   private decryptKey(stored: string): string {
     if (isEncrypted(stored)) {
-      return decrypt(stored, getEncryptionSecret());
+      return decryptWithAny(stored, getDecryptionSecrets()).plaintext;
     }
     // Backwards compatibility: plaintext keys from before encryption was added
     return stored;

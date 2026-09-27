@@ -1,4 +1,5 @@
 import { createSignal, For, onCleanup, Show, type Component } from 'solid-js';
+import { MAX_KEYS_PER_PROVIDER } from 'manifest-shared';
 import { providerIcon } from './ProviderIcon.js';
 import {
   copilotDeviceCode,
@@ -35,7 +36,6 @@ interface Props {
 
 const SLOW_DOWN_INCREASE = 5;
 const MAX_POLL_ERRORS = 5;
-const MAX_KEYS_PER_PROVIDER = 5;
 
 const CopilotDeviceLogin: Component<Props> = (props) => {
   const [phase, setPhase] = createSignal<Phase>('idle');

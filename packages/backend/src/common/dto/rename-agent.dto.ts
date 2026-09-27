@@ -6,7 +6,6 @@ import {
   Matches,
   IsOptional,
   IsIn,
-  IsBoolean,
 } from 'class-validator';
 import { AGENT_CATEGORIES, AGENT_PLATFORMS } from 'manifest-shared';
 
@@ -30,8 +29,4 @@ export class RenameAgentDto {
   @IsString()
   @IsIn([...AGENT_PLATFORMS])
   agent_platform?: string;
-
-  @IsOptional()
-  @IsBoolean()
-  record_messages?: boolean;
 }

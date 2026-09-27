@@ -42,8 +42,8 @@ describe('ProviderClient — timeout signal actually aborts the in-flight fetch'
       return new Promise((_resolve, reject) => {
         sig.addEventListener('abort', () => {
           abortObserved = true;
-          // Mirror real fetch behavior: reject with an abort-flavored error.
-          reject(new Error('The operation was aborted'));
+          // Mirror real fetch behavior: reject with the signal's abort reason.
+          reject(sig.reason);
         });
       });
     });
@@ -59,7 +59,7 @@ describe('ProviderClient — timeout signal actually aborts the in-flight fetch'
           body,
           stream: false,
         }),
-      ).rejects.toThrow(/aborted/i);
+      ).rejects.toMatchObject({ name: 'TimeoutError' });
     });
 
     expect(abortObserved).toBe(true);
@@ -117,7 +117,7 @@ describe('ProviderClient — timeout signal actually aborts the in-flight fetch'
       return new Promise((_resolve, reject) => {
         const onAbort = () => {
           abortObserved = true;
-          reject(new Error('The operation was aborted'));
+          reject(sig.reason);
         };
         // Handle both already-aborted (synchronous) and not-yet-aborted (event) cases.
         if (sig.aborted) onAbort();
@@ -140,10 +140,38 @@ describe('ProviderClient — timeout signal actually aborts the in-flight fetch'
       // Yield to the microtask queue so forward() reaches fetch() before we abort.
       await new Promise((r) => setImmediate(r));
       ac.abort();
-      await expect(pending).rejects.toThrow(/aborted/i);
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     });
 
     expect(abortObserved).toBe(true);
+  }, 5000);
+
+  it('surfaces a streaming response-header timeout as TimeoutError', async () => {
+    process.env.PROVIDER_TIMEOUT_MS = '25';
+
+    mockFetch.mockImplementation((_url: string, init: RequestInit) => {
+      const sig = init.signal as AbortSignal;
+      return new Promise((_resolve, reject) => {
+        sig.addEventListener('abort', () => reject(sig.reason));
+      });
+    });
+
+    await jest.isolateModulesAsync(async () => {
+      const { ProviderClient: FreshClient } = await import('../provider-client');
+      const fresh = new FreshClient();
+      await expect(
+        fresh.forward({
+          provider: 'openai',
+          apiKey: 'sk-test',
+          model: 'gpt-4o',
+          body,
+          stream: true,
+        }),
+      ).rejects.toMatchObject({
+        name: 'TimeoutError',
+        message: 'Upstream provider request timed out',
+      });
+    });
   }, 5000);
 
   it('does not abort a streaming response body after headers arrive', async () => {

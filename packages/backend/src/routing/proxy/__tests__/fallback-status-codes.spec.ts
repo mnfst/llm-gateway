@@ -11,4 +11,8 @@ describe('shouldTriggerFallback', () => {
   it.each([200, 201, 204, 301, 302])('should return false for non-error status %d', (status) => {
     expect(shouldTriggerFallback(status)).toBe(false);
   });
+
+  it('should still fallback for provider context length errors', () => {
+    expect(shouldTriggerFallback(400)).toBe(true);
+  });
 });

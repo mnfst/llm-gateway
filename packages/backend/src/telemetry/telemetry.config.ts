@@ -3,7 +3,7 @@ import { resolve } from 'path';
 
 export const DEFAULT_TELEMETRY_ENDPOINT = 'https://telemetry.manifest.build/v1/report';
 export const TELEMETRY_SCHEMA_VERSION = 1;
-export const TELEMETRY_DOCS_URL = 'https://manifest.build/docs/self-hosted#telemetry';
+export const TELEMETRY_DOCS_URL = 'https://manifest.build/llm-gateway/docs/self-hosted/#telemetry';
 
 export interface TelemetryConfig {
   enabled: boolean;
@@ -27,7 +27,10 @@ export function buildTelemetryConfig(env: NodeJS.ProcessEnv = process.env): Tele
   const versionReadable = manifestVersion !== UNKNOWN_VERSION;
   return {
     enabled: isProd && !isDisabled && versionReadable,
-    endpoint: env['TELEMETRY_ENDPOINT'] ?? DEFAULT_TELEMETRY_ENDPOINT,
+    // `||`, not `??`: docker-compose passes unset optional vars through as an
+    // empty string (`- TELEMETRY_ENDPOINT=${TELEMETRY_ENDPOINT:-}`), and `??`
+    // would accept `''` as a deliberate override and POST reports to nowhere.
+    endpoint: env['TELEMETRY_ENDPOINT']?.trim() || DEFAULT_TELEMETRY_ENDPOINT,
     manifestVersion,
   };
 }

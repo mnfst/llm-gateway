@@ -1,4 +1,4 @@
-import { ExecutionContext } from '@nestjs/common';
+import { ExecutionContext, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AgentKeyAuthGuard } from './agent-key-auth.guard';
 import { hashKey } from '../../common/utils/hash.util';
@@ -94,14 +94,12 @@ describe('AgentKeyAuthGuard edge cases', () => {
   });
 
   describe('validateMnfstToken with broken relations', () => {
-    // Lines 206-207 of the source dereference keyRecord.agent.name and
-    // keyRecord.tenant.name without null checks. If either relation fails
+    // The candidate query left-joins agent + tenant. If either relation fails
     // to hydrate (race during a delete, foreign-key drift, missing JOIN
-    // result), the code throws a TypeError when assembling the cache entry.
-    // These tests pin that behavior so future refactors can intentionally
-    // tighten it (e.g. throwing UnauthorizedException instead) without
-    // silently regressing.
-    it('throws when keyRecord.agent is null', async () => {
+    // result), the guard now rejects with a clean UnauthorizedException (401)
+    // instead of dereferencing null and surfacing a TypeError as a 500. These
+    // tests pin that hardened behavior.
+    it('rejects with 401 when keyRecord.agent is null', async () => {
       const token = 'mnfst_missing-agent-key';
       mockGetMany.mockResolvedValue([
         {
@@ -116,13 +114,10 @@ describe('AgentKeyAuthGuard edge cases', () => {
       ]);
 
       const { ctx } = makeContext({ authorization: `Bearer ${token}` });
-      // Source accesses keyRecord.agent.name without null-check on line 206.
-      // Assert on a generic Error so the test does not couple to a specific
-      // V8 TypeError wording.
-      await expect(guard.canActivate(ctx)).rejects.toThrow();
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
     });
 
-    it('throws when keyRecord.tenant is null', async () => {
+    it('rejects with 401 when keyRecord.tenant is null', async () => {
       const token = 'mnfst_missing-tenant-key';
       mockGetMany.mockResolvedValue([
         {
@@ -137,11 +132,10 @@ describe('AgentKeyAuthGuard edge cases', () => {
       ]);
 
       const { ctx } = makeContext({ authorization: `Bearer ${token}` });
-      // Source accesses keyRecord.tenant.name without null-check on line 207.
-      await expect(guard.canActivate(ctx)).rejects.toThrow();
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
     });
 
-    it('throws when both keyRecord.agent and keyRecord.tenant are null', async () => {
+    it('rejects with 401 when both keyRecord.agent and keyRecord.tenant are null', async () => {
       const token = 'mnfst_both-null-key';
       mockGetMany.mockResolvedValue([
         {
@@ -156,10 +150,34 @@ describe('AgentKeyAuthGuard edge cases', () => {
       ]);
 
       const { ctx } = makeContext({ authorization: `Bearer ${token}` });
-      await expect(guard.canActivate(ctx)).rejects.toThrow();
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
     });
 
-    it('does not cache the entry when agent is null (cache write fails before set)', async () => {
+    it('remembers the rejection so an identical retry is served from the negative cache', async () => {
+      const token = 'mnfst_orphan-retry-key';
+      mockGetMany.mockResolvedValue([
+        {
+          id: 'key-orphan-retry',
+          tenant_id: 'tenant-1',
+          agent_id: 'agent-orphan',
+          key_hash: hashKey(token),
+          expires_at: null,
+          agent: null,
+          tenant: { owner_user_id: 'user-1' },
+        },
+      ]);
+
+      const first = makeContext({ authorization: `Bearer ${token}` });
+      await expect(guard.canActivate(first.ctx)).rejects.toThrow(UnauthorizedException);
+      const second = makeContext({ authorization: `Bearer ${token}` });
+      await expect(guard.canActivate(second.ctx)).rejects.toThrow(UnauthorizedException);
+
+      // The unhydrated-relation path calls rememberInvalid(), so the second
+      // attempt short-circuits on the negative cache without a second DB hit.
+      expect(mockGetMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not cache a positive entry when agent is null (rejects before cache.set)', async () => {
       const token = 'mnfst_no-cache-on-fail-key';
       mockGetMany.mockResolvedValue([
         {
@@ -174,12 +192,12 @@ describe('AgentKeyAuthGuard edge cases', () => {
       ]);
 
       const { ctx } = makeContext({ authorization: `Bearer ${token}` });
-      await expect(guard.canActivate(ctx)).rejects.toThrow();
+      await expect(guard.canActivate(ctx)).rejects.toThrow(UnauthorizedException);
 
-      // The cache.set call is on the same statement that dereferences the
-      // null relation, so the entry never lands in the cache. A retry must
-      // still hit the DB rather than serving a poisoned cache entry.
-      const internalCache = (guard as unknown as { cache: Map<string, unknown> }).cache;
+      // The guard rejects on the null relation before reaching cache.set, so
+      // no positive entry lands in the cache — a poisoned entry can never be
+      // served on a later request.
+      const internalCache = (AgentKeyAuthGuard as unknown as { cache: Map<string, unknown> }).cache;
       expect(internalCache.size).toBe(0);
     });
   });

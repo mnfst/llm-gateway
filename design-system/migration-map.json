@@ -1,0 +1,4 @@
+{
+  "$comment": "Hand-kept: legacy component → the primitive that replaces it. The generator merges this into the registry. Filled as phase-2 primitives are built; migration is opportunistic (strangler), never a mass rename.",
+  "map": {}
+}

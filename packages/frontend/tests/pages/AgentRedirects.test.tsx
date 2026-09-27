@@ -7,6 +7,7 @@ const mockParams = { agentName: "demo-agent" };
 vi.mock("@solidjs/router", () => ({
   Navigate: (props: any) => <div data-testid="navigate" data-href={props.href} />,
   useParams: () => mockParams,
+  useLocation: () => ({ search: "" }),
 }));
 
 import AgentLimitsRedirect from "../../src/pages/AgentLimitsRedirect";
@@ -48,13 +49,13 @@ describe("AgentMessagesRedirect", () => {
     mockParams.agentName = "my agent";
     const { container } = render(() => <AgentMessagesRedirect />);
     const navigate = container.querySelector('[data-testid="navigate"]');
-    expect(navigate?.getAttribute("data-href")).toBe("/messages?agent=my%20agent");
+    expect(navigate?.getAttribute("data-href")).toBe("/messages?agent=my+agent");
   });
 
   it("normalizes an already-encoded route param instead of double-encoding", () => {
     mockParams.agentName = "my%20agent";
     const { container } = render(() => <AgentMessagesRedirect />);
     const navigate = container.querySelector('[data-testid="navigate"]');
-    expect(navigate?.getAttribute("data-href")).toBe("/messages?agent=my%20agent");
+    expect(navigate?.getAttribute("data-href")).toBe("/messages?agent=my+agent");
   });
 });

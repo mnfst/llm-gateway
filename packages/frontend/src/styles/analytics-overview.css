@@ -26,9 +26,52 @@
 /* ── Summary stat cards ──────────────────────────── */
 .overview-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 24px;
   margin-bottom: 24px;
+}
+
+.overview-stats--5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.overview-stats--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Stat cards collapse toward one column as the viewport narrows. The
+   modifier and the base share the same breakpoints so a five-card row
+   never stays wider than the screen. */
+@media (max-width: 1024px) {
+  .overview-stats,
+  .overview-stats--5,
+  .overview-stats--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .overview-stats,
+  .overview-stats--5,
+  .overview-stats--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  /* Two-up cards are narrow: let the trend pill / "View more" drop under
+     the big value instead of pushing past the card edge. */
+  .overview-stat-card__value-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+}
+
+@media (max-width: 480px) {
+  .overview-stats,
+  .overview-stats--5,
+  .overview-stats--3 {
+    grid-template-columns: 1fr;
+  }
 }
 
 .overview-stat-card {
@@ -43,7 +86,7 @@
 
 .overview-stat-card__label {
   font-size: var(--font-size-xs);
-  font-weight: 500;
+  font-weight: 700;
   color: hsl(var(--muted-foreground));
 }
 
@@ -51,6 +94,207 @@
   font-size: var(--font-size-2xl);
   font-weight: 700;
   color: hsl(var(--foreground));
+}
+
+.overview-stat-card__value-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+/* The trend pill ("new", "+12%") sits a touch high so its bottom edge reads
+   aligned with the big value's text bottom instead of hanging below it. */
+.overview-stat-card__value-row .trend {
+  position: relative;
+  top: -5px;
+}
+
+/* Accent variants: each recovery KPI wears its chart series colour (blue =
+   recovered by Autofix, teal green = recovered by fallback) and the failed
+   card reads destructive, label included.
+
+   The backgrounds are three layers in one `background-image` (the house recipe —
+   the autofix/fallback icon squares are built the same way, card-sized):
+   1. a diagonal fade of the card's colour toward transparent,
+   2. a denser, darker glow anchored in the top-right corner (the "blurred
+      shape" — a radial does it without an extra node or a GPU blur),
+   3. a faint echo in the opposite corner for mesh-like depth.
+   The glow sits opposite the text, so values keep their contrast. */
+.overview-stat-card--autofix {
+  background-color: hsl(var(--card));
+  background-image:
+    radial-gradient(ellipse 90% 95% at 100% 0%, rgba(21, 30, 180, 0.2), transparent 55%),
+    radial-gradient(ellipse 70% 80% at 0% 100%, rgba(38, 50, 239, 0.07), transparent 50%),
+    linear-gradient(135deg, rgba(38, 50, 239, 0.13), rgba(38, 50, 239, 0));
+  border-color: rgba(38, 50, 239, 0.25);
+}
+
+.overview-stat-card--autofix:hover {
+  border-color: rgba(38, 50, 239, 0.45);
+}
+
+.overview-stat-card--autofix .overview-stat-card__value {
+  color: #2632ef;
+}
+
+.overview-stat-card--fallback {
+  background-color: hsl(var(--card));
+  background-image:
+    radial-gradient(ellipse 90% 95% at 100% 0%, rgba(23, 138, 134, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 80% at 0% 100%, rgba(73, 207, 202, 0.08), transparent 50%),
+    linear-gradient(135deg, rgba(73, 207, 202, 0.16), rgba(73, 207, 202, 0));
+  border-color: rgba(28, 196, 191, 0.3);
+}
+
+.overview-stat-card--fallback:hover {
+  border-color: rgba(28, 196, 191, 0.5);
+}
+
+.overview-stat-card--fallback .overview-stat-card__value {
+  color: hsl(var(--success));
+}
+
+.overview-stat-card--destructive {
+  background-color: hsl(var(--card));
+  background-image:
+    radial-gradient(ellipse 90% 95% at 100% 0%, rgba(185, 28, 28, 0.16), transparent 55%),
+    radial-gradient(ellipse 70% 80% at 0% 100%, hsl(var(--destructive) / 0.06), transparent 50%),
+    linear-gradient(135deg, hsl(var(--destructive) / 0.12), hsl(var(--destructive) / 0));
+  border-color: hsl(var(--destructive) / 0.25);
+}
+
+.overview-stat-card--destructive:hover {
+  border-color: hsl(var(--destructive) / 0.45);
+}
+
+.overview-stat-card--destructive .overview-stat-card__value {
+  color: hsl(var(--destructive));
+}
+
+/* Dark mode: quieter fades (the dark card does the work), brighter glows
+   (on a dark ground it is the glow that carries the colour). */
+.dark .overview-stat-card--autofix {
+  background-color: hsl(var(--card));
+  background-image:
+    radial-gradient(ellipse 90% 95% at 100% 0%, rgba(80, 95, 255, 0.28), transparent 55%),
+    radial-gradient(ellipse 70% 80% at 0% 100%, rgba(38, 50, 239, 0.1), transparent 50%),
+    linear-gradient(135deg, rgba(38, 50, 239, 0.16), rgba(38, 50, 239, 0));
+  border-color: rgba(99, 112, 255, 0.35);
+}
+
+.dark .overview-stat-card--autofix .overview-stat-card__value {
+  color: #8f9bff;
+}
+
+.dark .overview-stat-card--fallback {
+  background-color: hsl(var(--card));
+  background-image:
+    radial-gradient(ellipse 90% 95% at 100% 0%, rgba(40, 190, 183, 0.24), transparent 55%),
+    radial-gradient(ellipse 70% 80% at 0% 100%, rgba(73, 207, 202, 0.09), transparent 50%),
+    linear-gradient(135deg, rgba(73, 207, 202, 0.13), rgba(73, 207, 202, 0));
+  border-color: rgba(73, 207, 202, 0.35);
+}
+
+.dark .overview-stat-card--destructive {
+  background-color: hsl(var(--card));
+  background-image:
+    radial-gradient(ellipse 90% 95% at 100% 0%, rgba(248, 90, 90, 0.22), transparent 55%),
+    radial-gradient(ellipse 70% 80% at 0% 100%, hsl(var(--destructive) / 0.09), transparent 50%),
+    linear-gradient(135deg, hsl(var(--destructive) / 0.14), hsl(var(--destructive) / 0));
+  border-color: hsl(var(--destructive) / 0.4);
+}
+
+/* The visible drill-through on a clickable stat card: plain ink, bold, no
+   underline, pushed to the right end of the value row. */
+.view-more-link {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  white-space: nowrap;
+}
+
+.afx-kpi-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 0 16px;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+}
+.afx-kpi-line__primary {
+  font-weight: 700;
+  font-size: var(--font-size-base);
+  color: hsl(var(--foreground));
+}
+.afx-kpi-line__sep {
+  color: hsl(var(--border));
+}
+.afx-kpi-line__stat {
+  font-weight: 500;
+}
+
+/* ── Error class breakdown card ────────────────────── */
+.error-class-card {
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  padding: var(--gap-lg);
+}
+.error-class-card__title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin-bottom: var(--gap-md);
+}
+.error-class-card__empty {
+  font-size: var(--font-size-xs);
+  color: hsl(var(--muted-foreground));
+  font-style: italic;
+  margin: 0;
+}
+.error-class-card__list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.error-class-card__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.error-class-card__label {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: hsl(var(--foreground));
+  min-width: 120px;
+  flex-shrink: 0;
+}
+.error-class-card__bar-wrap {
+  flex: 1;
+  height: 8px;
+  background: hsl(var(--border));
+  border-radius: 4px;
+  overflow: hidden;
+}
+.error-class-card__bar {
+  height: 100%;
+  background: hsl(var(--foreground));
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.error-class-card__count {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  min-width: 40px;
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .overview-split {
+    grid-template-columns: 1fr !important;
+  }
 }
 
 /* ── Scrollable panel ────────────────────────────── */
@@ -69,6 +313,9 @@
 .scroll-panel__body {
   max-height: 480px;
   overflow-y: auto;
+  /* Wide tables (the 7-column Harnesses breakdown) scroll inside the
+     panel on narrow screens instead of widening the page. */
+  overflow-x: auto;
   padding-bottom: 32px;
 }
 

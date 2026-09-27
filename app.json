@@ -1,0 +1,88 @@
+{
+  "name": "Manifest",
+  "description": "Open-source AI model router for agents and apps. Connect your providers to one OpenAI-compatible endpoint.",
+  "repository": "https://github.com/mnfst/llm-gateway",
+  "website": "https://manifest.build",
+  "logo": "https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg",
+  "success_url": "/setup",
+  "stack": "container",
+  "keywords": ["ai", "llm", "model-router", "agents", "postgres"],
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "basic"
+    }
+  },
+  "addons": [
+    {
+      "plan": "heroku-postgresql:essential-0",
+      "as": "DATABASE"
+    }
+  ],
+  "env": {
+    "BETTER_AUTH_URL": {
+      "description": "Public URL for this Heroku app, for example https://your-app-name.herokuapp.com. Use the app name you choose above.",
+      "required": true
+    },
+    "BETTER_AUTH_SECRET": {
+      "description": "Session signing secret. Heroku generates a secure value for you.",
+      "generator": "secret"
+    },
+    "MANIFEST_ENCRYPTION_KEY": {
+      "description": "Separate at-rest encryption key for provider credentials. Heroku generates a secure value for you.",
+      "generator": "secret"
+    },
+    "REQUEST_RECORDING_STORAGE": {
+      "description": "Store compressed request recordings in durable S3-compatible object storage.",
+      "value": "s3"
+    },
+    "REQUEST_RECORDING_S3_BUCKET": {
+      "description": "Private S3-compatible bucket name for request recordings.",
+      "required": true
+    },
+    "REQUEST_RECORDING_S3_ENDPOINT": {
+      "description": "Custom S3-compatible endpoint. Leave blank when using AWS S3.",
+      "required": false
+    },
+    "REQUEST_RECORDING_S3_REGION": {
+      "description": "S3 signing region, such as us-east-1 (also used with DigitalOcean Spaces).",
+      "required": true
+    },
+    "REQUEST_RECORDING_S3_ACCESS_KEY_ID": {
+      "description": "Access key limited to reading, writing, and deleting objects in the recording bucket.",
+      "required": true
+    },
+    "REQUEST_RECORDING_S3_SECRET_ACCESS_KEY": {
+      "description": "Secret key paired with the recording bucket access key.",
+      "required": true
+    },
+    "REQUEST_RECORDING_S3_FORCE_PATH_STYLE": {
+      "description": "Use path-style bucket URLs only when your S3-compatible provider requires them.",
+      "value": "false"
+    },
+    "BIND_ADDRESS": {
+      "description": "Bind to all interfaces so Heroku can route traffic to the dyno.",
+      "value": "0.0.0.0"
+    },
+    "MANIFEST_MODE": {
+      "description": "Run Manifest in self-hosted mode.",
+      "value": "selfhosted"
+    },
+    "NODE_ENV": {
+      "description": "Run the backend with production settings.",
+      "value": "production"
+    },
+    "PGSSLMODE": {
+      "description": "Use TLS for Heroku Postgres connections.",
+      "value": "no-verify"
+    },
+    "DB_POOL_MAX": {
+      "description": "Keep the main database pool below the Essential-0 connection limit.",
+      "value": "8"
+    },
+    "AUTH_DB_POOL_MAX": {
+      "description": "Keep Better Auth's database pool below the Essential-0 connection limit.",
+      "value": "4"
+    }
+  }
+}

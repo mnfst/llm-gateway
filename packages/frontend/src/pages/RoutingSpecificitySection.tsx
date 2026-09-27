@@ -20,6 +20,7 @@ import type {
 } from '../services/api.js';
 import '../styles/routing-specificity.css';
 import OutputControls from '../components/OutputControls.js';
+import RoutingDeprecationNotice from '../components/RoutingDeprecationNotice.js';
 
 const SPECIFICITY_ICONS: Record<string, () => JSX.Element> = {
   coding: () => (
@@ -232,6 +233,15 @@ const RoutingSpecificitySection: Component<RoutingSpecificitySectionProps> = (pr
     </Show>
   );
 
+  // This section only renders for legacy/invested agents (gated in Routing.tsx),
+  // so the deprecation banner is always appropriate here.
+  const deprecationNotice = () => (
+    <RoutingDeprecationNotice title="We're deprecating rule-based routing.">
+      You can still use it until September 1, 2026, but we recommend migrating to default or custom
+      routing.
+    </RoutingDeprecationNotice>
+  );
+
   const content = () => (
     <>
       <Show
@@ -394,6 +404,7 @@ const RoutingSpecificitySection: Component<RoutingSpecificitySectionProps> = (pr
   if (props.embedded) {
     return (
       <div>
+        {deprecationNotice()}
         <div class="routing-section__header specificity-header" style="margin-bottom: 16px;">
           <div class="specificity-header__left">
             <span class="routing-section__subtitle">
@@ -410,6 +421,7 @@ const RoutingSpecificitySection: Component<RoutingSpecificitySectionProps> = (pr
 
   return (
     <div class="routing-section">
+      {deprecationNotice()}
       <div class="routing-section__header specificity-header">
         <div class="specificity-header__left">
           <span class="routing-section__title">Task-specific routing</span>

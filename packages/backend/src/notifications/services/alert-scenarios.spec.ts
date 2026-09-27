@@ -8,7 +8,6 @@
  * 4. Token alert + block (both) → email sent once + proxy blocked with message
  * 5. No alert defined → no email, no block
  */
-import { Subject } from 'rxjs';
 import { HttpException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { NotificationCronService } from './notification-cron.service';
@@ -17,7 +16,6 @@ import { NotificationRulesService } from './notification-rules.service';
 import { NotificationEmailService } from './notification-email.service';
 import { EmailProviderConfigService } from './email-provider-config.service';
 import { NotificationLogService } from './notification-log.service';
-import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
 import { ManifestRuntimeService } from '../../common/services/manifest-runtime.service';
 
 /* ── Shared helpers ──────────────────────────────── */
@@ -186,7 +184,6 @@ describe('Alert scenarios — email + block (both)', () => {
   let mockHasAlreadySent: jest.Mock;
   let mockInsertLog: jest.Mock;
   let mockResolveRecipientEmail: jest.Mock;
-  let ingestSubject: Subject<string>;
 
   beforeEach(() => {
     mockGetActiveBlockRules = jest.fn().mockResolvedValue([]);
@@ -195,8 +192,6 @@ describe('Alert scenarios — email + block (both)', () => {
     mockHasAlreadySent = jest.fn().mockResolvedValue(false);
     mockInsertLog = jest.fn().mockResolvedValue(undefined);
     mockResolveRecipientEmail = jest.fn().mockResolvedValue(EMAIL);
-
-    ingestSubject = new Subject<string>();
 
     limitCheckService = new LimitCheckService(
       {
@@ -209,7 +204,6 @@ describe('Alert scenarios — email + block (both)', () => {
       {
         getFullConfig: jest.fn().mockResolvedValue(null),
       } as unknown as EmailProviderConfigService,
-      { all: () => ingestSubject.asObservable() } as unknown as IngestEventBusService,
       {
         getAuthBaseUrl: jest.fn().mockReturnValue('http://localhost:3001'),
       } as unknown as ManifestRuntimeService,
@@ -219,12 +213,6 @@ describe('Alert scenarios — email + block (both)', () => {
         resolveRecipientEmail: mockResolveRecipientEmail,
       } as unknown as NotificationLogService,
     );
-    limitCheckService.onModuleInit();
-  });
-
-  afterEach(() => {
-    limitCheckService.onModuleDestroy();
-    ingestSubject.complete();
   });
 
   it('cost alert + block — sends email, blocks agent, returns formatted message', async () => {
@@ -283,7 +271,6 @@ describe('Alert scenarios — email + block (both)', () => {
 
     // Second check — already sent
     mockHasAlreadySent.mockResolvedValue(true);
-    limitCheckService.invalidateCache(TENANT, AGENT);
     const exceeded2 = await limitCheckService.checkLimits(TENANT, AGENT);
     await new Promise((r) => setTimeout(r, 50));
 
@@ -347,7 +334,6 @@ describe('Alert scenarios — email + block (both)', () => {
     expect(mockSendThresholdAlert).toHaveBeenCalledTimes(1);
 
     mockHasAlreadySent.mockResolvedValue(true);
-    limitCheckService.invalidateCache(TENANT, AGENT);
     const exceeded2 = await limitCheckService.checkLimits(TENANT, AGENT);
     await new Promise((r) => setTimeout(r, 50));
 
@@ -364,7 +350,6 @@ describe('Alert scenarios — email + block (both)', () => {
     expect(first).not.toBeNull();
 
     // Agent tries again — still blocked (consumption hasn't reset)
-    limitCheckService.invalidateCache(TENANT, AGENT);
     const second = await limitCheckService.checkLimits(TENANT, AGENT);
     expect(second).not.toBeNull();
     expect(second!.ruleId).toBe('rule-1');
@@ -379,13 +364,11 @@ describe('Alert scenarios — no rules defined', () => {
   let mockGetAllActiveRules: jest.Mock;
   let mockGetActiveBlockRules: jest.Mock;
   let mockSendThresholdAlert: jest.Mock;
-  let ingestSubject: Subject<string>;
 
   beforeEach(async () => {
     mockGetAllActiveRules = jest.fn().mockResolvedValue([]);
     mockGetActiveBlockRules = jest.fn().mockResolvedValue([]);
     mockSendThresholdAlert = jest.fn().mockResolvedValue(true);
-    ingestSubject = new Subject<string>();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -436,7 +419,6 @@ describe('Alert scenarios — no rules defined', () => {
       {
         getFullConfig: jest.fn().mockResolvedValue(null),
       } as unknown as EmailProviderConfigService,
-      { all: () => ingestSubject.asObservable() } as unknown as IngestEventBusService,
       {
         getAuthBaseUrl: jest.fn().mockReturnValue('http://localhost:3001'),
       } as unknown as ManifestRuntimeService,
@@ -446,12 +428,6 @@ describe('Alert scenarios — no rules defined', () => {
         resolveRecipientEmail: jest.fn().mockResolvedValue(EMAIL),
       } as unknown as NotificationLogService,
     );
-    limitCheckService.onModuleInit();
-  });
-
-  afterEach(() => {
-    limitCheckService.onModuleDestroy();
-    ingestSubject.complete();
   });
 
   it('no email is sent when no rules are defined', async () => {

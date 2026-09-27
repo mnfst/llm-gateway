@@ -1,0 +1,92 @@
+name: Manifest
+description:
+  Manifest is an open-source model router for AI agents and apps. Connect
+  OpenAI-compatible clients to one endpoint, route requests across your own
+  provider API keys, subscriptions, local models, and custom providers, and keep
+  usage data in your own infrastructure.
+instructions:
+  Open the generated domain after deployment and create the first admin account.
+  Fresh installs redirect to /setup. Use a real HTTPS domain before configuring
+  OAuth callback URLs or production authentication flows. Anonymous telemetry is
+  enabled by default and can be disabled from the template options.
+changeLog:
+  - date: 2026-08-06
+    description: Persist compressed request recordings in a dedicated app volume
+  - date: 2026-07-08
+    description: Initial Manifest template
+links:
+  - label: Website
+    url: https://manifest.build
+  - label: Documentation
+    url: https://manifest.build/llm-gateway/docs/introduction/
+  - label: GitHub
+    url: https://github.com/mnfst/llm-gateway
+  - label: Docker Hub
+    url: https://hub.docker.com/r/manifestdotbuild/manifest
+contributors:
+  - name: Guillaume Gay
+    url: https://github.com/guillaumegay13
+schema:
+  type: object
+  required:
+    - appServiceName
+    - appServiceImage
+    - databaseServiceName
+  properties:
+    appServiceName:
+      type: string
+      title: App Service Name
+      default: manifest
+    appServiceImage:
+      type: string
+      title: App Service Image
+      default: manifestdotbuild/manifest:6
+    databaseServiceName:
+      type: string
+      title: Database Service Name
+      default: manifest-db
+    telemetryDisabled:
+      type: string
+      title: Anonymous Telemetry
+      default: "0"
+      oneOf:
+        - enum:
+            - "0"
+          title: Enabled (default)
+        - enum:
+            - "1"
+          title: Disabled
+benefits:
+  - title: One endpoint for AI agents
+    description:
+      Manifest exposes an OpenAI-compatible endpoint that AI agents and apps can
+      use while you keep control of provider credentials and routing.
+  - title: Self-hosted data path
+    description:
+      Run Manifest and PostgreSQL on your own server through Easypanel instead
+      of sending prompts, responses, and usage data through a hosted proxy.
+  - title: Bring your own providers
+    description:
+      Connect API keys, subscriptions, local models, and custom providers from a
+      single dashboard.
+features:
+  - title: OpenAI-compatible API
+    description:
+      Point compatible clients at Manifest and route requests through your
+      configured providers.
+  - title: PostgreSQL persistence
+    description:
+      The template provisions a PostgreSQL service for Manifest data and stores
+      provider credentials with a generated encryption key.
+  - title: Request recording persistence
+    description:
+      Compressed request recordings are stored in a dedicated persistent volume
+      mounted by the Manifest app service.
+  - title: Usage tracking
+    description:
+      Track routed requests, spend, and provider behavior from the Manifest
+      dashboard.
+tags:
+  - AI
+  - Developer Tools
+  - Databases

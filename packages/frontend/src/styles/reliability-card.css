@@ -1,0 +1,27 @@
+/* ---------------------------------------------------------------------------
+ * Reliability card — chart legend styles.
+ * The card itself uses chart-card__* classes (shared with ProviderChartCard).
+ * Only the legend below the chart needs custom styles.
+ * Route-scoped: imported from ReliabilityChart.tsx.
+ * --------------------------------------------------------------------------- */
+
+.rel-chart__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: var(--space-sm, 1rem);
+  padding: 0 var(--space-md, 1.5rem) var(--space-sm, 1rem);
+  font-size: var(--size-sm, 0.875rem);
+  color: hsl(var(--foreground));
+}
+.rel-chart__legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.rel-chart__legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}

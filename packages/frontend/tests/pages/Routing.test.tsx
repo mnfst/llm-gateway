@@ -21,6 +21,8 @@ const mockSetSpecificityResponseMode = vi.fn();
 const mockListModelParams = vi.fn();
 const mockSetModelParams = vi.fn();
 const mockDeleteModelParams = vi.fn();
+const mockGetAutofix = vi.fn(() => Promise.resolve({ enabled: false }));
+const mockUpdateAutofix = vi.fn(() => Promise.resolve({ enabled: false }));
 
 vi.mock('../../src/services/api.js', () => ({
   getTierAssignments: (...args: unknown[]) => mockGetTierAssignments(...args),
@@ -44,14 +46,20 @@ vi.mock('../../src/services/api.js', () => ({
   listModelParams: (...args: unknown[]) => mockListModelParams(...args),
   setModelParams: (...args: unknown[]) => mockSetModelParams(...args),
   deleteModelParams: (...args: unknown[]) => mockDeleteModelParams(...args),
+  getAutofix: (...args: unknown[]) => mockGetAutofix(...args),
+  updateAutofix: (...args: unknown[]) => mockUpdateAutofix(...args),
   modelParamsKey: (scope: string, provider: string, authType: string, model: string) =>
     `${scope}::${provider.toLowerCase()}::${model}::${authType}`,
   // Re-export types only — no runtime impact
 }));
 
 const mockListHeaderTiers = vi.fn();
+const mockOverrideHeaderTier = vi.fn();
+const mockToggleHeaderTier = vi.fn();
 vi.mock('../../src/services/api/header-tiers.js', () => ({
   listHeaderTiers: (...args: unknown[]) => mockListHeaderTiers(...args),
+  overrideHeaderTier: (...args: unknown[]) => mockOverrideHeaderTier(...args),
+  toggleHeaderTier: (...args: unknown[]) => mockToggleHeaderTier(...args),
 }));
 
 const mockToastError = vi.fn();
@@ -138,6 +146,7 @@ vi.mock('../../src/components/RoutingTabs.js', () => ({
     const _read = [
       props.specificityEnabled,
       props.customEnabled,
+      (props.showSpecificity as () => unknown)?.(),
       (props.pipelineHelp as () => unknown)?.(),
     ];
     void _read;
@@ -182,7 +191,6 @@ vi.mock('../../src/components/RoutingModals.js', () => ({
       props.specificityAssignments,
       props.customProviders,
       props.connectedProviders,
-      props.onOpenProviderModal,
       props.onProviderPoll,
     ];
     void _read;
@@ -267,12 +275,6 @@ vi.mock('../../src/components/RoutingModals.js', () => ({
           spec-override
         </button>
         <button
-          data-testid="modal-trigger-open-provider"
-          onClick={() => (props.onOpenProviderModal as () => void)?.()}
-        >
-          open-provider
-        </button>
-        <button
           data-testid="modal-trigger-provider-update"
           onClick={() => (props.onProviderUpdate as () => Promise<void>)?.()}
         >
@@ -331,6 +333,7 @@ vi.mock('../../src/pages/RoutingDefaultTierSection.js', () => ({
       props.getTier,
       props.complexityEnabled,
       props.togglingComplexity,
+      (props.showComplexityToggle as () => unknown)?.(),
       props.responseMode,
       props.changingResponseMode,
       props.onResponseModeChange,
@@ -543,7 +546,115 @@ vi.mock('../../src/pages/RoutingHeaderTiersSection.js', () => ({
       props.setModelParams,
     ];
     void _read;
+    // In the clean (no-tabs) view the parent renders the cards itself and drives
+    // modals through these openers. Hand it dummies so the unified view's header
+    // button, dashed add-card, and card edit buttons have something to call.
+    (props.onOpenRef as ((opener: () => void) => void) | undefined)?.(() => {});
+    (props.onCreateRef as ((opener: () => void) => void) | undefined)?.(() => {});
+    (props.onEditRef as ((opener: (tier: unknown) => void) => void) | undefined)?.(() => {});
     return <div data-testid="custom-section" />;
+  },
+}));
+
+// The unified clean-agent view renders RoutingTierCard + HeaderTierCard directly
+// (the legacy tabbed path delegates to the section components instead, so these
+// are only exercised here). Mock them to surface their callbacks as buttons.
+vi.mock('../../src/pages/RoutingTierCard.js', () => ({
+  default: (props: Record<string, unknown>) => {
+    const _read = [
+      props.stage,
+      (props.tier as () => unknown)?.(),
+      (props.models as () => unknown)?.(),
+      (props.customProviders as () => unknown)?.(),
+      props.activeProviders,
+      props.tiersLoading,
+      props.changingTier,
+      props.resettingTier,
+      props.resettingAll,
+      props.addingFallback,
+      props.agentName,
+      props.getFallbacksFor,
+      props.connectedProviders,
+      props.getModelParams,
+      props.setModelParams,
+      // Read the member-expression callback props so Solid evaluates their
+      // getters (covers the onPinKey/onReset/onFallbackUpdate prop lines).
+      props.onOverride,
+      props.onPinKey,
+      props.onReset,
+      props.onFallbackUpdate,
+      props.onAddFallback,
+    ];
+    void _read;
+    return (
+      <div data-testid="tier-card">
+        <button
+          data-testid="tier-card-dropdown"
+          onClick={() => (props.onDropdownOpen as (id: string) => void)('default')}
+        >
+          open
+        </button>
+      </div>
+    );
+  },
+}));
+
+vi.mock('../../src/components/HeaderTierCard.js', () => ({
+  default: (props: Record<string, unknown>) => {
+    const tier = props.tier as { id: string; name: string };
+    const _read = [
+      props.agentName,
+      props.models,
+      props.customProviders,
+      props.connectedProviders,
+      props.getModelParams,
+      props.setModelParams,
+    ];
+    void _read;
+    return (
+      <div data-testid={`clean-card-${tier.id}`}>
+        <button
+          data-testid={`clean-override-${tier.id}`}
+          onClick={() =>
+            (props.onOverride as (m: string, p: string, a?: string, l?: string) => void)(
+              'gpt-4o',
+              'openai',
+              'api_key',
+              'Work',
+            )
+          }
+        >
+          override
+        </button>
+        <button
+          data-testid={`clean-fb-routes-${tier.id}`}
+          onClick={() =>
+            (props.onFallbacksUpdate as (f: string[], r: unknown) => void)(['fb1'], [
+              { provider: 'openai', authType: 'api_key', model: 'fb1' },
+            ])
+          }
+        >
+          fb-routes
+        </button>
+        <button
+          data-testid={`clean-fb-noroutes-${tier.id}`}
+          onClick={() =>
+            (props.onFallbacksUpdate as (f: string[], r?: unknown) => void)(['fb1'], undefined)
+          }
+        >
+          fb-noroutes
+        </button>
+        <button data-testid={`clean-edit-${tier.id}`} onClick={() => (props.onEdit as () => void)()}>
+          edit
+        </button>
+        <button
+          data-testid={`clean-disable-${tier.id}`}
+          onClick={() => (props.onDisable as () => void)()}
+        >
+          disable
+        </button>
+      </div>
+    );
   },
 }));
 
@@ -662,6 +773,8 @@ beforeEach(() => {
   mockGetEnabledProviders.mockResolvedValue({ enabled: ['p1'] });
   mockGetSpecificityAssignments.mockResolvedValue([]);
   mockListHeaderTiers.mockResolvedValue([]);
+  mockOverrideHeaderTier.mockResolvedValue(undefined);
+  mockToggleHeaderTier.mockResolvedValue(undefined);
   mockGetComplexityStatus.mockResolvedValue({ enabled: true });
   mockGetPricingHealth.mockResolvedValue({ model_count: 100, last_fetched_at: '2025-01-01' });
   mockToggleComplexity.mockResolvedValue({ enabled: false });
@@ -803,8 +916,43 @@ describe('Routing page', () => {
     });
   });
 
-  it('updates the default response mode for the default tier', async () => {
+  it('reveals complexity controls when a non-default tier has an override even with complexity disabled', async () => {
+    // Exercises the deprecation gate: complexity is OFF, but a configured
+    // (non-default) tier override marks the agent as "legacy", so the complexity
+    // surface stays visible.
     mockGetComplexityStatus.mockResolvedValue({ enabled: false });
+    mockGetTierAssignments.mockResolvedValue([
+      {
+        id: 't0',
+        agent_id: 'a',
+        tier: 'default',
+        override_route: null,
+        auto_assigned_route: null,
+        fallback_routes: null,
+        updated_at: '2025-01-01',
+      },
+      {
+        id: 't1',
+        agent_id: 'a',
+        tier: 'simple',
+        override_route: { provider: 'openai', authType: 'api_key', model: 'gpt-4o' },
+        auto_assigned_route: null,
+        fallback_routes: null,
+        updated_at: '2025-01-01',
+      },
+    ]);
+    render(() => <Routing />);
+    await waitFor(() => {
+      expect(screen.getByTestId('default-section')).toBeDefined();
+    });
+  });
+
+  it('updates the default response mode for the default tier', async () => {
+    // Ensure legacy path (tabbed view) by providing a non-default tier override
+    mockGetComplexityStatus.mockResolvedValue({ enabled: false });
+    mockGetTierAssignments.mockResolvedValue([
+      { tier: 'simple', override_route: { model: 'm', provider: 'p' } },
+    ]);
     render(() => <Routing />);
     await waitFor(() => {
       expect(screen.getByTestId('default-response-stream')).toBeDefined();
@@ -818,6 +966,9 @@ describe('Routing page', () => {
 
   it('shows buffered copy when default response mode is set back to buffered', async () => {
     mockGetComplexityStatus.mockResolvedValue({ enabled: false });
+    mockGetTierAssignments.mockResolvedValue([
+      { tier: 'simple', override_route: { model: 'm', provider: 'p' } },
+    ]);
     render(() => <Routing />);
     await waitFor(() => {
       expect(screen.getByTestId('default-response-buffered')).toBeDefined();
@@ -831,6 +982,9 @@ describe('Routing page', () => {
 
   it('toasts the API error when default response mode update fails', async () => {
     mockGetComplexityStatus.mockResolvedValue({ enabled: false });
+    mockGetTierAssignments.mockResolvedValue([
+      { tier: 'simple', override_route: { model: 'm', provider: 'p' } },
+    ]);
     mockSetTierResponseMode.mockRejectedValue(new Error('response boom'));
     render(() => <Routing />);
     await waitFor(() => {
@@ -844,6 +998,9 @@ describe('Routing page', () => {
 
   it('inherits streaming mode when complexity routing is enabled from a streamed default tier', async () => {
     mockGetComplexityStatus.mockResolvedValue({ enabled: false });
+    mockGetTierAssignments.mockResolvedValue([
+      { tier: 'simple', override_route: { model: 'm', provider: 'p' } },
+    ]);
     mockToggleComplexity.mockResolvedValue({ enabled: true });
     mockActionGetTier.mockImplementation((tier: string) =>
       tier === 'default' ? { tier: 'default', response_mode: 'stream' } : undefined,
@@ -941,20 +1098,6 @@ describe('Routing page', () => {
     fireEvent.click(screen.getByTestId('spec-response-stream'));
     await waitFor(() => {
       expect(mockToastError).toHaveBeenCalledWith('specificity boom');
-    });
-  });
-
-  it('opens the provider modal via the modals onOpenProviderModal handler', async () => {
-    // The standalone "Connect providers" button was removed; the modal is now
-    // opened through the onOpenProviderModal callback (fired by the pickers'
-    // "connect providers" affordance), which RoutingModals receives.
-    render(() => <Routing />);
-    await waitFor(() => {
-      expect(screen.getByTestId('modal-trigger-open-provider')).toBeDefined();
-    });
-    fireEvent.click(screen.getByTestId('modal-trigger-open-provider'));
-    await waitFor(() => {
-      expect((lastModalsProps?.showProviderModal as () => boolean)()).toBe(true);
     });
   });
 
@@ -1265,21 +1408,40 @@ describe('Routing page', () => {
     });
   });
 
-  it('closes the provider modal via the modals onProviderModalClose handler', async () => {
+  it('keeps the routing page mounted when model refresh completes after a selection', async () => {
+    let resolveProviderRefresh!: (providers: typeof baseProvider[]) => void;
+    mockGetProviders
+      .mockResolvedValueOnce([baseProvider])
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveProviderRefresh = resolve;
+          }),
+      );
+
     render(() => <Routing />);
     await waitFor(() => {
-      expect(screen.getByTestId('modal-trigger-open-provider')).toBeDefined();
+      expect(screen.getByTestId('default-section')).toBeDefined();
     });
-    fireEvent.click(screen.getByTestId('modal-trigger-open-provider'));
-    // After opening, showProviderModal accessor reports true.
+
+    fireEvent.click(screen.getByTestId('open-dropdown'));
     await waitFor(() => {
-      expect((lastModalsProps?.showProviderModal as () => boolean)()).toBe(true);
+      expect((lastModalsProps?.dropdownTier as () => string | null)()).toBe('simple');
     });
-    fireEvent.click(screen.getByTestId('modal-trigger-provider-close'));
-    // After close, the signal flips back to false.
+    fireEvent.click(screen.getByTestId('modal-trigger-override'));
     await waitFor(() => {
-      expect((lastModalsProps?.showProviderModal as () => boolean)()).toBe(false);
+      expect((lastModalsProps?.dropdownTier as () => string | null)()).toBeNull();
     });
+
+    fireEvent.click(screen.getByTestId('modal-trigger-provider-update'));
+    await waitFor(() => {
+      expect(mockGetProviders).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.queryByTestId('loading-skeleton')).toBeNull();
+    expect(screen.getByTestId('default-section')).toBeDefined();
+
+    resolveProviderRefresh([baseProvider]);
   });
 
   it('closes the instruction modal via onInstructionClose', async () => {
@@ -1500,41 +1662,6 @@ describe('Routing page', () => {
       baseUrl: undefined,
       apiKey: undefined,
       models: undefined,
-    });
-  });
-
-  it('opens the instruction modal when closing the provider modal after a fresh enable', async () => {
-    // Step 1: render with a connected-but-inactive provider.
-    mockGetProviders.mockResolvedValueOnce([
-      {
-        ...baseProvider,
-        is_active: false,
-      },
-    ]);
-    render(() => <Routing />);
-    // Wait until the providers resource has resolved with the inactive
-    // provider. The empty-state ("No providers connected") only renders once
-    // loading is done, which guarantees the openProviderModal snapshot below
-    // sees hadProviders=true (a connected-but-inactive provider exists).
-    await waitFor(() => {
-      expect(screen.getByText('No providers connected')).toBeDefined();
-    });
-    // Step 2: open the provider modal (snapshots wasEnabled=false, hadProviders=true).
-    fireEvent.click(screen.getByTestId('modal-trigger-open-provider'));
-    // Step 3: simulate the modal closing AFTER provider became active.
-    mockGetProviders.mockResolvedValue([baseProvider]); // active provider
-    // Trigger a refetch path so connectedProviders updates to is_active=true.
-    fireEvent.click(screen.getByTestId('modal-trigger-provider-update'));
-    await waitFor(() => {
-      expect(mockGetProviders).toHaveBeenCalledTimes(2);
-    });
-    fireEvent.click(screen.getByTestId('modal-trigger-provider-close'));
-    // closeProviderModal sets instructionModal to 'enable' because
-    // wasEnabledBeforeModal()=false, isEnabled()=true now, hadProvidersBeforeModal()=true.
-    await waitFor(() => {
-      expect((lastModalsProps?.instructionModal as () => string | null)()).toBe('enable');
-      // And the provider modal flipped back to closed.
-      expect((lastModalsProps?.showProviderModal as () => boolean)()).toBe(false);
     });
   });
 
@@ -1922,6 +2049,151 @@ describe('Routing page', () => {
         expect(screen.getByTestId('setup-modal')).toBeDefined();
       });
       expect(screen.getByTestId('setup-modal').getAttribute('data-open')).toBe('false');
+    });
+  });
+
+  describe('clean agent unified view', () => {
+    // A "clean" agent has never configured complexity or task-specific routing,
+    // so the gate renders the unified (no-tabs) view instead of RoutingTabs.
+    const cleanTier = {
+      id: 'ht-1',
+      agent_id: 'a',
+      name: 'Premium',
+      header_key: 'x-tier',
+      header_value: 'premium',
+      badge_color: 'indigo',
+      sort_order: 0,
+      enabled: true,
+      override_route: null,
+      fallback_routes: null,
+      created_at: '2025-01-01',
+      updated_at: '2025-01-01',
+    };
+
+    beforeEach(() => {
+      // No complexity, no tier overrides, no specificity → isCleanAgent() is true.
+      mockGetComplexityStatus.mockResolvedValue({ enabled: false });
+      mockGetTierAssignments.mockResolvedValue([]);
+      mockGetSpecificityAssignments.mockResolvedValue([]);
+    });
+
+    it('renders the unified view (no tabs) with a Create custom tier CTA when no header tiers exist', async () => {
+      mockListHeaderTiers.mockResolvedValue([]);
+      const { container } = render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('tier-card')).toBeDefined();
+      });
+      // The legacy tabbed surface is not rendered for a clean agent.
+      expect(screen.queryByTestId('routing-tabs')).toBeNull();
+      const headerCta = container.querySelector('.routing-section__cta') as HTMLButtonElement;
+      expect(headerCta.textContent).toContain('Create custom tier');
+      fireEvent.click(headerCta); // headerTierCreator?.()
+      // The dashed add-card is an alternate create affordance.
+      const addCard = container.querySelector('.routing-unified-add-card') as HTMLButtonElement;
+      fireEvent.click(addCard); // headerTierCreator?.()
+    });
+
+    it('renders a Manage custom routing CTA and active header tier cards when tiers exist', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      const { container } = render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-card-ht-1')).toBeDefined();
+      });
+      const headerCta = container.querySelector('.routing-section__cta') as HTMLButtonElement;
+      expect(headerCta.textContent).toContain('Manage custom routing');
+      fireEvent.click(headerCta); // headerTierOpener?.()
+    });
+
+    it('overrides a header tier from a unified-view card', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-override-ht-1')).toBeDefined();
+      });
+      fireEvent.click(screen.getByTestId('clean-override-ht-1'));
+      await waitFor(() => {
+        expect(mockOverrideHeaderTier).toHaveBeenCalledWith(
+          'demo',
+          'ht-1',
+          'gpt-4o',
+          'openai',
+          'api_key',
+          'Work',
+        );
+      });
+    });
+
+    it('toasts when a unified-view card override fails', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      mockOverrideHeaderTier.mockRejectedValue(new Error('override boom'));
+      render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-override-ht-1')).toBeDefined();
+      });
+      fireEvent.click(screen.getByTestId('clean-override-ht-1'));
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('override boom');
+      });
+    });
+
+    it('refetches header tiers when a unified-view card clears fallbacks (no routes)', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-fb-noroutes-ht-1')).toBeDefined();
+      });
+      mockListHeaderTiers.mockClear();
+      fireEvent.click(screen.getByTestId('clean-fb-noroutes-ht-1'));
+      await waitFor(() => {
+        expect(mockListHeaderTiers).toHaveBeenCalled();
+      });
+    });
+
+    it('optimistically mutates (no refetch) when a unified-view card updates fallback routes', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-fb-routes-ht-1')).toBeDefined();
+      });
+      mockListHeaderTiers.mockClear();
+      fireEvent.click(screen.getByTestId('clean-fb-routes-ht-1'));
+      await new Promise((r) => setTimeout(r, 10));
+      expect(mockListHeaderTiers).not.toHaveBeenCalled();
+    });
+
+    it('triggers the edit opener from a unified-view card', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-edit-ht-1')).toBeDefined();
+      });
+      // headerTierEditor?.(tier) — wired to the headless section opener.
+      fireEvent.click(screen.getByTestId('clean-edit-ht-1'));
+    });
+
+    it('disables a header tier from a unified-view card', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-disable-ht-1')).toBeDefined();
+      });
+      fireEvent.click(screen.getByTestId('clean-disable-ht-1'));
+      await waitFor(() => {
+        expect(mockToggleHeaderTier).toHaveBeenCalledWith('demo', 'ht-1', false);
+      });
+    });
+
+    it('toasts when disabling a unified-view header tier fails', async () => {
+      mockListHeaderTiers.mockResolvedValue([cleanTier]);
+      mockToggleHeaderTier.mockRejectedValue(new Error('disable boom'));
+      render(() => <Routing />);
+      await waitFor(() => {
+        expect(screen.getByTestId('clean-disable-ht-1')).toBeDefined();
+      });
+      fireEvent.click(screen.getByTestId('clean-disable-ht-1'));
+      await waitFor(() => {
+        expect(mockToastError).toHaveBeenCalledWith('disable boom');
+      });
     });
   });
 });

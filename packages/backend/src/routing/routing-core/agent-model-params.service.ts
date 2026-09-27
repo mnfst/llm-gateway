@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import type { AuthType, RequestParamDefaults } from 'manifest-shared';
 import { AgentModelParams } from '../../entities/agent-model-params.entity';
 import { RoutingCacheService } from './routing-cache.service';
+import { normalizeProviderModel } from '../../common/utils/anthropic-model-id';
 
 /**
  * Per-(agent, route) outbound request body defaults. Replaces the legacy
@@ -51,13 +52,18 @@ export class AgentModelParamsService {
     modelName: string,
   ): Promise<RequestParamDefaults | null> {
     const rows = await this.list(agentId);
-    const match = rows.find(
+    // Rows are keyed by the route's model id as configured, while the proxy
+    // asks with the id it forwards (a dotted Anthropic short id normalized to
+    // its dashed form). Compare normalized ids, preferring an exact match.
+    const wanted = normalizeProviderModel(provider, modelName);
+    const candidates = rows.filter(
       (r) =>
         r.scope_key === scopeKey &&
         r.provider.toLowerCase() === provider.toLowerCase() &&
         r.auth_type === authType &&
-        r.model_name === modelName,
+        normalizeProviderModel(r.provider, r.model_name) === wanted,
     );
+    const match = candidates.find((r) => r.model_name === modelName) ?? candidates[0];
     return (match?.params as RequestParamDefaults | undefined) ?? null;
   }
 

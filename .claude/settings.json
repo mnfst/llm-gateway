@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // .tool_response.filePath // empty' | { read -r f; case \"$f\" in */packages/frontend/src/*.css|*/packages/frontend/src/*.tsx|*/packages/frontend/src/*.ts) d=\"${CLAUDE_PROJECT_DIR:-.}\"; [ -f \"$d/scripts/check-design-tokens.mjs\" ] || exit 0; out=$(cd \"$d\" && node scripts/check-design-tokens.mjs 2>&1) || printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":%s}}' \"$(printf 'Design-token check after your edit (tokens only, see packages/frontend/src/styles/tokens.css):\\n%s' \"$out\" | head -c 4000 | jq -Rs .)\";; esac; }",
+            "timeout": 30,
+            "statusMessage": "Checking design tokens"
+          }
+        ]
+      }
+    ]
+  }
+}

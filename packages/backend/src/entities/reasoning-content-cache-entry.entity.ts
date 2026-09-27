@@ -3,7 +3,7 @@ import { timestampType, timestampDefault } from '../common/utils/postgres-sql';
 
 /**
  * Short-lived shared cache for OpenAI-compatible reasoning traces that must be
- * replayed on tool-call follow-up turns.
+ * replayed on follow-up turns.
  */
 @Entity('reasoning_content_cache')
 @Index(['expires_at'])

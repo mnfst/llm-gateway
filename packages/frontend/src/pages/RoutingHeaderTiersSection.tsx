@@ -43,6 +43,28 @@ export interface RoutingHeaderTiersSectionProps {
   externalRefetch?: () => void;
   externalMutate?: (mutator: (prev: HeaderTier[] | undefined) => HeaderTier[] | undefined) => void;
   embedded?: boolean;
+  /**
+   * When true, the section renders only its modals (manage, create/edit,
+   * snippet) without the card grid or header. The parent is responsible for
+   * rendering the cards and triggering modal opens via the `onOpenRef`
+   * callback. Used by the unified routing view for clean agents.
+   */
+  headless?: boolean;
+  /**
+   * Called once with an opener function the parent can use to trigger the
+   * manage-or-create modal. Only meaningful when `headless` is true.
+   */
+  onOpenRef?: (opener: () => void) => void;
+  /**
+   * Called once with a function to open the create modal directly.
+   * Only meaningful when `headless` is true.
+   */
+  onCreateRef?: (opener: () => void) => void;
+  /**
+   * Called once with a function to open the edit modal for a specific tier.
+   * Only meaningful when `headless` is true.
+   */
+  onEditRef?: (opener: (tier: HeaderTier) => void) => void;
   getModelParams?: (
     scope: string,
     provider: string,
@@ -172,6 +194,11 @@ const RoutingHeaderTiersSection: Component<Props> = (props) => {
     }
   };
 
+  // Expose openers to the parent for headless mode.
+  if (props.onOpenRef) props.onOpenRef(openCreateOrManage);
+  if (props.onCreateRef) props.onCreateRef(() => setModalTier('new'));
+  if (props.onEditRef) props.onEditRef((tier) => setModalTier(tier));
+
   const handleDeleteFromEdit = async (id: string) => {
     await handleDelete(id);
     setModalTier(null);
@@ -189,47 +216,8 @@ const RoutingHeaderTiersSection: Component<Props> = (props) => {
     </Show>
   );
 
-  const content = () => (
+  const modals = () => (
     <>
-      <Show
-        when={enabledTiers().length > 0}
-        fallback={
-          <div class="routing-section__empty">
-            <div class="routing-section__empty-title">No custom tiers activated</div>
-            <div class="routing-section__empty-desc">
-              Create or activate custom tiers to route matching requests to the models you choose.
-            </div>
-            <button type="button" class="btn btn--primary btn--sm" onClick={openCreateOrManage}>
-              {tiers().length > 0 ? 'Manage custom routing' : 'Create custom tier'}
-            </button>
-          </div>
-        }
-      >
-        <div class="routing-cards header-tier-list">
-          <For each={enabledTiers()}>
-            {(tier) => (
-              <HeaderTierCard
-                agentName={props.agentName()}
-                tier={tier}
-                models={props.models()}
-                customProviders={props.customProviders()}
-                connectedProviders={props.connectedProviders()}
-                onOverride={(m, p, a, label) => handleOverride(tier.id, m, p, a, label)}
-                onFallbacksUpdate={(_fallbacks, updatedRoutes) =>
-                  applyFallbackUpdate(tier.id, updatedRoutes)
-                }
-                onEdit={() => setModalTier(tier)}
-                onDisable={() => handleToggle(tier.id, false)}
-                changingResponseMode={changingResponseMode() === tier.id}
-                onResponseModeChange={(mode) => handleResponseModeChange(tier.id, mode)}
-                getModelParams={props.getModelParams}
-                setModelParams={props.setModelParams}
-              />
-            )}
-          </For>
-        </div>
-      </Show>
-
       {/* ── Manage custom routing modal ──────────────────── */}
       <Show when={manageOpen()}>
         <div
@@ -366,6 +354,57 @@ const RoutingHeaderTiersSection: Component<Props> = (props) => {
       </Show>
     </>
   );
+
+  const content = () => (
+    <>
+      <Show
+        when={enabledTiers().length > 0}
+        fallback={
+          <div class="routing-section__empty">
+            <div class="routing-section__empty-title">No custom tiers activated</div>
+            <div class="routing-section__empty-desc">
+              Create or activate custom tiers to route matching requests to the models you choose.
+            </div>
+            <button type="button" class="btn btn--primary btn--sm" onClick={openCreateOrManage}>
+              {tiers().length > 0 ? 'Manage custom routing' : 'Create custom tier'}
+            </button>
+          </div>
+        }
+      >
+        <div class="routing-cards header-tier-list">
+          <For each={enabledTiers()}>
+            {(tier) => (
+              <HeaderTierCard
+                agentName={props.agentName()}
+                tier={tier}
+                models={props.models()}
+                customProviders={props.customProviders()}
+                connectedProviders={props.connectedProviders()}
+                onOverride={(m, p, a, label) => handleOverride(tier.id, m, p, a, label)}
+                onFallbacksUpdate={(_fallbacks, updatedRoutes) =>
+                  applyFallbackUpdate(tier.id, updatedRoutes)
+                }
+                onEdit={() => setModalTier(tier)}
+                onDisable={() => handleToggle(tier.id, false)}
+                changingResponseMode={changingResponseMode() === tier.id}
+                onResponseModeChange={(mode) => handleResponseModeChange(tier.id, mode)}
+                getModelParams={props.getModelParams}
+                setModelParams={props.setModelParams}
+              />
+            )}
+          </For>
+        </div>
+      </Show>
+
+      {modals()}
+    </>
+  );
+
+  if (props.headless) {
+    // Headless mode: render only the modals, no cards or header.
+    // The parent renders cards and triggers openCreateOrManage via onOpenRef.
+    return <>{modals()}</>;
+  }
 
   if (props.embedded) {
     return (

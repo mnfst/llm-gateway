@@ -1,30 +1,49 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-white.svg" />
-    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-dark.svg" />
-    <img src="https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-dark.svg" alt="Manifest" height="53" title="Manifest"/>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-light-new.png" />
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark-new.png" />
+    <img src="https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark-new.png" alt="Manifest Gateway" height="53" title="Manifest Gateway"/>
   </picture>
 </p>
 <p align="center">
   <a href="https://hub.docker.com/r/manifestdotbuild/manifest"><img src="https://img.shields.io/docker/pulls/manifestdotbuild/manifest?color=2496ED&label=docker%20pulls" alt="Docker pulls" /></a>
   &nbsp;
-  <a href="https://github.com/mnfst/manifest/stargazers"><img src="https://img.shields.io/github/stars/mnfst/manifest?style=flat" alt="GitHub stars" /></a>
+  <a href="https://github.com/mnfst/llm-gateway/stargazers"><img src="https://img.shields.io/github/stars/mnfst/llm-gateway?style=flat" alt="GitHub stars" /></a>
   &nbsp;
-  <a href="https://github.com/mnfst/manifest/blob/main/LICENSE"><img src="https://img.shields.io/github/license/mnfst/manifest?color=blue" alt="license" /></a>
+  <a href="https://github.com/mnfst/llm-gateway/blob/main/LICENSE"><img src="https://img.shields.io/github/license/mnfst/llm-gateway?color=blue" alt="license" /></a>
   &nbsp;
   <a href="https://discord.gg/FepAked3W7"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord" /></a>
 </p>
 
-## What is Manifest?
+> ### 🦚 Meet Manifest, the self-healing layer for APIs
+>
+> Manifest fixes failed API requests in real time, before they break your app. This open-source LLM gateway is a Manifest product and stays maintained.
+>
+> **[Try Manifest](https://dashboard.manifest.build/signup)**
 
-Manifest is a smart model router for **AI agents** like OpenClaw, Hermes, or anything speaking the OpenAI-compatible HTTP API. It sits between your agent and your LLM providers, scores each request, and routes it to the cheapest model that can handle it. Simple questions go to fast, cheap models. Hard problems go to expensive ones. You save money without thinking about it.
+## What is Manifest Gateway?
 
-- Route requests to the right model: cut costs up to 70%
-- Automatic fallbacks: if a model fails, the next one picks up
-- Set limits: don't exceed your budget
-- Self-hosted: your requests, your providers, your data
+Manifest Gateway is an open-source LLM gateway for agents and apps. It sits between your agents and your LLM providers (OpenAI, Anthropic, Gemini, local models, and 300+ more) and gives you complete control over routing decisions. Define custom routing rules, set fallbacks when models fail, enable self-healing with Autofix, and track everything from one dashboard.
 
-![manifest-gh](https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/manifest-screenshot.png)
+- **Custom routing rules**: route by model, header, complexity, or task type
+- **Automatic fallbacks**: if a model fails, the next one picks up instantly
+- **Self-healing with Autofix**: failed requests are repaired in real time before they break your app
+- **Cost control**: set limits and track spending across all providers
+- **Self-hosted**: your requests, your providers, your data — complete privacy
+
+![manifest-gh](https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/manifest-screenshot.png)
+
+---
+
+<p align="center">
+  <strong>🦚 Keep your apps up with self-healing APIs</strong><br/>
+  <br/>
+  Manifest fixes API errors in real time, so your apps, workflows and agents keep running instead of breaking on failed requests.<br/>
+  <br/>
+  <a href="https://dashboard.manifest.build/signup" style="display: inline-block; padding: 10px 24px; background-color: #0066cc; color: white; text-decoration: none; border-radius: 6px; font-weight: 600;">Get started</a>
+</p>
+
+---
 
 ## Table of contents
 
@@ -34,8 +53,10 @@ Manifest is a smart model router for **AI agents** like OpenClaw, Hermes, or any
   - [Option 1: Quickstart install script (recommended)](#option-1-quickstart-install-script-recommended)
   - [Option 2: Docker Compose (manual)](#option-2-docker-compose-manual)
   - [Option 3: Docker Run (bring your own PostgreSQL)](#option-3-docker-run-bring-your-own-postgresql)
+  - [First request](#first-request)
   - [Verifying the image signature](#verifying-the-image-signature)
   - [Custom port](#custom-port)
+  - [Exposing on the LAN](#exposing-on-the-lan)
 - [Image tags](#image-tags)
 - [Upgrading](#upgrading)
 - [Backup & persistence](#backup--persistence)
@@ -63,14 +84,14 @@ Works with 300+ models across OpenAI, Anthropic, Google Gemini, DeepSeek, xAI, M
 
 Three paths, ordered from fastest to most hands-on. All three end in the same place: a running stack at [http://localhost:2099](http://localhost:2099) where you sign up. The first account you create becomes the admin. No demo credentials are pre-seeded.
 
-> **Heads up on network binding.** The bundled compose file binds port 2099 to `127.0.0.1` only, so the dashboard is reachable on the host machine but not over the LAN. See [Custom port](#custom-port) to expose it beyond localhost.
+> **Heads up on network binding.** The bundled compose file binds port 2099 to `127.0.0.1` only, so the dashboard is reachable on the host machine but not over the LAN. See [Exposing on the LAN](#exposing-on-the-lan) to expose it beyond localhost.
 
 ### Option 1: Quickstart install script (recommended)
 
-One command. The installer downloads the compose file, generates a secret, and brings up the stack. Give it about 30 seconds to boot.
+One command. The installer downloads the compose file, generates the secrets, and brings up the stack. First boot pulls the app image and Postgres, so give it up to a couple of minutes.
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/mnfst/manifest/main/docker/install.sh)
+bash <(curl -sSL https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/install.sh)
 ```
 
 <details>
@@ -79,7 +100,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/mnfst/manifest/main/docker/in
 Download the script:
 
 ```bash
-curl -sSLO https://raw.githubusercontent.com/mnfst/manifest/main/docker/install.sh
+curl -sSLO https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/install.sh
 ```
 
 Review it (optional):
@@ -96,7 +117,9 @@ bash install.sh
 
 </details>
 
-Useful flags: `--dir <path>` to install elsewhere, `--dry-run` to preview, `--yes` to skip the confirmation prompt.
+Useful flags: `--dir <path>` to install elsewhere, `--port <n>` to serve on a port other than 2099, `--dry-run` to preview, `--yes` to skip the confirmation prompt.
+
+Re-running the installer against an existing install directory resumes it — the compose file and your generated secrets are left untouched and the stack is brought back up.
 
 ### Option 2: Docker Compose (manual)
 
@@ -105,16 +128,26 @@ Same underlying flow as the install script, but you drive it yourself so you can
 1. Download the compose file and the env template into the same directory:
 
 ```bash
-curl -O https://raw.githubusercontent.com/mnfst/manifest/main/docker/docker-compose.yml
-curl -O https://raw.githubusercontent.com/mnfst/manifest/main/docker/.env.example
+curl -O https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/docker-compose.yml
+curl -O https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/.env.example
 cp .env.example .env
 ```
 
-2. Open `.env` in your editor and set `BETTER_AUTH_SECRET` to a random string. You can generate one with:
+2. Open `.env` in your editor and set `BETTER_AUTH_SECRET` and
+   `MANIFEST_ENCRYPTION_KEY` to two **different** random strings. Generate each with:
 
 ```bash
 openssl rand -hex 32
 ```
+
+`MANIFEST_ENCRYPTION_KEY` encrypts the provider API keys, OAuth tokens and
+request recordings Manifest stores; the rest of the database is not encrypted
+by it. Left unset it falls back to `BETTER_AUTH_SECRET`, which means one leaked
+session-signing secret also decrypts every stored credential and recording.
+Set it before first boot.
+Recordings written under a previous secret are not migrated: after the secret
+changes they can no longer be decrypted and the dashboard shows them as
+unavailable, while retention removes them on schedule.
 
 (Optional: to use a stronger database password, set BOTH `POSTGRES_PASSWORD` and `DATABASE_URL` in `.env`, they must agree, and any special characters in the password need to be percent-encoded in the URL.)
 
@@ -124,9 +157,11 @@ openssl rand -hex 32
 docker compose up -d
 ```
 
-Give it about 30 seconds to boot.
+Give it up to a couple of minutes on a cold pull — you can watch startup with `docker compose logs -f manifest`.
 
 4. Open [http://localhost:2099](http://localhost:2099) and sign up. The first account you create becomes the admin.
+
+5. Connect a provider and send your first request — see [First request](#first-request).
 
 To stop:
 
@@ -187,19 +222,63 @@ docker run -d ^
 
 TypeORM migrations run automatically on every boot — fresh installs come up with the schema in place. Then visit [http://localhost:2099](http://localhost:2099) and complete the setup wizard to create your admin account.
 
+### First request
+
+Signing up leaves you with an empty instance. Three steps to a routed request:
+
+1. **Connect a provider.** In the sidebar, **Providers → Usage-based** to paste
+   an API key (OpenAI, Anthropic, Gemini, …), **Subscriptions** to reuse a plan
+   you already pay for, or **Local** for Ollama / LM Studio / llama.cpp.
+   Manifest discovers the available models as soon as the connection is saved.
+
+2. **Copy your agent's key.** Each agent has its own key, shown when you create
+   it and under the agent's **Settings**. It starts with `mnfst_`.
+
+3. **Point something at it.** The endpoint is OpenAI-compatible, so any SDK or
+   agent that takes a base URL works — use `http://localhost:2099/v1` and the
+   `mnfst_` key. To check it end to end:
+
+```bash
+curl -X POST http://localhost:2099/v1/chat/completions \
+  -H "Authorization: Bearer mnfst_YOUR_KEY_HERE" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "auto", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+`"model": "auto"` asks Manifest to route. Any other model name is treated as an
+explicit choice and falls back to your routing config if it matches nothing.
+
+Errors from Manifest itself carry an `M###` code, a plain-English cause, and a
+link to the matching page under
+[manifest.build/llm-gateway/docs/errors](https://manifest.build/llm-gateway/docs/errors/) — including
+`M100` (no provider connected yet) and `M003`/`M005` (bad or unknown key), the
+three you are most likely to hit on a fresh install.
+
 ### Verifying the image signature
 
 Published images are signed with cosign keyless signing (Sigstore). Verify before pulling:
 
 ```bash
 cosign verify manifestdotbuild/manifest:<version> \
-  --certificate-identity-regexp="^https://github.com/mnfst/manifest/" \
+  --certificate-identity-regexp="^https://github.com/mnfst/llm-gateway/" \
   --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
 ```
 
 ### Custom port
 
-If port 2099 is taken, change both the mapping and `BETTER_AUTH_URL`:
+**Compose installs — set `PORT` in `.env`, and nothing else:**
+
+```env
+PORT=8080
+```
+
+The compose file reads `${PORT:-2099}` for both the published host port and
+the backend's internal listener, and `BETTER_AUTH_URL` defaults to
+`http://localhost:${PORT:-2099}`, so one line covers all three. No YAML edit.
+The install script does this for you with `--port 8080`.
+
+**`docker run` installs** have no `.env`, so pass the mapping and the URL
+explicitly. Here the container keeps listening on 2099 and Docker remaps it:
 
 ```bash
 docker run -d \
@@ -208,24 +287,14 @@ docker run -d \
   ...
 ```
 
-Or in docker-compose.yml:
-
-```yaml
-ports:
-  - '127.0.0.1:8080:2099'
-```
-
-…and in `.env`:
-
-```env
-BETTER_AUTH_URL=http://localhost:8080
-```
+`BETTER_AUTH_URL` must match the URL you type in the browser — host and port
+both. A mismatch fails the login with "Invalid origin".
 
 ### Exposing on the LAN
 
 By default the compose file binds port `2099` to `127.0.0.1` only. The dashboard is reachable from the host but not from other machines on the network. To expose it on the LAN:
 
-1. Edit `docker-compose.yml` and change the `ports` line from `"127.0.0.1:2099:2099"` to `"2099:2099"`.
+1. In `.env`, set `HOST_BIND_ADDRESS=0.0.0.0`. Editing `docker-compose.yml` by hand does not survive an upgrade; `.env` does.
 2. In `.env`, set `BETTER_AUTH_URL` to the host you'll reach the dashboard on, e.g. `http://192.168.1.20:2099` or `https://manifest.mydomain.com`. This MUST match the URL in the browser or Better Auth will reject the login with "Invalid origin".
 3. `docker compose up -d` to apply.
 
@@ -237,9 +306,9 @@ If the dashboard loads as a **blank page on a LAN IP on an older image**, pull t
 
 Every release is published with the following tags:
 
-- `{major}.{minor}.{patch}` - fully pinned (e.g. `5.46.0`)
-- `{major}.{minor}` - latest patch within a minor (e.g. `5.46`)
-- `{major}` - latest minor+patch within a major (e.g. `5`)
+- `{major}.{minor}.{patch}` - fully pinned (e.g. `6.18.0`)
+- `{major}.{minor}` - latest patch within a minor (e.g. `6.18`)
+- `{major}` - latest minor+patch within a major (e.g. `6`)
 - `latest` - latest stable release
 - `sha-<short>` - exact commit for rollback
 
@@ -254,11 +323,13 @@ docker compose pull
 docker compose up -d
 ```
 
-Database migrations run automatically on boot, no manual steps. Your data in the `pgdata` volume is preserved across upgrades. Pin to a specific major version (e.g. `manifestdotbuild/manifest:5`) in `docker-compose.yml` if you want control over when major upgrades happen.
+Database migrations run automatically on boot, no manual steps. Your data in the `pgdata` volume is preserved across upgrades. Pin to a specific major version (e.g. `manifestdotbuild/manifest:6`) in `docker-compose.yml` if you want control over when major upgrades happen.
+
+The dashboard checks GitHub once a day for the latest release and shows a "new version available" badge linking to the [changelog](https://manifest.build/changelog/). The check only reads the public release list and sends nothing about your install. To turn it off (for example on an air-gapped host), set `MANIFEST_UPDATE_CHECK_DISABLED=1` in `.env`.
 
 ## Backup & persistence
 
-All state lives in the `pgdata` named volume mounted at `/var/lib/postgresql/data` in the `postgres` service. Nothing else in the Manifest container is stateful.
+PostgreSQL state lives in the `mnfst_pgdata` named volume mounted at `/var/lib/postgresql/data` in the `postgres` service. The Compose install also stores local request recordings in the `mnfst_recordings` volume mounted at `/data/request-recordings`; those recordings are not included in a PostgreSQL dump. For ephemeral hosts or multiple instances, configure durable S3-compatible storage instead.
 
 **Back up** (from the host, with the stack running):
 
@@ -277,7 +348,7 @@ docker compose up -d
 To list / remove the volume manually:
 
 ```bash
-docker volume ls | grep pgdata
+docker volume ls | grep -E 'mnfst_(pgdata|recordings)'
 docker compose down -v    # ⚠  destroys all data
 ```
 
@@ -346,19 +417,30 @@ sets this automatically).
 
 ## Environment variables
 
-| Variable             | Required | Default                 | Description                                   |
-| -------------------- | -------- | ----------------------- | --------------------------------------------- |
-| `DATABASE_URL`       | Yes      | --                      | PostgreSQL connection string                  |
-| `BETTER_AUTH_SECRET` | Yes      | --                      | Session signing secret (min 32 chars)         |
-| `BETTER_AUTH_URL`    | No       | `http://localhost:2099` | Public URL. Set this when using a custom port |
-| `PORT`               | No       | `2099`                  | Internal server port                          |
-| `NODE_ENV`           | No       | `production`            | Runtime mode. Leave as `production` for Docker |
-| `SEED_DATA`          | No       | `false`                 | Seed demo data on startup                     |
-| `OLLAMA_HOST`        | No       | `http://host.docker.internal:11434` | Ollama endpoint for the built-in tile. Override to point at a LAN-hosted Ollama. |
-| `MANIFEST_MODE`      | No       | auto (Docker → selfhosted) | `selfhosted` or `cloud`. `local` is a legacy alias. Self-hosted mode allows private/http URLs for custom providers. |
-| `MANIFEST_TELEMETRY_DISABLED` | No | `0`               | Set `1` to disable anonymous usage telemetry  |
+| Variable                           | Required    | Default                                      | Description                                                                                                                                                                                                |
+| ---------------------------------- | ----------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                     | Yes         | --                                           | PostgreSQL connection string                                                                                                                                                                               |
+| `BETTER_AUTH_SECRET`               | Yes         | --                                           | Session signing secret (min 32 chars)                                                                                                                                                                      |
+| `MANIFEST_ENCRYPTION_KEY`          | Recommended | falls back to `BETTER_AUTH_SECRET`           | Separate 32+ char key encrypting stored provider keys and OAuth tokens. The install script generates one; set it before first boot, since introducing it later means re-encrypting what is already stored. |
+| `BETTER_AUTH_URL`                  | No          | `http://localhost:${PORT}`                   | Public URL. Must match the URL in the browser                                                                                                                                                              |
+| `PORT`                             | No          | `2099`                                       | Dashboard port — sets both the published host port and the internal listener                                                                                                                               |
+| `OLLAMA_HOST`                      | No          | `http://host.docker.internal:11434`          | Ollama endpoint for the built-in tile. Override to point at a LAN-hosted Ollama.                                                                                                                           |
+| `MANIFEST_MODE`                    | No          | auto (Docker → selfhosted)                   | `selfhosted` or `cloud`. `local` is a legacy alias. Self-hosted mode allows private/http URLs for custom providers.                                                                                        |
+| `MANIFEST_DISABLE_HSTS`            | No          | unset                                        | Set `1` to silence the boot warning about serving over plain HTTP on a LAN                                                                                                                                 |
+| `THROTTLE_LIMIT` / `THROTTLE_TTL`  | No          | `100` / `60000`                              | Rate limit: requests per window, window in ms                                                                                                                                                              |
+| `DB_POOL_MAX` / `AUTH_DB_POOL_MAX` | No          | `10` / `5`                                   | PostgreSQL pool sizes (app pool, Better Auth pool)                                                                                                                                                         |
+| `SENTRY_DSN`                       | No          | unset                                        | Opt-in error monitoring. Sentry is not initialised unless set                                                                                                                                              |
+| `MANIFEST_TELEMETRY_DISABLED`      | No          | `0`                                          | Set `1` to disable anonymous usage telemetry                                                                                                                                                               |
+| `TELEMETRY_ENDPOINT`               | No          | `https://telemetry.manifest.build/v1/report` | Send the usage report to your own collector instead                                                                                                                                                        |
+| `AUTOFIX_GLOBAL_ENABLED`           | No          | `true`                                       | Deployment-wide Autofix kill switch. Set `false` to make no calls to the Autofix service at all, boot health check included                                                                                |
 
-Full env var reference: [github.com/mnfst/manifest](https://github.com/mnfst/manifest)
+`NODE_ENV` and `SEED_DATA` are deliberately fixed by the compose file and are
+not knobs here: the image is a production artifact, and the demo-data seeder
+refuses to run under `NODE_ENV=production` regardless of `SEED_DATA`. Use the
+first-run setup wizard to create your admin account.
+
+Full env var reference:
+[manifest.build/llm-gateway/docs/reference/environment-variables](https://manifest.build/llm-gateway/docs/reference/environment-variables/)
 
 ## Anonymous usage telemetry
 
@@ -371,15 +453,62 @@ platform, OS, and arch.
 
 To disable, set `MANIFEST_TELEMETRY_DISABLED=1` in your `.env` file and
 restart the container. The full field list is published at
-[manifest.build/docs/self-hosted#telemetry](https://manifest.build/docs/self-hosted#telemetry).
+[manifest.build/llm-gateway/docs/self-hosted#telemetry](https://manifest.build/llm-gateway/docs/self-hosted/#telemetry).
+
+## Autofix privacy and instance identity
+
+Autofix is off by default for every agent in self-hosted Manifest. When you turn
+it on for an agent, Autofix calls announce your install's random anonymous ID,
+the Manifest version, and the agent platform from a fixed list; custom platform
+names are sent as `other`. There is no registration step and no credential: the
+ID is announced, not issued, and the healing service records it the first time
+it sees it.
+
+**That ID is the same anonymous install UUID the usage report uses.** One
+identity per install, so Autofix activity and the aggregate telemetry report can
+be linked to the same install by Manifest. Neither carries a user, tenant, or
+email. If you want them unlinked, there is no setting for that today — the
+identifier is shared by design.
+
+Autofix works by sending a failed request to the healing service so it can
+produce a corrected body. The failing request body, provider error, provider,
+and API mode are therefore sent after known secrets are scrubbed. Secret
+scrubbing does not remove arbitrary personal information from prompts. Successful
+traffic is not sent. If `AUTOFIX_REPORT_ALL_4XX=true`, scrubbed bodies for other
+request-side 4xx failures are also sent as diagnostic observations (up to
+256 KiB), under the same per-agent opt-in.
+
+If no agent has Autofix enabled, no healing call is made and **no ID is ever
+created** — it is generated on first use, so an install that never enables
+Autofix and never reports telemetry has no identity at all. Only the public,
+unauthenticated boot-time health check may contact the service, and it never
+creates an identity. Set `AUTOFIX_GLOBAL_ENABLED=false` to disable every Autofix
+service call, boot health check included.
+
+The Autofix endpoint itself is not configurable — it is a constant in the image
+(`https://autofix.manifest.build`). There is no supported way to point an
+install at a different healing service.
+
+`MANIFEST_TELEMETRY_DISABLED=1` stops the aggregate usage report and nothing
+else; it does not disable Autofix, and it does not stop Autofix from creating and
+announcing the shared ID.
+
+After restoring or cloning a database, you can force a fresh identity:
+
+```sql
+DELETE FROM install_metadata;
+```
+
+This resets the shared ID, so the next Autofix call and the next usage report
+both announce a new one. Your install will look like a new install to both.
 
 ## Links
 
-- [GitHub](https://github.com/mnfst/manifest)
+- [GitHub](https://github.com/mnfst/llm-gateway)
 - [Website](https://manifest.build)
-- [Docs](https://manifest.build/docs)
+- [Docs](https://manifest.build/llm-gateway/docs/introduction/)
 - [Discord](https://discord.gg/FepAked3W7)
 
 ## License
 
-[MIT](https://github.com/mnfst/manifest/blob/main/LICENSE)
+[MIT](https://github.com/mnfst/llm-gateway/blob/main/LICENSE)

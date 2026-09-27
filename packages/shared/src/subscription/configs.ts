@@ -12,17 +12,31 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionTokenPrefix: 'sk-ant-oat',
     knownModels: Object.freeze([
       'claude-fable-5',
+      // Anthropic subscription membership comes exclusively from this curated
+      // list (no live discovery), so point releases callers address directly
+      // need their own entry — the claude-fable-5 prefix alone never emits it.
+      'claude-fable-5-1',
       'claude-opus-4',
       'claude-sonnet-4',
       'claude-haiku-4',
+      // claude-opus-4-6 / claude-haiku-4-5 are already matched by the
+      // claude-opus-4 / claude-haiku-4 prefixes above. claude-opus-5 is not —
+      // the 5 generation dropped the 4.x prefix, so it needs its own entry.
+      'claude-opus-5',
+      // Opus 5.5 is a point release callers address directly, so it needs its
+      // own entry too: prefix matching lets it inherit claude-opus-5's context
+      // window, but the curated catalog never emits a name it does not list.
+      'claude-opus-5-5',
+      'claude-sonnet-5',
     ]),
-    // `claude-*-fast` ids exist in the OpenRouter pricing cache but 404 at
-    // api.anthropic.com — fast mode is an `anthropic-beta` header on the base
-    // Opus model, not a distinct model id. Keep them out of the catalog.
-    knownModelsExclude: Object.freeze(['-fast']),
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 200000,
-      supportsPromptCaching: false,
+      modelContextWindows: Object.freeze({
+        'claude-opus-4-8': 1000000,
+        'claude-opus-5': 1000000,
+        'claude-sonnet-5': 1000000,
+      }),
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -53,11 +67,24 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     supportsSubscription: true as const,
     subscriptionLabel: 'ChatGPT Plus/Pro/Team',
     subscriptionAuthMode: 'popup_oauth' as const,
-    knownModels: Object.freeze(['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']),
+    knownModels: Object.freeze([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-mini',
+      'gpt-5.3-codex-spark',
+    ]),
     knownModelsMatch: 'exact' as const,
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 200000,
-      supportsPromptCaching: false,
+      modelContextWindows: Object.freeze({
+        'gpt-5.6-sol': 1050000,
+        'gpt-5.6-terra': 1050000,
+        'gpt-5.6-luna': 1050000,
+      }),
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -79,7 +106,20 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
       // MiniMax-M3's 1M window (MSA); M2.x models keep their own lower
       // per-model contexts from the pricing cache — this is only the cap.
       maxContextWindow: 1000000,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
+      supportsBatching: false,
+    }),
+  }),
+  mistral: Object.freeze({
+    supportsSubscription: true as const,
+    subscriptionLabel: 'Mistral Vibe subscription',
+    subscriptionAuthMode: 'token' as const,
+    subscriptionKeyPlaceholder: 'Paste your Mistral Vibe API key',
+    knownModels: Object.freeze(['mistral-vibe-cli-latest']),
+    knownModelsMatch: 'exact' as const,
+    subscriptionCapabilities: Object.freeze({
+      maxContextWindow: 200000,
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -99,7 +139,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     knownModelsMatch: 'exact' as const,
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 1048576,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -111,7 +151,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionTokenPrefix: 'sk-sp-',
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 991000,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -120,10 +160,30 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionLabel: 'Kimi Coding Plan',
     subscriptionAuthMode: 'token' as const,
     subscriptionKeyPlaceholder: 'Paste your Kimi Code API key',
-    knownModels: Object.freeze(['kimi-for-coding']),
+    // Wire-format ids expected by https://api.kimi.com/coding — see
+    // https://www.kimi.com/code/docs/en/kimi-code/models
+    knownModels: Object.freeze(['k3', 'k3-256k', 'kimi-for-coding', 'kimi-for-coding-highspeed']),
     knownModelsMatch: 'exact' as const,
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 262144,
+      modelContextWindows: Object.freeze({
+        k3: 1048576,
+        // Explicit entry: context-window resolution prefix-matches, so without
+        // this k3-256k would inherit the 1M window of its k3 sibling.
+        'k3-256k': 262144,
+      }),
+      supportsPromptCaching: true,
+      supportsBatching: false,
+    }),
+  }),
+  nous: Object.freeze({
+    supportsSubscription: true as const,
+    subscriptionLabel: 'NousResearch subscription',
+    subscriptionAuthMode: 'token' as const,
+    subscriptionKeyPlaceholder: 'Paste your NousResearch API key',
+    // Model list is discovered dynamically from NousResearch Portal's OpenAI-compatible /v1/models.
+    subscriptionCapabilities: Object.freeze({
+      maxContextWindow: 1000000,
       supportsPromptCaching: false,
       supportsBatching: false,
     }),
@@ -157,7 +217,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     ]),
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 1000000,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -167,6 +227,9 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionAuthMode: 'token' as const,
     subscriptionKeyPlaceholder: 'Paste your Z.ai API key',
     knownModels: Object.freeze([
+      'glm-5.3',
+      'glm-5.3-flash',
+      'glm-5.2',
       'glm-5.1',
       'glm-5-turbo',
       'glm-5',
@@ -178,7 +241,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionCapabilities: Object.freeze({
       // Z.ai advertises "200K" as 200 * 1024 = 204800, not 200000 like other providers.
       maxContextWindow: 204800,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -187,8 +250,8 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionLabel: 'OpenCode Go (beta)',
     subscriptionAuthMode: 'token' as const,
     subscriptionKeyPlaceholder: 'Paste your OpenCode API key',
-    // Model list is fetched dynamically from the public OpenCode Go docs source;
-    // see OpencodeGoCatalogService in the backend.
+    // Model list is discovered from OpenCode Go's live /models endpoint; models.dev
+    // and the docs catalog provide metadata, quota cost, and fallback data.
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 200000,
       supportsPromptCaching: false,
@@ -205,10 +268,8 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     // the CodeAssist route recognizes; some current Gemini API model IDs still
     // 404 on the CodeAssist API.
     knownModels: Object.freeze([
-      'gemini-3.1-pro-preview',
-      'gemini-3-flash-preview',
+      'gemini-3.5-flash',
       'gemini-3.1-flash-lite',
-      'gemini-3.1-flash-lite-preview',
       'gemini-2.5-pro',
       'gemini-2.5-flash',
       'gemini-2.5-flash-lite',
@@ -216,7 +277,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     knownModelsMatch: 'exact' as const,
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 1000000,
-      supportsPromptCaching: false,
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -224,10 +285,10 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     supportsSubscription: true as const,
     subscriptionLabel: 'Grok subscription',
     subscriptionAuthMode: 'popup_oauth' as const,
-    // Model list is fetched dynamically from xAI's OpenAI-compatible /v1/models endpoint.
+    knownModels: Object.freeze(['grok-4.7', 'grok-4.6', 'grok-4.5']),
     subscriptionCapabilities: Object.freeze({
-      maxContextWindow: 128000,
-      supportsPromptCaching: false,
+      maxContextWindow: 500000,
+      supportsPromptCaching: true,
       supportsBatching: false,
     }),
   }),
@@ -262,6 +323,31 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     // Model list is fetched dynamically from Command Code's public Provider API catalog.
     subscriptionCapabilities: Object.freeze({
       maxContextWindow: 1000000,
+      supportsPromptCaching: false,
+      supportsBatching: false,
+    }),
+  }),
+  'cline-pass': Object.freeze({
+    supportsSubscription: true as const,
+    subscriptionLabel: 'ClinePass subscription',
+    subscriptionAuthMode: 'token' as const,
+    subscriptionKeyPlaceholder: 'Paste your ClinePass API key',
+    knownModels: Object.freeze([
+      'cline-pass/glm-5.2',
+      'cline-pass/kimi-k2.7-code',
+      'cline-pass/kimi-k2.6',
+      'cline-pass/kimi-k3',
+      'cline-pass/deepseek-v4-pro',
+      'cline-pass/deepseek-v4-flash',
+      'cline-pass/mimo-v2.5',
+      'cline-pass/mimo-v2.5-pro',
+      'cline-pass/minimax-m3',
+      'cline-pass/qwen3.7-max',
+      'cline-pass/qwen3.7-plus',
+    ]),
+    knownModelsMatch: 'exact' as const,
+    subscriptionCapabilities: Object.freeze({
+      maxContextWindow: 200000,
       supportsPromptCaching: false,
       supportsBatching: false,
     }),

@@ -40,6 +40,7 @@ vi.mock("../../src/components/AuthGuard.jsx", () => ({
 
 vi.mock("../../src/services/sse.js", () => ({
   connectSse: () => () => {},
+  analyticsPing: () => 0,
 }));
 
 import App from "../../src/App";

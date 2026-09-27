@@ -5,6 +5,13 @@ interface CachedSignature {
 
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+/**
+ * Hard ceiling on cached signatures. The key embeds an upstream-generated tool
+ * call id (unique per turn), so the keyspace is unbounded and the lazy TTL sweep
+ * — which only runs on `store()` — cannot cap a burst. Oldest entries are
+ * evicted FIFO.
+ */
+export const MAX_CACHE_ENTRIES = 10_000;
 
 /**
  * In-memory cache for Google Gemini thought_signature values.
@@ -29,6 +36,16 @@ export class ThoughtSignatureCache {
       signature,
       expiresAt: Date.now() + TTL_MS,
     });
+    this.evictOverflow();
+  }
+
+  /** Bound the cache to MAX_CACHE_ENTRIES, evicting oldest (FIFO) entries first. */
+  private evictOverflow(): void {
+    while (this.cache.size > MAX_CACHE_ENTRIES) {
+      // size > cap (> 0) guarantees a first key exists.
+      const oldest = this.cache.keys().next().value as string;
+      this.cache.delete(oldest);
+    }
   }
 
   /** Retrieve a cached thought_signature, or null if not found/expired. */

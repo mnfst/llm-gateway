@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { GeminiOauthService } from './gemini-oauth.service';
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 import { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import { CodeAssistClientService } from './codeassist-client.service';
 
@@ -32,22 +33,29 @@ function createProviderService(): {
   recalculateTiers: jest.Mock;
   nextOAuthLabel: jest.Mock;
   getFreshSubscriptionCredential: jest.Mock;
+  withSubscriptionCredentialLock: jest.Mock;
 } {
   const upsertProvider = jest.fn().mockResolvedValue({ provider: { id: 'p1' } });
   const recalculateTiers = jest.fn().mockResolvedValue(undefined);
   const nextOAuthLabel = jest.fn().mockResolvedValue(undefined);
   const getFreshSubscriptionCredential = jest.fn().mockResolvedValue(null);
+  const withSubscriptionCredentialLock = mockSubscriptionCredentialLock({
+    getFreshSubscriptionCredential,
+    upsertProvider,
+  });
   return {
     svc: {
       upsertProvider,
       recalculateTiers,
       nextOAuthLabel,
       getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock,
     } as unknown as ProviderService,
     upsertProvider,
     recalculateTiers,
     nextOAuthLabel,
     getFreshSubscriptionCredential,
+    withSubscriptionCredentialLock,
   };
 }
 
@@ -338,7 +346,7 @@ describe('GeminiOauthService', () => {
       expect(token).toBe('new');
       // The upserted blob must carry the project id so it survives the refresh.
       expect(providerService.upsertProvider).toHaveBeenCalledWith(
-        'agent-1',
+        null,
         'user-1',
         'gemini',
         expect.stringContaining('"u":"proj-abc"'),
@@ -356,7 +364,7 @@ describe('GeminiOauthService', () => {
       const token = await svc.unwrapToken(JSON.stringify(blob), 'agent-1', 'user-1', 'Work');
       expect(token).toBe('new');
       expect(providerService.upsertProvider).toHaveBeenCalledWith(
-        'agent-1',
+        null,
         'user-1',
         'gemini',
         expect.stringContaining('"t":"new"'),

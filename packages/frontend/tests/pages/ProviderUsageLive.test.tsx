@@ -1,8 +1,8 @@
 /**
  * Verifies the LIVE-UPDATE requirement: the provider pages' usage resource
  * must re-fetch when the SSE ping signals change, so a newly ingested message
- * (messagePing) or a provider connect/disconnect/rename (routingPing) refreshes
- * the stats within ~500ms — exactly like Overview/MessageLog. We back the ping
+ * (analyticsPing) or a provider connect/disconnect/rename (routingPing) refreshes
+ * the stats. We back the ping
  * mocks with real Solid signals and assert the usage endpoint is re-invoked
  * when either bumps; config (the cheap endpoint) must NOT re-fetch on pings.
  */
@@ -10,7 +10,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { cleanup, render, waitFor } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 
-const [messagePingSig, setMessagePing] = createSignal(0);
+const [analyticsPingSig, setAnalyticsPing] = createSignal(0);
 const [routingPingSig, setRoutingPing] = createSignal(0);
 
 const mocks = vi.hoisted(() => ({
@@ -34,6 +34,7 @@ vi.mock('../../src/services/api/providers.js', async () => {
   return {
     getProviders: (...a: unknown[]) => mocks.getGlobalProviders(...a),
     getProviderUsage: (...a: unknown[]) => mocks.getProviderUsage(...a),
+    connectionUsage: () => Promise.resolve([]),
     mergeUsage: actual.mergeUsage,
   };
 });
@@ -49,7 +50,7 @@ vi.mock('../../src/services/api/routing.js', () => ({
 }));
 
 vi.mock('../../src/services/sse.js', () => ({
-  messagePing: () => messagePingSig(),
+  analyticsPing: () => analyticsPingSig(),
   routingPing: () => routingPingSig(),
 }));
 
@@ -62,7 +63,7 @@ import Byok from '../../src/pages/providers/Byok';
 
 describe('provider usage live updates', () => {
   beforeEach(() => {
-    setMessagePing(0);
+    setAnalyticsPing(0);
     setRoutingPing(0);
     mocks.getGlobalProviders.mockResolvedValue({
       providers: [
@@ -98,14 +99,14 @@ describe('provider usage live updates', () => {
     vi.clearAllMocks();
   });
 
-  it('re-fetches usage on messagePing and routingPing, but not config', async () => {
+  it('re-fetches usage on analyticsPing and routingPing, but not config', async () => {
     render(() => <Byok />);
 
     await waitFor(() => expect(mocks.getProviderUsage).toHaveBeenCalledTimes(1));
     expect(mocks.getGlobalProviders).toHaveBeenCalledTimes(1);
 
-    // A newly ingested message bumps messagePing → usage refetch.
-    setMessagePing(1);
+    // Coalesced message activity bumps analyticsPing → usage refetch.
+    setAnalyticsPing(1);
     await waitFor(() => expect(mocks.getProviderUsage).toHaveBeenCalledTimes(2));
 
     // A provider change bumps routingPing → usage refetch.

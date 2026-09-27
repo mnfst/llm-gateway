@@ -149,6 +149,20 @@ describe('RoutingSpecificitySection', () => {
     expect(screen.queryByTestId('tier-card-trading')).toBeNull();
   });
 
+  it('renders the task-specific deprecation notice', () => {
+    render(() => <RoutingSpecificitySection {...makeProps({ assignments: () => [codingActive] })} />);
+    expect(screen.getByText("We're deprecating rule-based routing.")).toBeDefined();
+  });
+
+  it('renders the deprecation notice in embedded mode', () => {
+    render(() => (
+      <RoutingSpecificitySection
+        {...makeProps({ embedded: true, assignments: () => [codingActive] })}
+      />
+    ));
+    expect(screen.getByText("We're deprecating rule-based routing.")).toBeDefined();
+  });
+
   it('renders the Response mode control and forwards response mode changes', async () => {
     const onResponseModeChange = vi.fn().mockResolvedValue(undefined);
     render(() => (

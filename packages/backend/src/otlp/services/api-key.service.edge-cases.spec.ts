@@ -22,6 +22,7 @@ jest.mock('../../common/utils/crypto.util', () => {
   return {
     ...actual,
     getEncryptionSecret: () => TEST_SECRET,
+    getDecryptionSecrets: () => [TEST_SECRET],
   };
 });
 

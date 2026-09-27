@@ -31,6 +31,24 @@ describe('Tenant entity', () => {
     expect(t.email).toBeNull();
   });
 
+  it('allows limit_overrides to be set or null', () => {
+    const t = new Tenant();
+    t.limit_overrides = null;
+    expect(t.limit_overrides).toBeNull();
+
+    t.limit_overrides = { requestsPerMonth: 50000 };
+    expect(t.limit_overrides).toEqual({ requestsPerMonth: 50000 });
+  });
+
+  it('allows billing_email_preferences to be set or null', () => {
+    const t = new Tenant();
+    t.billing_email_preferences = null;
+    expect(t.billing_email_preferences).toBeNull();
+
+    t.billing_email_preferences = { usageAlerts: false };
+    expect(t.billing_email_preferences).toEqual({ usageAlerts: false });
+  });
+
   describe('TypeORM relation callbacks', () => {
     it('OneToMany callback resolves to Agent with inverse side', () => {
       const relations = getMetadataArgsStorage().relations.filter((r) => r.target === Tenant);

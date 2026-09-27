@@ -56,6 +56,30 @@ describe('SpecificityFeedbackService', () => {
       );
     });
 
+    it('accepts a request id by resolving one of its specificity attempts', async () => {
+      setOwnedMessage(null);
+      setOwnedMessage({
+        id: 'attempt-1',
+        request_id: 'request-1',
+        specificity_category: 'coding',
+      });
+
+      await service.flagMiscategorized('request-1', 'tenant-1');
+
+      expect(messageRepo.update).toHaveBeenCalledWith('attempt-1', {
+        specificity_miscategorized: true,
+      });
+    });
+
+    it('throws when neither a message nor a request attempt exists', async () => {
+      setOwnedMessage(null);
+      setOwnedMessage(null);
+
+      await expect(service.flagMiscategorized('missing', 'tenant-1')).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
     it('scopes the ownership lookup by tenant_id', async () => {
       const qb = setOwnedMessage({ id: 'msg-1', specificity_category: 'coding' });
 

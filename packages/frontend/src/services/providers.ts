@@ -1,10 +1,15 @@
 /* ── LLM Provider definitions (shared by Routing page) ── */
 
-import { SHARED_PROVIDER_BY_ID, type SharedProviderEntry } from 'manifest-shared';
+import {
+  META_MODEL_API_MODELS,
+  SHARED_PROVIDER_BY_ID,
+  type SharedProviderEntry,
+} from 'manifest-shared';
 
 export interface SubscriptionEndpointRegion {
   value: string;
   label: string;
+  baseUrlPlaceholder?: string;
 }
 
 export interface ProviderDef {
@@ -27,6 +32,12 @@ export interface ProviderDef {
   subscriptionKeyPlaceholder?: string;
   /** Optional note shown near the subscription credential field. */
   subscriptionRequirementNote?: string;
+  /**
+   * Set when the provider accepts no new subscription connections. Existing
+   * connections keep working and stay manageable; this note replaces the
+   * connect flow, and catalogs list the provider only where it is connected.
+   */
+  subscriptionClosedNote?: string;
   /**
    * Credential kind used for subscription auth. Drives the input label and
    * aria-labels in the subscription detail view. Defaults to 'setup-token'
@@ -86,6 +97,7 @@ interface ProviderUIOverlay {
   subscriptionLabel?: string;
   subscriptionKeyPlaceholder?: string;
   subscriptionRequirementNote?: string;
+  subscriptionClosedNote?: string;
   subscriptionCredentialKind?: 'setup-token' | 'api-key';
   subscriptionCredentialName?: string;
   subscriptionCommand?: string;
@@ -110,7 +122,37 @@ interface ProviderUIOverlay {
 const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   qwen: {
     initial: 'Al',
-    subtitle: 'Qwen, DeepSeek, Kimi, GLM via Alibaba Cloud',
+    subtitle: 'Qwen 3.7, DeepSeek, Kimi, GLM via Alibaba Cloud',
+    apiKeyEndpointRegions: [
+      { value: 'auto', label: 'Auto-detect' },
+      { value: 'beijing', label: 'China (Beijing)' },
+      { value: 'singapore', label: 'Singapore' },
+      { value: 'us', label: 'United States' },
+      {
+        value: 'workspace-cn-hongkong',
+        label: 'China (Hong Kong)',
+        baseUrlPlaceholder:
+          'https://<workspace-id>.cn-hongkong.maas.aliyuncs.com/compatible-mode/v1',
+      },
+      {
+        value: 'workspace-eu-central-1',
+        label: 'Germany (Frankfurt)',
+        baseUrlPlaceholder:
+          'https://<workspace-id>.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+      },
+      {
+        value: 'workspace-ap-northeast-1',
+        label: 'Japan (Tokyo)',
+        baseUrlPlaceholder:
+          'https://<workspace-id>.ap-northeast-1.maas.aliyuncs.com/compatible-mode/v1',
+      },
+      {
+        value: 'custom',
+        label: 'Custom endpoint',
+        baseUrlPlaceholder:
+          'https://<workspace-id>.eu-central-1.maas.aliyuncs.com/compatible-mode/v1',
+      },
+    ],
     supportsSubscription: true,
     subscriptionLabel: 'Qwen Token Plan',
     subscriptionAuthMode: 'token',
@@ -121,15 +163,20 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   anthropic: {
     initial: 'A',
-    subtitle: 'Claude Opus 4, Sonnet 4.5, Haiku',
+    subtitle: 'Claude Opus 5, Sonnet 5, Fable 5, Haiku 4.5',
     supportsSubscription: true,
     subscriptionLabel: 'Claude Max / Pro subscription',
     subscriptionAuthMode: 'popup_paste',
     models: [],
   },
+  vertex: {
+    initial: 'GV',
+    subtitle: 'Gemini via Google Cloud Vertex AI',
+    models: [],
+  },
   bedrock: {
     initial: 'AWS',
-    subtitle: 'Claude, Llama, Mistral, Nova via Amazon Bedrock',
+    subtitle: 'Claude, GPT, Kimi, MiniMax, Nova via Amazon Bedrock',
     apiKeyEndpointRegions: [
       { value: 'us-east-1', label: 'US East (N. Virginia)' },
       { value: 'us-east-2', label: 'US East (Ohio)' },
@@ -149,7 +196,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   byteplus: {
     initial: 'Bp',
-    subtitle: 'Ark Code, Seed Code, GLM, Kimi',
+    subtitle: 'Ark Code, Seed Code, DeepSeek, GLM, Kimi',
     supportsSubscription: true,
     subscriptionOnly: true,
     subscriptionLabel: 'ModelArk Coding Plan',
@@ -159,19 +206,42 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subscriptionKeyPlaceholder: 'Paste your ModelArk Coding Plan API key',
     models: [],
   },
+  cerebras: {
+    initial: 'Cb',
+    subtitle: 'GPT-OSS, GLM, Gemma on Cerebras inference',
+    models: [],
+  },
+  'cline-pass': {
+    initial: 'CP',
+    subtitle: 'GLM, Kimi, DeepSeek, MiMo, MiniMax, Qwen via ClinePass',
+    supportsSubscription: true,
+    subscriptionLabel: 'ClinePass subscription',
+    subscriptionAuthMode: 'token',
+    subscriptionCredentialKind: 'api-key',
+    subscriptionKeyPlaceholder: 'Paste your ClinePass API key',
+    subscriptionSignInUrl: 'https://app.cline.bot',
+    subscriptionSignInLabel: 'Sign in to ClinePass',
+    subscriptionOnly: true,
+    models: [],
+  },
+  pioneer: {
+    initial: 'P',
+    subtitle: 'OpenAI-compatible inference and fine-tuned Pioneer models',
+    models: [],
+  },
   deepseek: {
     initial: 'D',
-    subtitle: 'DeepSeek V3, R1',
+    subtitle: 'DeepSeek V4 Pro, V4 Flash, V3.2, R1',
     models: [],
   },
   fireworks: {
     initial: 'Fw',
-    subtitle: 'DeepSeek, Kimi, Qwen, Llama',
+    subtitle: 'DeepSeek V4, Kimi, Qwen 3.7, Nemotron',
     models: [],
   },
   copilot: {
     initial: 'GH',
-    subtitle: 'Claude, GPT, Gemini via Copilot',
+    subtitle: 'Claude, GPT, Gemini, Grok via Copilot',
     supportsSubscription: true,
     subscriptionLabel: 'GitHub Copilot subscription',
     subscriptionAuthMode: 'device_code',
@@ -193,7 +263,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   commandcode: {
     initial: 'CC',
-    subtitle: 'Claude, GPT, Kimi, DeepSeek, Qwen',
+    subtitle: 'Claude, DeepSeek, Qwen, Gemini, Kimi',
     supportsSubscription: true,
     subscriptionOnly: true,
     subscriptionLabel: 'Command Code subscription',
@@ -205,10 +275,19 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   gemini: {
     initial: 'G',
-    subtitle: 'Gemini 2.5, Gemini 2.0 Flash',
+    subtitle: 'Gemini 3.5 Flash, 3.1 Flash-Lite, Gemini 2.5',
     supportsSubscription: true,
     subscriptionLabel: 'Sign in with Google',
     subscriptionAuthMode: 'popup_oauth',
+    // Google refuses gemini-cli's OAuth client for Gemini Code Assist for
+    // individuals (google-gemini/gemini-cli#29279), so new sign-ins fail.
+    subscriptionClosedNote:
+      'Google no longer allows new Gemini sign-ins from apps outside Google. Existing connections keep working. To add Gemini, connect a Gemini API key under Usage-based providers.',
+    models: [],
+  },
+  'gemini-free': {
+    initial: 'GF',
+    subtitle: 'Free Gemini models via Manifest',
     models: [],
   },
   kiro: {
@@ -223,7 +302,12 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   groq: {
     initial: 'Gq',
-    subtitle: 'Llama, Gemma, Mixtral. Fast inference',
+    subtitle: 'Llama 4, Qwen, GPT-OSS. Fast inference',
+    models: [],
+  },
+  huggingface: {
+    initial: 'HF',
+    subtitle: 'Open models through Hugging Face Inference Providers',
     models: [],
   },
   kilo: {
@@ -247,7 +331,11 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   minimax: {
     initial: 'Mm',
-    subtitle: 'MiniMax M2.7, M2.5, M1',
+    subtitle: 'MiniMax M3, M2.7, M2.5',
+    apiKeyEndpointRegions: [
+      { value: 'global', label: 'Global' },
+      { value: 'cn', label: 'China' },
+    ],
     supportsSubscription: true,
     subscriptionLabel: 'MiniMax Coding Plan',
     subscriptionAuthMode: 'device_code',
@@ -257,6 +345,14 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
       dividerLabel: 'Or paste your Coding Plan token',
     },
     models: [],
+  },
+  meta: {
+    initial: 'Me',
+    subtitle: 'Muse Spark 1.2, Contributor, and 1.1',
+    models: META_MODEL_API_MODELS.map((model) => ({
+      label: model.displayName,
+      value: model.id,
+    })),
   },
   xiaomi: {
     initial: 'Mi',
@@ -276,12 +372,18 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   mistral: {
     initial: 'M',
-    subtitle: 'Mistral Large, Codestral, Pixtral',
+    subtitle: 'Mistral Large, Medium 3.5, Devstral, Codestral',
+    supportsSubscription: true,
+    subscriptionLabel: 'Mistral Vibe subscription',
+    subscriptionAuthMode: 'token',
+    subscriptionCredentialKind: 'api-key',
+    subscriptionCredentialName: 'Mistral Vibe',
+    subscriptionKeyPlaceholder: 'Paste your Mistral Vibe API key',
     models: [],
   },
   moonshot: {
     initial: 'Mo',
-    subtitle: 'Kimi k2, Moonshot v1',
+    subtitle: 'Kimi K3, K2.7 Code, Kimi for Coding',
     supportsSubscription: true,
     subscriptionLabel: 'Kimi Coding Plan',
     subscriptionAuthMode: 'token',
@@ -290,20 +392,31 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subscriptionKeyPlaceholder: 'Paste your Kimi Code API key',
     models: [],
   },
+  nous: {
+    initial: 'N',
+    subtitle: 'OpenRouter-backed models via NousResearch Portal',
+    supportsSubscription: true,
+    subscriptionOnly: true,
+    subscriptionLabel: 'NousResearch subscription',
+    subscriptionAuthMode: 'token',
+    subscriptionCredentialKind: 'api-key',
+    subscriptionKeyPlaceholder: 'Paste your NousResearch API key',
+    models: [],
+  },
   nvidia: {
     initial: 'Nv',
-    subtitle: 'Nemotron, Llama, Mistral via NVIDIA NIM',
+    subtitle: 'Nemotron 3, GLM, Kimi, Qwen via NVIDIA NIM',
     models: [],
   },
   ollama: {
     initial: 'Ol',
-    subtitle: 'Llama, Mistral, Gemma, and more',
+    subtitle: 'Llama, Qwen, Gemma, and more',
     noKeyRequired: true,
     models: [],
   },
   'ollama-cloud': {
     initial: 'Oc',
-    subtitle: 'DeepSeek, Qwen, Gemma, Llama in the cloud',
+    subtitle: 'DeepSeek V4, GLM, Kimi, MiniMax in the cloud',
     supportsSubscription: true,
     subscriptionOnly: true,
     subscriptionLabel: 'Ollama Cloud subscription',
@@ -314,7 +427,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   openai: {
     initial: 'O',
-    subtitle: 'GPT-4o, GPT-4.1, o3, o4',
+    subtitle: 'GPT-5.6, GPT-5.5, GPT-5.4, Codex',
     supportsSubscription: true,
     subscriptionLabel: 'ChatGPT Plus/Pro/Team',
     subscriptionAuthMode: 'popup_oauth',
@@ -338,7 +451,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   'opencode-go': {
     initial: 'OG',
-    subtitle: 'GLM, Kimi, MiMo, MiniMax',
+    subtitle: 'DeepSeek, Qwen, GLM, Kimi, MiMo',
     supportsSubscription: true,
     subscriptionLabel: 'OpenCode Go (beta)',
     subscriptionAuthMode: 'token',
@@ -352,7 +465,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   'opencode-zen': {
     initial: 'OZ',
-    subtitle: 'Curated Claude, GPT, Gemini, Qwen, GLM, MiniMax',
+    subtitle: 'Curated Claude, GPT, DeepSeek, MiMo, Nemotron',
     models: [],
   },
   openrouter: {
@@ -362,7 +475,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   xai: {
     initial: 'X',
-    subtitle: 'Grok 3, Grok 2',
+    subtitle: 'Grok 4.5, Grok 4.3, Grok Build',
     supportsSubscription: true,
     subscriptionLabel: 'Grok subscription',
     subscriptionAuthMode: 'popup_oauth',
@@ -370,7 +483,7 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   zai: {
     initial: 'Z',
-    subtitle: 'GLM 5.1, GLM 5, GLM 4.7',
+    subtitle: 'GLM 5.2, GLM 5.1, GLM 5 Turbo',
     supportsSubscription: true,
     subscriptionLabel: 'GLM Coding Plan',
     subscriptionAuthMode: 'token',
@@ -409,19 +522,26 @@ const PROVIDER_ORDER = [
   'anthropic',
   'bedrock',
   'byteplus',
+  'cerebras',
+  'cline-pass',
   'commandcode',
   'deepseek',
   'fireworks',
+  'gemini-free',
   'copilot',
   'gemini',
+  'vertex',
   'groq',
+  'huggingface',
   'kilo',
   'kiro',
   'llamacpp',
   'lmstudio',
+  'meta',
   'minimax',
   'mistral',
   'moonshot',
+  'nous',
   'nvidia',
   'ollama',
   'ollama-cloud',
@@ -429,6 +549,7 @@ const PROVIDER_ORDER = [
   'opencode-go',
   'opencode-zen',
   'openrouter',
+  'pioneer',
   'xai',
   'xiaomi',
   'zai',
@@ -442,6 +563,20 @@ export const PROVIDERS: ProviderDef[] = PROVIDER_ORDER.map((id) => {
   }
   return buildProviderDef(shared);
 });
+
+/**
+ * Providers a subscription catalog lists. One closed to new subscriptions
+ * stays listed only where the workspace already has that subscription, so
+ * existing connections remain reachable.
+ */
+export function subscriptionCatalog(
+  providers: readonly ProviderDef[],
+  hasSubscription: (providerId: string) => boolean,
+): ProviderDef[] {
+  return providers.filter(
+    (p) => p.supportsSubscription && (!p.subscriptionClosedNote || hasSubscription(p.id)),
+  );
+}
 
 /* ── Pipeline stage definitions ────────────────────── */
 

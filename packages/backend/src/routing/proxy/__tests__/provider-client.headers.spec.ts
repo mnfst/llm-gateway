@@ -242,8 +242,9 @@ describe('ProviderClient — Codex prompt-cache affinity (openai-subscription)',
   it('sends deterministic session-id/thread-id headers across requests', async () => {
     mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 
-    await client.forward({ ...subscriptionOpts });
-    await client.forward({ ...subscriptionOpts });
+    const scoped = { ...subscriptionOpts, body: { ...body, prompt_cache_key: 'conversation-1' } };
+    await client.forward(scoped);
+    await client.forward(scoped);
 
     const first = mockFetch.mock.calls[0][1].headers as Record<string, string>;
     const second = mockFetch.mock.calls[1][1].headers as Record<string, string>;
@@ -252,13 +253,19 @@ describe('ProviderClient — Codex prompt-cache affinity (openai-subscription)',
     expect(first['thread-id']).toBe(second['thread-id']);
   });
 
-  it('injects a stable default prompt_cache_key into the outgoing body', async () => {
+  it('injects request-local prompt cache affinity without a caller key', async () => {
     mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 
     await client.forward({ ...subscriptionOpts });
+    await client.forward({ ...subscriptionOpts });
 
-    const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
-    expect(sentBody.prompt_cache_key).toMatch(UUID_RE);
+    const firstBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    const secondBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    const firstHeaders = mockFetch.mock.calls[0][1].headers as Record<string, string>;
+    const secondHeaders = mockFetch.mock.calls[1][1].headers as Record<string, string>;
+    expect(firstBody.prompt_cache_key).toMatch(UUID_RE);
+    expect(secondBody.prompt_cache_key).not.toBe(firstBody.prompt_cache_key);
+    expect(secondHeaders['session-id']).not.toBe(firstHeaders['session-id']);
   });
 
   it('keeps the caller-supplied prompt_cache_key on the Chat Completions path', async () => {
@@ -291,14 +298,37 @@ describe('ProviderClient — Codex prompt-cache affinity (openai-subscription)',
     expect(sentHeaders).not.toHaveProperty('session-id');
   });
 
-  it('replays the x-codex-turn-state token captured from the previous response', async () => {
-    mockFetch.mockResolvedValueOnce(
-      new Response('{}', { status: 200, headers: { 'x-codex-turn-state': 'turn-abc' } }),
-    );
-    mockFetch.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+  it('adds scoped prompt cache affinity on the api-key /responses path', async () => {
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 
-    await client.forward({ ...subscriptionOpts });
-    await client.forward({ ...subscriptionOpts });
+    await client.forward({
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'o1-pro',
+      body,
+      providerCacheKey: 'v1:tenant-agent-session-digest',
+      stream: false,
+    });
+
+    const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(sentBody.prompt_cache_key).toMatch(/^manifest-[a-f0-9]{32}$/);
+    expect(sentBody.prompt_cache_key).not.toContain('tenant-agent-session');
+  });
+
+  it('replays the x-codex-turn-state token captured from the previous response', async () => {
+    const completed =
+      'event: response.completed\ndata: {"response":{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]}}\n\n';
+    mockFetch.mockResolvedValueOnce(
+      new Response(completed, {
+        status: 200,
+        headers: { 'x-codex-turn-state': 'turn-abc' },
+      }),
+    );
+    mockFetch.mockResolvedValueOnce(new Response(completed, { status: 200 }));
+
+    const scoped = { ...subscriptionOpts, body: { ...body, prompt_cache_key: 'conversation-1' } };
+    await client.forward(scoped);
+    await client.forward(scoped);
 
     const first = mockFetch.mock.calls[0][1].headers as Record<string, string>;
     const second = mockFetch.mock.calls[1][1].headers as Record<string, string>;
@@ -346,5 +376,159 @@ describe('ProviderClient — Codex prompt-cache affinity (openai-subscription)',
     await injected.forward({ ...subscriptionOpts });
 
     expect(prepareSpy).toHaveBeenCalledWith('oauth-token', expect.any(Object));
+  });
+});
+
+describe('ProviderClient — anthropic-beta merge', () => {
+  let client: ProviderClient;
+
+  beforeEach(() => {
+    client = new ProviderClient();
+    mockFetch.mockReset();
+    mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+  });
+
+  const sentBeta = () =>
+    (mockFetch.mock.calls[0][1].headers as Record<string, string>)['anthropic-beta'];
+
+  it("appends the caller's beta flags after Manifest's on the subscription path", async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-oat-token',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      authType: 'subscription',
+      apiMode: 'messages',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    // Manifest's OAuth flags are load-bearing for this route, so they survive…
+    expect(sentBeta()).toContain('oauth-2025-04-20');
+    // …and the flag that makes the caller's `output_config` legal rides along.
+    expect(sentBeta()).toContain('structured-outputs-2025-11-13');
+  });
+
+  it("forwards the caller's beta flags on the api_key path, which sends none of its own", async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      apiMode: 'messages',
+      clientAnthropicBeta: 'context-management-2025-06-27',
+    });
+
+    expect(sentBeta()).toBe('context-management-2025-06-27');
+  });
+
+  it('never repeats a flag Manifest already sends', async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-oat-token',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      authType: 'subscription',
+      apiMode: 'messages',
+      clientAnthropicBeta: 'oauth-2025-04-20',
+    });
+
+    expect(
+      sentBeta()
+        .split(',')
+        .filter((f) => f === 'oauth-2025-04-20'),
+    ).toHaveLength(1);
+  });
+
+  it('drops a malformed flag rather than letting it reach the provider', async () => {
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      apiMode: 'messages',
+      clientAnthropicBeta: 'bad\r\nx-injected: 1',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
+  });
+
+  it('forwards through a custom endpoint that points at Anthropic', async () => {
+    // A tenant can reach Anthropic through a custom provider row, which
+    // resolves to the `custom` endpoint key. The flags are as necessary there.
+    await client.forward({
+      provider: 'my-anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      apiMode: 'messages',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+      customEndpoint: {
+        baseUrl: 'https://api.anthropic.com',
+        buildHeaders: (apiKey: string) => ({
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json',
+          'anthropic-version': '2023-06-01',
+        }),
+        buildPath: () => '/v1/messages',
+        format: 'anthropic',
+      },
+    });
+
+    expect(sentBeta()).toBe('structured-outputs-2025-11-13');
+  });
+
+  it('does not forward beta flags on a translated (non-Messages) request', async () => {
+    // A chat-completions body reaches Anthropic through the OpenAI->Anthropic
+    // converters, which only understand the content blocks they were written
+    // for. A beta that adds a new block type would be silently dropped from the
+    // response, so the flags stay behind until translation supports them.
+    await client.forward({
+      provider: 'anthropic',
+      apiKey: 'sk-ant-key',
+      model: 'claude-sonnet-4-20250514',
+      body,
+      stream: false,
+      apiMode: 'chat_completions',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
+  });
+
+  it('does not send the header to an Anthropic-compatible third party', async () => {
+    // Kimi, Bedrock, BytePlus and friends only speak the Messages *shape* —
+    // they have never received an `anthropic-beta` header and a flag naming an
+    // Anthropic-only feature means nothing to them.
+    await client.forward({
+      provider: 'moonshot',
+      apiKey: 'kimi-code-key',
+      model: 'kimi-for-coding',
+      body,
+      stream: false,
+      authType: 'subscription',
+      apiMode: 'messages',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
+  });
+
+  it('leaves a non-Anthropic provider untouched', async () => {
+    await client.forward({
+      provider: 'openai',
+      apiKey: 'sk-test',
+      model: 'gpt-4o',
+      body,
+      stream: false,
+      apiMode: 'messages',
+      clientAnthropicBeta: 'structured-outputs-2025-11-13',
+    });
+
+    expect(mockFetch.mock.calls[0][1].headers).not.toHaveProperty('anthropic-beta');
   });
 });

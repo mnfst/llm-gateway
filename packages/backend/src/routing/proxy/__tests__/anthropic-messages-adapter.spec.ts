@@ -173,6 +173,213 @@ describe('Anthropic Messages adapter', () => {
       ]);
     });
 
+    it('extracts tool_result images into a follow-up user message instead of stringified base64', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  { type: 'text', text: 'screenshot follows' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([
+            { type: 'text', text: 'screenshot follows' },
+            { type: 'text', text: '[image attached below]' },
+          ]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+          ],
+        },
+      ]);
+    });
+
+    it('keeps parallel tool results contiguous and emits their images once, after the group', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_2',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'BBBB' },
+                  },
+                ],
+              },
+              { type: 'text', text: 'both screenshots above' },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'tu_2',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,BBBB' } },
+          ],
+        },
+        { role: 'user', content: 'both screenshots above' },
+      ]);
+    });
+
+    it('keeps parallel tool results contiguous across consecutive user messages', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tu_1', name: 'screenshot', input: {} },
+              { type: 'tool_use', id: 'tu_2', name: 'screenshot', input: {} },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_2',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'BBBB' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'tu_1', type: 'function', function: { name: 'screenshot', arguments: '{}' } },
+            { id: 'tu_2', type: 'function', function: { name: 'screenshot', arguments: '{}' } },
+          ],
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'tu_2',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,BBBB' } },
+          ],
+        },
+      ]);
+    });
+
+    it('keeps url-sourced tool_result images and leaves unconvertible image blocks in place', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } },
+                  { type: 'image', source: { type: 'unknown' } },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([
+            { type: 'text', text: '[image attached below]' },
+            { type: 'image', source: { type: 'unknown' } },
+          ]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'https://example.com/a.png' } },
+          ],
+        },
+      ]);
+    });
+
     it('falls back to "unknown" for missing tool ids and synthesizes assistant ids', () => {
       const result = messagesToChatCompletionsRequest({
         messages: [
@@ -231,10 +438,11 @@ describe('Anthropic Messages adapter', () => {
     });
 
     it('exposes Anthropic server tools to the scorer by function.name (issue #1886)', () => {
-      // chatBody is only consumed by the routing/scoring layer in messages
-      // mode — the wire body goes through applyAnthropicMessagesMutations
-      // direct from the inbound body, so server-tool `type` tags are
-      // preserved upstream. Scoring just needs tool count + function.name.
+      // chatBody is consumed by the routing/scoring layer in messages mode —
+      // the scorer reads tool count + function.name. When the resolved
+      // provider is Anthropic, the wire body goes through
+      // applyAnthropicMessagesMutations direct from the inbound body instead
+      // of this translation, so server-tool `type` tags are preserved there.
       const result = messagesToChatCompletionsRequest({
         messages: [{ role: 'user', content: 'x' }],
         tools: [
@@ -256,6 +464,48 @@ describe('Anthropic Messages adapter', () => {
         'mcp',
         'my_custom',
         'explicit_custom',
+      ]);
+    });
+
+    it('gives Anthropic server tools a safe empty schema so strict chat-completions providers accept them (issue #2754)', () => {
+      // chatBody.tools is also the literal wire payload forwarded to
+      // non-Anthropic providers reached via the chat-completions wire format
+      // (ProviderClient.forward's needsChatBody path). Anthropic server
+      // tools (web_search, bash, computer, etc.) carry no `input_schema`;
+      // some strict providers (e.g. MiniMax) reject any function tool with
+      // no `parameters` field at all, so omitting it 400s the request even
+      // though Manifest itself never executes the tool.
+      const result = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tools: [
+          { type: 'web_search_20250305', name: 'web_search' },
+          { type: 'bash_20250124', name: 'bash' },
+          { type: 'mcp_toolset', name: 'mcp' },
+        ],
+      });
+
+      expect(result.tools).toEqual([
+        {
+          type: 'function',
+          function: {
+            name: 'web_search',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'bash',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'mcp',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        },
       ]);
     });
 
@@ -1167,5 +1417,89 @@ describe('Anthropic Messages adapter', () => {
       // No finish_reason was ever seen, so stop_reason defaults to end_turn.
       expect(events[1].data.delta.stop_reason).toBe('end_turn');
     });
+  });
+});
+
+describe('tool-call id sanitation on /v1/messages responses', () => {
+  it('chatCompletionsResponseToMessages sanitizes upstream tool_call ids', () => {
+    const result = chatCompletionsResponseToMessages(
+      {
+        choices: [
+          {
+            message: {
+              content: '',
+              tool_calls: [
+                { id: 'Edit:0', type: 'function', function: { name: 'Edit', arguments: '{}' } },
+                {
+                  id: 'call_ok-1',
+                  type: 'function',
+                  function: { name: 'Read', arguments: '{}' },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+      'kimi-k3',
+    );
+    const blocks = result.content as Array<Record<string, unknown>>;
+    expect(blocks[0].id).toBe('Edit_0');
+    expect(blocks[1].id).toBe('call_ok-1');
+  });
+
+  it('createMessagesStreamTransformer sanitizes the streamed tool_use id', () => {
+    const t = createMessagesStreamTransformer('kimi-k3');
+    const out =
+      [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"Edit:0","function":{"name":"Edit","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]
+        .map((c) => t.transform(c) ?? '')
+        .join('') + (t.finalize() ?? '');
+    const start = out
+      .split('\n\n')
+      .find((b) => b.startsWith('event: content_block_start') && b.includes('tool_use'))!;
+    const data = JSON.parse(start.split('\n')[1].replace('data: ', ''));
+    expect(data.content_block.id).toBe('Edit_0');
+  });
+});
+
+describe('empty upstream tool_call ids', () => {
+  it('mints a toolu_ id instead of emitting an empty one', () => {
+    const result = chatCompletionsResponseToMessages(
+      {
+        choices: [
+          {
+            message: {
+              content: '',
+              tool_calls: [
+                { id: '', type: 'function', function: { name: 'Read', arguments: '{}' } },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+      'kimi-k3',
+    );
+    const blocks = result.content as Array<Record<string, unknown>>;
+    expect(blocks[0].id).toMatch(/^toolu_[0-9a-f]{32}$/);
+  });
+
+  it('mints a toolu_ id in the stream transformer as well', () => {
+    const t = createMessagesStreamTransformer('kimi-k3');
+    const out =
+      [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"Read","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]
+        .map((c) => t.transform(c) ?? '')
+        .join('') + (t.finalize() ?? '');
+    const start = out
+      .split('\n\n')
+      .find((b) => b.startsWith('event: content_block_start') && b.includes('tool_use'))!;
+    const data = JSON.parse(start.split('\n')[1].replace('data: ', ''));
+    expect(data.content_block.id).toMatch(/^toolu_[0-9a-f]{32}$/);
   });
 });

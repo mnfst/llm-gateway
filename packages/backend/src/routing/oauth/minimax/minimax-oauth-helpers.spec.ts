@@ -21,7 +21,7 @@ describe('minimax-oauth-helpers', () => {
   it('exposes the correct default region and base URLs', () => {
     expect(DEFAULT_REGION).toBe('global');
     expect(DEFAULT_BASE_URL).toBe('https://api.minimax.io');
-    expect(DEFAULT_RESOURCE_URL).toBe('https://api.minimax.io/anthropic');
+    expect(DEFAULT_RESOURCE_URL).toBe('https://api.minimax.io/anthropic/v1');
     expect(MINIMAX_BASE_URLS.cn).toBe('https://api.minimaxi.com');
   });
 
@@ -52,7 +52,7 @@ describe('minimax-oauth-helpers', () => {
         'https://api.minimax.io/oauth/token',
       );
       expect(buildMinimaxResourceUrl('https://api.minimax.io')).toBe(
-        'https://api.minimax.io/anthropic',
+        'https://api.minimax.io/anthropic/v1',
       );
     });
   });
@@ -63,11 +63,29 @@ describe('minimax-oauth-helpers', () => {
       expect(getMinimaxResourceUrl('')).toBeNull();
     });
 
-    it('normalises a resource URL through the provider-base-url helper', () => {
-      // The helper is a pass-through for well-formed resource URLs.
-      expect(getMinimaxResourceUrl('https://api.minimax.io/anthropic')).toBe(
+    it.each([
+      [
+        'current global URL',
+        'https://api.minimax.io/anthropic/v1',
+        'https://api.minimax.io/anthropic/v1',
+      ],
+      [
+        'legacy global URL',
         'https://api.minimax.io/anthropic',
-      );
+        'https://api.minimax.io/anthropic/v1',
+      ],
+      [
+        'current CN URL',
+        'https://api.minimaxi.com/anthropic/v1',
+        'https://api.minimaxi.com/anthropic/v1',
+      ],
+      [
+        'legacy CN URL',
+        'https://api.minimaxi.com/anthropic',
+        'https://api.minimaxi.com/anthropic/v1',
+      ],
+    ])('normalises a %s through the provider-base-url helper', (_label, resourceUrl, expected) => {
+      expect(getMinimaxResourceUrl(resourceUrl)).toBe(expected);
     });
   });
 
@@ -76,7 +94,7 @@ describe('minimax-oauth-helpers', () => {
       expect(getMinimaxOauthBaseUrl(undefined)).toBe(DEFAULT_BASE_URL);
     });
 
-    it('returns the origin of a normalised resource URL', () => {
+    it('returns the CN origin for a legacy resource URL', () => {
       expect(getMinimaxOauthBaseUrl('https://api.minimaxi.com/anthropic')).toBe(
         'https://api.minimaxi.com',
       );

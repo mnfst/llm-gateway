@@ -79,6 +79,20 @@ describe("WingmanDevTools", () => {
     );
   });
 
+  // Without this delegation Chrome denies `local-network-access` by
+  // permissions policy inside a cross-origin iframe, so the permission can
+  // never even be prompted for. It is only a fallback — the drawer normally
+  // points at a loopback origin where no permission is involved — but if it
+  // ever frames an https origin again, this is what keeps it recoverable.
+  it("delegates local-network-access to the iframe", () => {
+    localStorage.setItem(STORAGE_OPEN, "1");
+    const { container } = render(() => <WingmanDevTools />);
+    const iframe = container.querySelector(
+      ".wingman-drawer__frame",
+    ) as HTMLIFrameElement;
+    expect(iframe.getAttribute("allow")).toContain("local-network-access");
+  });
+
   it("respects a build-time __WINGMAN_URL__ override", () => {
     globalThis.__WINGMAN_URL__ = "http://wingman.test:5555";
     localStorage.setItem(STORAGE_OPEN, "1");

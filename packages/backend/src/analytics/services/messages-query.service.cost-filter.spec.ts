@@ -73,7 +73,10 @@ describe('MessagesQueryService — cost filter edge cases', () => {
         MessagesQueryService,
         {
           provide: getRepositoryToken(AgentMessage),
-          useValue: { createQueryBuilder: jest.fn().mockReturnValue(mockQb) },
+          useValue: {
+            createQueryBuilder: jest.fn().mockReturnValue(mockQb),
+            query: jest.fn().mockResolvedValue([]),
+          },
         },
         {
           provide: getRepositoryToken(CustomProvider),
@@ -89,6 +92,65 @@ describe('MessagesQueryService — cost filter edge cases', () => {
     const op = paramKey === 'costMin' ? 'cost_usd >=' : 'cost_usd <=';
     return calls.find(([clause]) => typeof clause === 'string' && clause.includes(op));
   };
+
+  it('does not serve one model filter a total cached under another', async () => {
+    // The log's count request comes in with cache_total=true, so a count key
+    // that ignores the model list hands the new filter the previous filter's
+    // total for the whole TTL — pagination and the row list would then disagree.
+    mockGetRawOne.mockResolvedValue({ total: 7 });
+    mockGetRawMany.mockResolvedValue([]);
+
+    const first = await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      include_total: true,
+      cache_total: true,
+      models: ['gpt-4o'],
+    });
+
+    mockGetRawOne.mockResolvedValue({ total: 2 });
+    const second = await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      include_total: true,
+      cache_total: true,
+      models: ['claude-3.5-sonnet'],
+    });
+
+    expect(first.total_count).toBe(7);
+    expect(second.total_count).toBe(2);
+  });
+
+  it('filters the legacy attempt-only path on the model list', async () => {
+    // Installs with no `requests` rows still read straight from agent_messages,
+    // where a request IS one attempt, so the model match is a plain column test.
+    mockGetRawOne.mockResolvedValueOnce({ total: 1 });
+    mockGetRawMany
+      .mockResolvedValueOnce([
+        { id: 'msg-legacy', timestamp: '2026-02-16 10:00:00', model: 'gpt-4o', cost: 0.1 },
+      ])
+      .mockResolvedValueOnce([{ model: 'gpt-4o' }]);
+
+    const repo = (service as unknown as { turnRepo: { createQueryBuilder: jest.Mock } }).turnRepo;
+    const qb = repo.createQueryBuilder();
+    const andWhereSpy = qb.andWhere as jest.Mock;
+    andWhereSpy.mockClear();
+
+    await service.getMessages({
+      range: '24h',
+      tenantId: 'test-user',
+      limit: 20,
+      models: ['gpt-4o', 'claude-3.5-sonnet'],
+    });
+
+    const call = andWhereSpy.mock.calls.find((c) =>
+      String(c[0]).includes('at.model IN (:...legacyModels)'),
+    );
+    expect(call).toBeDefined();
+    expect(call?.[1]).toEqual({ legacyModels: ['gpt-4o', 'claude-3.5-sonnet'] });
+  });
 
   it('passes a negative cost_min through to the cost_usd >= clause', async () => {
     mockGetRawOne.mockResolvedValueOnce({ total: 1 });

@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { MinimaxOauthService } from './minimax-oauth.service';
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fetchMock = jest.fn() as jest.Mock<Promise<any>>;
@@ -16,11 +17,17 @@ describe('MinimaxOauthService', () => {
 
   beforeEach(() => {
     dateNowSpy = jest.spyOn(Date, 'now').mockReturnValue(now);
+    const upsertProvider = jest.fn().mockResolvedValue({ provider: {}, isNew: true });
+    const getFreshSubscriptionCredential = jest.fn().mockResolvedValue(null);
     providerService = {
-      upsertProvider: jest.fn().mockResolvedValue({ provider: {}, isNew: true }),
+      upsertProvider,
       recalculateTiers: jest.fn().mockResolvedValue(undefined),
       nextOAuthLabel: jest.fn().mockResolvedValue(undefined),
-      getFreshSubscriptionCredential: jest.fn().mockResolvedValue(null),
+      getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+        getFreshSubscriptionCredential,
+        upsertProvider,
+      }),
     } as unknown as jest.Mocked<ProviderService>;
 
     configService = {
@@ -111,7 +118,7 @@ describe('MinimaxOauthService', () => {
               access_token: 'access-123',
               refresh_token: 'refresh-456',
               expired_in: 3600,
-              resource_url: 'https://api.minimax.io/anthropic',
+              resource_url: 'https://api.minimax.io/anthropic/v1',
             }),
         });
 
@@ -167,7 +174,7 @@ describe('MinimaxOauthService', () => {
           t: 'old-access',
           r: 'old-refresh',
           e: now + 7200,
-          u: { host: 'https://api.minimax.io/anthropic' },
+          u: { host: 'https://api.minimax.io/anthropic/v1' },
         }),
         'agent-1',
         'user-1',
@@ -195,7 +202,7 @@ describe('MinimaxOauthService', () => {
           t: 'old-access',
           r: 'old-refresh',
           e: Date.now() - 1000,
-          u: 'https://api.minimax.io/anthropic',
+          u: 'https://api.minimax.io/anthropic/v1',
         }),
         'agent-1',
         'user-1',
@@ -205,7 +212,7 @@ describe('MinimaxOauthService', () => {
         expect.objectContaining({
           t: 'new-access',
           r: 'new-refresh',
-          u: 'https://api.minimax.io/anthropic',
+          u: 'https://api.minimax.io/anthropic/v1',
         }),
       );
       expect(providerService.upsertProvider).toHaveBeenCalled();
@@ -250,7 +257,7 @@ describe('MinimaxOauthService', () => {
 
       const result = await service.refreshAccessToken(
         'refresh-token',
-        'https://api.minimax.io/anthropic',
+        'https://api.minimax.io/anthropic/v1',
       );
 
       expect(result.e).toBe(now + 7200);
@@ -274,7 +281,7 @@ describe('MinimaxOauthService', () => {
         'https://evil.example/anthropic',
       );
 
-      expect(result.u).toBe('https://api.minimax.io/anthropic');
+      expect(result.u).toBe('https://api.minimax.io/anthropic/v1');
     });
   });
 });

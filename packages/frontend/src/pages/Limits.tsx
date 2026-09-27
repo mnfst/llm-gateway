@@ -3,19 +3,24 @@ import { useParams } from '@solidjs/router';
 import { Title, Meta } from '@solidjs/meta';
 import { authClient } from '../services/auth-client.js';
 import CloudEmailInfo from '../components/CloudEmailInfo.js';
+import EmailProviderModal from '../components/EmailProviderModal.js';
+import EmailProviderSection from '../components/EmailProviderSection.js';
 import LimitRuleModal from '../components/LimitRuleModal.js';
 import type { LimitRuleData } from '../components/LimitRuleModal.js';
 import LimitRuleTable from '../components/LimitRuleTable.js';
 import LimitHistoryTable from '../components/LimitHistoryTable.js';
-import { KebabMenu, DeleteRuleModal } from '../components/LimitModals.js';
+import { KebabMenu, DeleteRuleModal, RemoveProviderModal } from '../components/LimitModals.js';
 import { toast } from '../services/toast-store.js';
 import { agentDisplayName } from '../services/agent-display-name.js';
+import { checkIsSelfHosted, checkEmailConfigured } from '../services/setup-status.js';
 import {
   getNotificationRules,
   getNotificationLogs,
   createNotificationRule,
   updateNotificationRule,
   deleteNotificationRule,
+  getEmailProvider,
+  removeEmailProvider,
   getRoutingStatus,
   type NotificationRule,
 } from '../services/api.js';
@@ -33,8 +38,22 @@ const Limits: Component = () => {
     (name) => getNotificationLogs(name),
   );
   const [routingStatus] = createResource(() => agentName(), getRoutingStatus);
+  const [isSelfHosted] = createResource(checkIsSelfHosted);
+  const [emailConfigured] = createResource(checkEmailConfigured);
+  // Only fetch the provider config on self-hosted: cloud never renders it.
+  const [emailProvider, { refetch: refetchProvider }] = createResource(
+    () => (isSelfHosted() === true ? true : undefined),
+    getEmailProvider,
+  );
+  // Solid re-throws when you read an errored resource, so every read below goes
+  // through this accessor. A failed initial fetch or a failed refresh after a
+  // successful delete reads as "no provider saved" instead of taking the page down.
+  const savedProvider = () => (emailProvider.error ? undefined : emailProvider());
   const session = authClient.useSession();
   const [showModal, setShowModal] = createSignal(false);
+  const [showEditProvider, setShowEditProvider] = createSignal(false);
+  const [showRemoveProvider, setShowRemoveProvider] = createSignal(false);
+  const [removingProvider, setRemovingProvider] = createSignal(false);
   const [editRule, setEditRule] = createSignal<NotificationRule | null>(null);
   const [openMenuId, setOpenMenuId] = createSignal<string | null>(null);
   const [menuPos, setMenuPos] = createSignal<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -43,7 +62,37 @@ const Limits: Component = () => {
   const [deleting, setDeleting] = createSignal(false);
 
   const routingEnabled = () => routingStatus()?.enabled ?? false;
-  const hasProvider = () => true;
+  // Cloud always has a sender. Self-hosted has one when the operator saved a
+  // provider in the dashboard or set the EMAIL_* environment variables.
+  const hasProvider = () =>
+    isSelfHosted() !== true || !!savedProvider() || emailConfigured() === true;
+
+  const hasEmailRules = () => {
+    const r = rules();
+    if (!r) return false;
+    return r.some((rule) => rule.action === 'notify' || rule.action === 'both');
+  };
+
+  const handleRemoveProvider = async () => {
+    setRemovingProvider(true);
+    try {
+      await removeEmailProvider();
+    } catch {
+      // error toast from fetchMutate
+      setRemovingProvider(false);
+      return;
+    }
+    // The DELETE succeeded: acknowledge it before the refetch, whose own
+    // failure must not leave the modal open claiming nothing happened.
+    setRemovingProvider(false);
+    setShowRemoveProvider(false);
+    toast.success('Email provider removed');
+    try {
+      await refetchProvider();
+    } catch {
+      // next visit refetches
+    }
+  };
 
   const closeMenu = () => setOpenMenuId(null);
   const handleDocClick = () => closeMenu();
@@ -209,9 +258,26 @@ const Limits: Component = () => {
         </div>
       </Show>
 
-      <div style="margin-bottom: var(--gap-lg);">
-        <CloudEmailInfo email={session().data?.user?.email ?? ''} />
-      </div>
+      {/* Render nothing until the deployment mode is known: the cloud card makes
+          a factual claim about who sends emails that is false on self-hosted. */}
+      <Show when={isSelfHosted() !== undefined}>
+        <Show
+          when={isSelfHosted() === true}
+          fallback={
+            <div style="margin-bottom: var(--gap-lg);">
+              <CloudEmailInfo email={session().data?.user?.email ?? ''} />
+            </div>
+          }
+        >
+          <EmailProviderSection
+            emailProvider={savedProvider()}
+            loading={emailProvider.loading || emailProvider.state === 'unresolved'}
+            onConfigured={refetchProvider}
+            onEdit={() => setShowEditProvider(true)}
+            onRemove={() => setShowRemoveProvider(true)}
+          />
+        </Show>
+      </Show>
 
       <LimitRuleTable
         rules={rules()}
@@ -264,6 +330,25 @@ const Limits: Component = () => {
               }
             : null
         }
+      />
+
+      <RemoveProviderModal
+        open={showRemoveProvider()}
+        hasEmailRules={hasEmailRules()}
+        removing={removingProvider()}
+        onCancel={() => setShowRemoveProvider(false)}
+        onRemove={handleRemoveProvider}
+      />
+
+      <EmailProviderModal
+        open={showEditProvider()}
+        initialProvider={savedProvider()?.provider ?? 'resend'}
+        editMode={true}
+        existingKeyPrefix={savedProvider()?.keyPrefix ?? null}
+        existingDomain={savedProvider()?.domain ?? null}
+        existingNotificationEmail={savedProvider()?.notificationEmail ?? null}
+        onClose={() => setShowEditProvider(false)}
+        onSaved={() => refetchProvider()}
       />
     </div>
   );

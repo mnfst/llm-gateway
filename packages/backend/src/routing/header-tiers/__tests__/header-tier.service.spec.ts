@@ -381,7 +381,7 @@ describe('HeaderTierService', () => {
   });
 
   describe('setOverride', () => {
-    it('uses the explicit triple when supplied (skipping discovery)', async () => {
+    it('keeps an explicit triple that discovery does not know', async () => {
       const row = { id: 'h1', agent_id: 'agent-1', override_route: null } as HeaderTier;
       repo.findOne.mockResolvedValue(row);
 
@@ -393,7 +393,6 @@ describe('HeaderTierService', () => {
         'openai',
         'api_key',
       );
-      expect(discoveryService.getModelsForAgent).not.toHaveBeenCalled();
       expect(result.override_route).toEqual(route('openai', 'api_key', 'gpt-4o'));
       expect(repo.save).toHaveBeenCalledWith(row);
       expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
@@ -413,13 +412,33 @@ describe('HeaderTierService', () => {
         'Personal',
       );
 
-      expect(discoveryService.getModelsForAgent).not.toHaveBeenCalled();
       expect(result.override_route).toEqual({
         provider: 'openai',
         authType: 'subscription',
         model: 'gpt-4o',
         keyLabel: 'Personal',
       });
+    });
+
+    it('stores the canonical route for a public model id', async () => {
+      const row = { id: 'h1', agent_id: 'agent-1', override_route: null } as HeaderTier;
+      repo.findOne.mockResolvedValue(row);
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('deepseek/deepseek-chat-v3.1:free', 'openrouter', 'api_key'),
+      ]);
+
+      const result = await svc.setOverride(
+        'agent-1',
+        'tenant-1',
+        'h1',
+        'openrouter/deepseek/deepseek-chat-v3.1:free',
+        'openrouter',
+        'api_key',
+      );
+
+      expect(result.override_route).toEqual(
+        route('openrouter', 'api_key', 'deepseek/deepseek-chat-v3.1:free'),
+      );
     });
 
     it('resolves via discovery when only the model is given', async () => {
@@ -554,6 +573,68 @@ describe('HeaderTierService', () => {
         NotFoundException,
       );
     });
+
+    // Regression: see tier.service.spec — surviving entries are matched to the
+    // persisted row by identity so a stale entry never blocks a removal.
+    it('removes an entry when a surviving route no longer resolves (routes sent)', async () => {
+      const existing = [
+        route('openai', 'api_key', 'gpt-4o'),
+        route('qwen', 'subscription', 'qwen3.8-max-preview'),
+      ];
+      repo.findOne.mockResolvedValue({
+        id: 'h1',
+        agent_id: 'agent-1',
+        fallback_routes: existing,
+      } as HeaderTier);
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('gpt-4o', 'openai', 'api_key'),
+      ]);
+
+      const result = await svc.setFallbacks(
+        'agent-1',
+        'tenant-1',
+        'h1',
+        ['qwen3.8-max-preview'],
+        [existing[1]],
+      );
+      expect(result).toEqual([existing[1]]);
+      expect(repo.save).toHaveBeenCalled();
+    });
+
+    it('reuses the stored route for a surviving bare-name entry that no longer resolves', async () => {
+      const existing = [
+        route('openai', 'api_key', 'gpt-4o'),
+        route('qwen', 'subscription', 'qwen3.8-max-preview'),
+      ];
+      repo.findOne.mockResolvedValue({
+        id: 'h1',
+        agent_id: 'agent-1',
+        fallback_routes: existing,
+      } as HeaderTier);
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('gpt-4o', 'openai', 'api_key'),
+      ]);
+
+      const result = await svc.setFallbacks('agent-1', 'tenant-1', 'h1', ['qwen3.8-max-preview']);
+      expect(result).toEqual([existing[1]]);
+      expect(repo.save).toHaveBeenCalled();
+    });
+
+    it('still throws when adding a new model that cannot be resolved', async () => {
+      repo.findOne.mockResolvedValue({
+        id: 'h1',
+        agent_id: 'agent-1',
+        fallback_routes: [route('openai', 'api_key', 'gpt-4o')],
+      } as HeaderTier);
+      discoveryService.getModelsForAgent.mockResolvedValue([
+        discovered('gpt-4o', 'openai', 'api_key'),
+      ]);
+
+      await expect(
+        svc.setFallbacks('agent-1', 'tenant-1', 'h1', ['gpt-4o', 'minmax-27']),
+      ).rejects.toThrow(/Cannot resolve fallback model "minmax-27"/);
+      expect(repo.save).not.toHaveBeenCalled();
+    });
   });
 
   describe('clearFallbacks', () => {
@@ -575,7 +656,7 @@ describe('HeaderTierService', () => {
         id: 'h1',
         name: 'Premium',
         agent_id: 'agent-1',
-        override_route: route('custom:local', 'api_key', 'local-model'),
+        override_route: route('openai', 'api_key', 'gpt-image-1'),
         fallback_routes: [route('openai', 'api_key', 'gpt-4o')],
         response_mode: 'stream',
       } as HeaderTier);
@@ -614,7 +695,7 @@ describe('HeaderTierService', () => {
         name: 'Premium',
         agent_id: 'agent-1',
         override_route: route('openai', 'api_key', 'gpt-4o'),
-        fallback_routes: [route('custom:local', 'api_key', 'local-model')],
+        fallback_routes: [route('openai', 'api_key', 'gpt-image-1')],
       } as HeaderTier;
       repo.findOne.mockResolvedValue(existing);
 
@@ -635,7 +716,7 @@ describe('HeaderTierService', () => {
       } as HeaderTier);
 
       await expect(
-        svc.setOverride('agent-1', 'tenant-1', 'h1', 'local-model', 'custom:local', 'api_key'),
+        svc.setOverride('agent-1', 'tenant-1', 'h1', 'gpt-image-1', 'openai', 'api_key'),
       ).rejects.toThrow(/add at least one stream-capable model/);
       expect(repo.save).not.toHaveBeenCalled();
     });

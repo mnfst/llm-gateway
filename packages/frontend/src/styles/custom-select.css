@@ -71,7 +71,9 @@
 }
 
 .custom-select__option {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   width: 100%;
   padding: 6px 14px;
   border: none;
@@ -87,6 +89,81 @@
 
 .custom-select__option:hover {
   background: hsl(var(--accent));
+}
+
+.custom-select__option:disabled {
+  cursor: not-allowed;
+}
+
+.custom-select__option--disabled {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.72;
+}
+
+.custom-select__option-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.custom-select__option-desc {
+  font-size: var(--font-size-xs);
+  color: hsl(var(--muted-foreground));
+}
+
+/* Multiselect (connection filter): options read on one line, so the panel
+   widens to its content instead of clipping. If a long label still wraps,
+   the checkbox and icon stay centered on the FIRST line, not the block. */
+.custom-select__dropdown--wide {
+  width: max-content;
+  min-width: max(100%, 140px);
+  max-width: 480px;
+}
+
+.custom-select__option--top {
+  align-items: flex-start !important;
+  /* Explicit so the checkbox/icon centering below is exact: form controls
+     don't share the text's `normal` line box, so the math needs a number. */
+  line-height: 18px;
+}
+
+.custom-select__option--top > input[type='checkbox'],
+.custom-select__option--top > svg,
+.custom-select__option--top > img {
+  /* Center on the FIRST text line (half the gap between the 18px line box
+     and the element's height): exact on the common one-line option, still
+     first-line-anchored if a long label wraps. */
+  margin-top: calc((18px - 13px) / 2);
+}
+
+.custom-select__option--top > svg,
+.custom-select__option--top > img {
+  margin-top: calc((18px - 14px) / 2);
+}
+
+.custom-select__option-text--inline {
+  flex-direction: row;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pro-range-badge {
+  margin-left: auto;
+  padding: 1px 5px;
+  border-radius: 2px;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+  opacity: 1;
+}
+
+.pro-range-badge:hover {
+  opacity: 0.85;
 }
 
 .custom-select__option--selected {

@@ -1,0 +1,714 @@
+openapi: 3.1.0
+info:
+  title: Phoenix MVP — request-healing API
+  version: 0.0.1
+  description: >
+    Advisory request-healing for LLM providers. Submit a failed request plus the
+    provider error to get a corrected request body, then report whether the retry
+    worked. See README.md for the full loop and data model.
+servers:
+  - url: http://127.0.0.1:3000
+    description: Local development
+  - url: https://your-app.up.railway.app
+    description: Production — set to your Railway deployment URL
+
+security:
+  - ApiKeyAuth: []
+
+paths:
+  /api/heal:
+    post:
+      summary: Resolve a patch for a failed request
+      security:
+        - ApiKeyAuth: []
+        - ManifestInstanceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ManifestVersion'
+        - $ref: '#/components/parameters/ManifestHarness'
+      description: >
+        Fingerprints the error and returns a healed request body if a
+        deterministic patch exists. Only request-side errors are healable.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HealRequest'
+      responses:
+        '200':
+          description: A heal decision (patched, pending confirmation, still resolving, or no patch).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealResult'
+        '400':
+          description: Malformed body (failed schema validation).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZodError'
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+        '422':
+          description: Error is not request-side (5xx / auth / rate-limit); nothing to heal.
+
+  /api/heal/observe:
+    post:
+      summary: Record failed requests as diagnostic evidence
+      security:
+        - ApiKeyAuth: []
+        - ManifestInstanceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ManifestVersion'
+        - $ref: '#/components/parameters/ManifestHarness'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationBatch'
+      responses:
+        '200':
+          description: Observation batch accepted.
+        '401':
+          description: Missing or invalid static key or instance credential.
+
+  /api/heal-attempts/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      summary: Read a heal attempt and its parent issue
+      responses:
+        '200':
+          description: The heal attempt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealAttemptView'
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+        '404':
+          description: Unknown or non-UUID id.
+    patch:
+      summary: Report the outcome of a retried request
+      security:
+        - ApiKeyAuth: []
+        - ManifestInstanceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ManifestVersion'
+        - $ref: '#/components/parameters/ManifestHarness'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HealOutcome'
+      responses:
+        '200':
+          description: Recorded outcome (idempotent).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OutcomeResult'
+        '400':
+          description: Malformed body, or error omitted when retryStatusCode >= 400.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ZodError'
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+        '404':
+          description: No such heal attempt.
+
+  /api/issues/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      summary: Read an issue and its resolved patch
+      responses:
+        '200':
+          description: The issue.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IssueView'
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+        '404':
+          description: Unknown or non-UUID id.
+
+  /api/issues:
+    get:
+      summary: List issues (most-recently-updated first)
+      parameters:
+        - name: patchId
+          in: query
+          schema: { type: string, format: uuid }
+          description: Only issues fixed by this patch.
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Issues.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/IssueListItem' }
+        '400':
+          description: Malformed query.
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+
+  /api/heal-attempts:
+    get:
+      summary: List heal attempts (most-recent first)
+      parameters:
+        - name: issueId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: patchId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: traceId
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Heal attempts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AttemptListItem' }
+        '400':
+          description: Malformed query.
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+
+  /api/patches:
+    get:
+      summary: List patches with usage counts (most-recent first)
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Patches.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PatchListItem' }
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+
+  /api/patches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Id'
+    get:
+      summary: Read a patch and the issues it fixes
+      responses:
+        '200':
+          description: The patch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PatchDetail' }
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+        '404':
+          description: Unknown or non-UUID id.
+
+  /api/traces:
+    get:
+      summary: List traces with per-trace outcome counts (most-recent first)
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Offset'
+      responses:
+        '200':
+          description: Traces.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/TraceListItem' }
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+
+  /api/traces/{traceId}:
+    parameters:
+      - name: traceId
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      summary: A trace's heal attempts, oldest-first
+      responses:
+        '200':
+          description: The trace timeline.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TraceDetail' }
+        '401':
+          description: Missing or invalid API key (when API_KEY is enforced).
+        '404':
+          description: No such trace.
+
+  /api/health:
+    get:
+      summary: Liveness probe (public — no API key)
+      security: []
+      responses:
+        '200':
+          description: Process is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ok }
+                  uptimeSeconds: { type: integer }
+
+  /api/ready:
+    get:
+      summary: Readiness probe — process up and database reachable (public)
+      security: []
+      responses:
+        '200':
+          description: Ready.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, example: ready }
+        '503':
+          description: Database not ready.
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: >
+        Static API key. Send as `x-api-key: <key>` (an `Authorization: Bearer
+        <key>` header is also accepted). Enforced in deployed environments where
+        the API_KEY env var is set; disabled locally when it is unset.
+    ManifestInstanceAuth:
+      type: apiKey
+      in: header
+      name: X-Manifest-Instance
+      description: >
+        Anonymous install identifier announced by a self-hosted Manifest. This
+        is an identifier, not a credential: it is not secret and no registration
+        handshake issues it. Phoenix creates the instance row the first time it
+        sees an id. Accepted in place of ApiKeyAuth on the gateway write
+        operations.
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Limit:
+      name: limit
+      in: query
+      description: Page size (default 50, max 200).
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Offset:
+      name: offset
+      in: query
+      description: Rows to skip for pagination.
+      schema: { type: integer, minimum: 0, default: 0 }
+    ManifestVersion:
+      name: X-Manifest-Version
+      in: header
+      required: false
+      description: Running Manifest release version. Invalid values become `unknown` in analytics.
+      schema:
+        type: string
+        maxLength: 32
+        pattern: '^[0-9]+\.[0-9]+\.[0-9]+'
+    ManifestHarness:
+      name: X-Manifest-Harness
+      in: header
+      required: false
+      description: Agent platform slug. Missing or unknown values become `other` in analytics.
+      schema:
+        type: string
+        enum:
+          [
+            openclaw,
+            hermes,
+            nanobot,
+            craft,
+            n8n,
+            claude-code,
+            opencode,
+            codex,
+            openai-sdk,
+            anthropic-sdk,
+            vercel-ai-sdk,
+            langchain,
+            curl,
+            other,
+          ]
+  schemas:
+    InstanceRegistration:
+      type: object
+      required: [version, schema_version]
+      properties:
+        version:
+          type: string
+          maxLength: 32
+          pattern: '^[0-9]+\.[0-9]+\.[0-9]+'
+        schema_version:
+          type: integer
+          const: 1
+      additionalProperties: true
+
+    InstanceCredential:
+      type: object
+      required: [instance_id, secret]
+      properties:
+        instance_id: { type: string, format: uuid }
+        secret:
+          type: string
+          description: Opaque 256-bit base64url bearer token. Returned only once.
+      additionalProperties: false
+
+    ObservationBatch:
+      type: object
+      required: [observations]
+      properties:
+        observations:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/HealRequest' }
+
+    ProviderError:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+        type: { type: [string, 'null'] }
+        param: { type: [string, 'null'] }
+        code: { type: [string, 'null'] }
+
+    Operation:
+      type: object
+      description: A deterministic transform applied to the request body.
+      required: [type]
+      properties:
+        type: { type: string }
+      additionalProperties: true
+      example: { type: rename_param, from: max_tokens, to: max_output_tokens }
+
+    HealRequest:
+      type: object
+      required: [traceId, provider, api, request, response]
+      properties:
+        traceId:
+          type: string
+          minLength: 1
+          description: >
+            Caller-supplied id of the logical request being healed. Send the
+            same value on every heal of that request's retry chain (not the
+            provider's per-call request id) — it groups the attempts into one
+            trace.
+        tenantId:
+          type: string
+          minLength: 1
+          description: >
+            Opaque id of the gateway tenant this request belongs to (Manifest's
+            Tenant.id). Optional on the wire; recorded so a failure can be
+            attributed to a tenant. Manifest always sends it on the proxy path.
+        provider: { type: string, minLength: 1, example: openai }
+        model:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: >
+            Logical provider model identity. Native transports may encode it in
+            the URL rather than in the JSON request body.
+        authType:
+          type: string
+          enum: [api_key, subscription, local]
+          description: Provider credential route. Optional during the Manifest rollout.
+        api:
+          type: string
+          enum: [responses, chat_completions, messages]
+        url: { type: string, format: uri }
+        request:
+          type: object
+          description: The original outgoing request body, verbatim.
+          additionalProperties: true
+        response:
+          type: object
+          required: [statusCode, error]
+          properties:
+            statusCode: { type: integer, example: 400 }
+            error: { $ref: '#/components/schemas/ProviderError' }
+        providerExchange:
+          type: object
+          description: Final provider-native transport exchange, separate from the patch input.
+          required: [format, request, response]
+          properties:
+            format:
+              type: string
+              enum:
+                - openai_chat_completions
+                - openai_responses
+                - anthropic_messages
+                - google_generate_content
+                - google_code_assist
+            url: { type: string, format: uri }
+            request:
+              type: object
+              required: [body]
+              properties:
+                body: { type: object, additionalProperties: true }
+                redactedFields: { type: array, items: { type: string } }
+            response:
+              type: object
+              required: [statusCode, body]
+              properties:
+                statusCode: { type: integer }
+                body: {}
+        responseTimeMs: { type: integer, minimum: 0 }
+        responseSizeBytes: { type: integer, minimum: 0 }
+
+    HealResult:
+      type: object
+      required: [status, issueId]
+      properties:
+        status:
+          type: string
+          enum: [patched, unverified, resolving, no_patch]
+        issueId: { type: string, format: uuid }
+        patchId: { type: string, format: uuid }
+        healAttemptId: { type: string, format: uuid }
+        operations:
+          type: array
+          items: { $ref: '#/components/schemas/Operation' }
+        healedBody:
+          type: object
+          additionalProperties: true
+        explanation:
+          type: object
+          description: >
+            Human-readable "why" for a served heal (present on "patched" /
+            "unverified"). operations[].detail is always deterministic (built from
+            the operations); summary prefers an authored rationale (source "agent" /
+            "operator") and falls back to the deterministic composition (source
+            "deterministic").
+          required: [summary, operations, source]
+          properties:
+            summary: { type: string }
+            operations:
+              type: array
+              items:
+                type: object
+                required: [type, detail]
+                properties:
+                  type: { type: string }
+                  detail: { type: string }
+            source:
+              type: string
+              enum: [deterministic, agent, operator]
+        retryAfterMs:
+          type: integer
+          description: Present only when status is "resolving".
+
+    HealOutcome:
+      type: object
+      required: [retryStatusCode]
+      description: error is required when retryStatusCode >= 400.
+      properties:
+        retryStatusCode: { type: integer, example: 200 }
+        error: { $ref: '#/components/schemas/ProviderError' }
+
+    OutcomeResult:
+      type: object
+      required: [healAttemptId, status, issueStatus]
+      properties:
+        healAttemptId: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [succeeded, failed, expired]
+        issueStatus: { type: string }
+
+    IssueView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        fingerprint: { type: string }
+        provider: { type: string }
+        api: { type: string }
+        model: { type: [string, 'null'] }
+        error:
+          type: object
+          properties:
+            code: { type: [string, 'null'] }
+            type: { type: [string, 'null'] }
+            param: { type: [string, 'null'] }
+        status:
+          type: string
+          enum: [resolving, unverified, verified, ineffective, no_fix_found]
+        occurrenceCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        patch:
+          type: [object, 'null']
+          properties:
+            id: { type: string, format: uuid }
+            operations:
+              type: array
+              items: { $ref: '#/components/schemas/Operation' }
+
+    HealAttemptView:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        issueId: { type: string, format: uuid }
+        patchId: { type: string, format: uuid }
+        traceId: { type: string }
+        status:
+          type: string
+          enum: [pending, succeeded, failed, expired]
+        retryStatusCode: { type: [integer, 'null'] }
+        retryErrorFingerprint: { type: [string, 'null'] }
+        confirmedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        issue:
+          type: [object, 'null']
+          properties:
+            id: { type: string, format: uuid }
+            status: { type: string }
+            provider: { type: string }
+            api: { type: string }
+            model: { type: [string, 'null'] }
+            fingerprint: { type: string }
+
+    IssueListItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        fingerprint: { type: string }
+        provider: { type: string }
+        api: { type: string }
+        model: { type: [string, 'null'] }
+        errorCode: { type: [string, 'null'] }
+        errorType: { type: [string, 'null'] }
+        errorParam: { type: [string, 'null'] }
+        status:
+          type: string
+          enum: [resolving, unverified, verified, ineffective, no_fix_found]
+        patchId: { type: [string, 'null'], format: uuid }
+        occurrenceCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    AttemptListItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        issueId: { type: string, format: uuid }
+        patchId: { type: string, format: uuid }
+        traceId: { type: string }
+        status:
+          type: string
+          enum: [pending, succeeded, failed, expired]
+        retryStatusCode: { type: [integer, 'null'] }
+        retryErrorFingerprint: { type: [string, 'null'] }
+        confirmedAt: { type: [string, 'null'], format: date-time }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    PatchListItem:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        operations:
+          type: array
+          items: { $ref: '#/components/schemas/Operation' }
+        operationsHash: { type: string }
+        issueCount: { type: integer }
+        attemptCount: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+
+    PatchDetail:
+      allOf:
+        - $ref: '#/components/schemas/PatchListItem'
+        - type: object
+          properties:
+            issues:
+              type: array
+              items: { $ref: '#/components/schemas/IssueListItem' }
+
+    TraceListItem:
+      type: object
+      properties:
+        traceId: { type: string }
+        attemptCount: { type: integer }
+        pendingCount: { type: integer }
+        succeededCount: { type: integer }
+        failedCount: { type: integer }
+        firstAt: { type: string, format: date-time }
+        lastAt: { type: string, format: date-time }
+
+    TraceAttempt:
+      allOf:
+        - $ref: '#/components/schemas/AttemptListItem'
+        - type: object
+          properties:
+            issue:
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                status: { type: string }
+                provider: { type: string }
+                api: { type: string }
+                model: { type: [string, 'null'] }
+                errorCode: { type: [string, 'null'] }
+                errorType: { type: [string, 'null'] }
+                errorParam: { type: [string, 'null'] }
+            patch:
+              type: object
+              properties:
+                id: { type: string, format: uuid }
+                operations:
+                  type: array
+                  items: { $ref: '#/components/schemas/Operation' }
+
+    TraceDetail:
+      type: object
+      properties:
+        traceId: { type: string }
+        attempts:
+          type: array
+          items: { $ref: '#/components/schemas/TraceAttempt' }
+
+    ZodError:
+      type: object
+      description: Flattened zod validation error.
+      properties:
+        formErrors:
+          type: array
+          items: { type: string }
+        fieldErrors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }

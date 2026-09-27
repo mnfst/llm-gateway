@@ -4,7 +4,6 @@ import { NotificationRulesService } from './services/notification-rules.service'
 import { NotificationLogService } from './services/notification-log.service';
 import { EmailProviderConfigService } from './services/email-provider-config.service';
 import { NotificationCronService } from './services/notification-cron.service';
-import { LimitCheckService } from './services/limit-check.service';
 import { CreateNotificationRuleDto, UpdateNotificationRuleDto } from './dto/notification-rule.dto';
 import {
   SetEmailProviderDto,
@@ -22,7 +21,6 @@ export class NotificationsController {
     private readonly notificationLog: NotificationLogService,
     private readonly emailProviderConfigService: EmailProviderConfigService,
     private readonly cronService: NotificationCronService,
-    private readonly limitCheck: LimitCheckService,
   ) {}
 
   @Get('email-provider')
@@ -92,11 +90,7 @@ export class NotificationsController {
 
   @Post()
   async createRule(@Body() dto: CreateNotificationRuleDto, @TenantCtx() ctx: TenantContext) {
-    const rule = await this.rulesService.createRule(ctx.tenantId, dto);
-    if (rule.action === 'block' || rule.action === 'both') {
-      this.limitCheck.invalidateCache(rule.tenant_id, rule.agent_name);
-    }
-    return rule;
+    return this.rulesService.createRule(ctx.tenantId, dto);
   }
 
   @Patch(':id')
@@ -105,20 +99,12 @@ export class NotificationsController {
     @Body() dto: UpdateNotificationRuleDto,
     @TenantCtx() ctx: TenantContext,
   ) {
-    const rule = await this.rulesService.updateRule(ctx.tenantId, id, dto);
-    if (rule) {
-      this.limitCheck.invalidateCache(rule.tenant_id, rule.agent_name);
-    }
-    return rule;
+    return this.rulesService.updateRule(ctx.tenantId, id, dto);
   }
 
   @Delete(':id')
   async deleteRule(@Param('id') id: string, @TenantCtx() ctx: TenantContext) {
-    const rule = await this.rulesService.getOwnedRule(ctx.tenantId, id);
     await this.rulesService.deleteRule(ctx.tenantId, id);
-    if (rule) {
-      this.limitCheck.invalidateCache(rule.tenant_id, rule.agent_name);
-    }
     return { deleted: true };
   }
 }

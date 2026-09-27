@@ -118,6 +118,73 @@ describe('snapshotRequestParams', () => {
     ).toEqual({ thinking: { type: 'adaptive' } });
   });
 
+  it('records a caller-sent knob the route has no spec for', () => {
+    // claude-opus-4-8-style case: the catalog (correctly) dropped temperature
+    // for the model, the caller sent it anyway, the provider rejected it — the
+    // snapshot must show the knob that was actually on the wire.
+    const speclessTemperature = specs.filter((s) => s.path.split('.')[0] !== 'temperature');
+    expect(
+      snapshotRequestParams({
+        body: { temperature: 0.2, messages: [] },
+        modelParams: { thinking: { type: 'enabled' } },
+        specs: speclessTemperature,
+      }),
+    ).toEqual({ temperature: 0.2, thinking: { type: 'enabled', budget_tokens: 4096 } });
+  });
+
+  it('records spec-less scalar knobs even when the route has no specs at all', () => {
+    expect(
+      snapshotRequestParams({
+        body: { temperature: 0.7, parallel_tool_calls: false, service_tier: 'flex', messages: [] },
+        modelParams: null,
+        specs: [],
+      }),
+    ).toEqual({ temperature: 0.7, parallel_tool_calls: false, service_tier: 'flex' });
+  });
+
+  it('records spec-less structured knobs from the raw body', () => {
+    expect(
+      snapshotRequestParams({
+        body: {
+          messages: [{ role: 'user', content: 'hi' }],
+          response_format: { type: 'json_object' },
+          thinking: { type: 'enabled' },
+          stop: ['\\n\\n'],
+          logit_bias: null,
+        },
+        modelParams: null,
+        specs: [],
+      }),
+    ).toEqual({
+      response_format: { type: 'json_object' },
+      thinking: { type: 'enabled' },
+      stop: ['\\n\\n'],
+      // An explicit null is part of the raw request and is kept as sent.
+      logit_bias: null,
+    });
+  });
+
+  it('never records content-bearing spec-less keys', () => {
+    expect(
+      snapshotRequestParams({
+        body: {
+          messages: [{ role: 'user', content: 'hi' }],
+          system: 'you are a bot',
+          user: 'user-123',
+          seed_note: 'x'.repeat(65),
+          smuggled: { nested: { prompt: 'y'.repeat(65) } },
+          functions: [{ name: 'f', parameters: { type: 'object' } }],
+          'dotted.key': true,
+          oversized: { keys: Array.from({ length: 600 }, (_, i) => `key_${i}`) },
+          not_json: { cb: () => 'x' },
+          verbosity: 'high',
+        },
+        modelParams: null,
+        specs: [],
+      }),
+    ).toEqual({ verbosity: 'high' });
+  });
+
   it('omits conflicted defaults from the snapshot', () => {
     expect(
       snapshotRequestParams({

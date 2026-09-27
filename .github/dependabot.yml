@@ -26,11 +26,35 @@ updates:
       day: monday
     open-pull-requests-limit: 5
     groups:
+      # vitest and @vitest/* pin each other via exact peer deps, so solo bumps
+      # produce unresolvable PRs (#1856, #2084 — Dependabot gave up on both).
+      # Grouping them makes every vitest update move the whole family at once.
+      vitest:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      # Better Auth minor releases can require database migrations. Keep the
+      # package family together and out of broad dependency bundles.
+      better-auth:
+        applies-to: version-updates
+        patterns:
+          - "better-auth"
+          - "@better-auth/*"
+      better-auth-security:
+        applies-to: security-updates
+        patterns:
+          - "better-auth"
+          - "@better-auth/*"
       patch-and-minor:
         applies-to: version-updates
         update-types:
           - patch
           - minor
+        exclude-patterns:
+          - "vitest"
+          - "@vitest/*"
+          - "better-auth"
+          - "@better-auth/*"
       security:
         applies-to: security-updates
         patterns:
@@ -39,4 +63,8 @@ updates:
       # Pinned to match the runtime Node version (CLAUDE.md: Node 24.x).
       # Bump @types/node manually when we move to a new Node LTS.
       - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # uuid majors are ESM-only; the CommonJS backend can't require() them
+      # (#1706 broke CI this way). Revisit if the backend migrates to ESM.
+      - dependency-name: "uuid"
         update-types: ["version-update:semver-major"]

@@ -9,9 +9,10 @@ export interface SsePayloadParser {
   flush(): string[];
 }
 
-interface SsePayloadParserOptions {
+export interface SsePayloadParserOptions {
   maxBufferSize?: number;
   onComment?: (comment: string) => void;
+  onEvent?: (event: EventSourceMessage) => void;
 }
 
 function toTransformerPayload(event: EventSourceMessage): string | null {
@@ -32,6 +33,7 @@ function createPayloadCollector(
   return createParser({
     maxBufferSize: options.maxBufferSize,
     onEvent(event) {
+      options.onEvent?.(event);
       const payload = toTransformerPayload(event);
       if (payload) events.push(payload);
     },

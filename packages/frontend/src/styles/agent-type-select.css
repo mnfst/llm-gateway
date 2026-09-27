@@ -60,6 +60,12 @@
   top: calc(100% + 4px);
   left: 0;
   right: 0;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  max-height: min(40dvh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: hsl(var(--popover));
   border: 1px solid hsl(var(--border));
   border-radius: var(--radius);
@@ -67,8 +73,6 @@
   padding: 8px;
   z-index: 50;
   animation: fadeInUp 100ms ease-out;
-  display: flex;
-  gap: 8px;
 }
 
 .agent-type-select__dropdown--inline {
@@ -78,6 +82,13 @@
   z-index: auto;
   border: none;
   padding: 0;
+  max-height: min(55dvh, 480px);
+}
+
+.agent-type-select__groups {
+  /* Keep each category intact while stacking shorter groups in the same column. */
+  column-count: 2;
+  column-gap: 16px;
 }
 
 .agent-type-select__dropdown--inline .agent-type-select__group-label {
@@ -86,8 +97,9 @@
 }
 
 .agent-type-select__column {
-  flex: 1;
+  break-inside: avoid;
   min-width: 0;
+  padding-bottom: 8px;
 }
 
 .agent-type-select__group-label {
@@ -97,6 +109,7 @@
   color: hsl(var(--muted-foreground));
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: normal;
 }
 
 .agent-type-select__group-label:not(:first-child) {
@@ -118,6 +131,7 @@
   margin: 2px 0;
   border-radius: calc(var(--radius) - 2px);
   transition: background var(--transition-fast);
+  white-space: normal;
 }
 
 .agent-type-select__option:hover {
@@ -145,11 +159,15 @@
 .dark .agent-type-select__trigger-icon[src*='anthropic'],
 .dark .agent-type-select__trigger-icon[src*='vercel'],
 .dark .agent-type-select__trigger-icon[src*='opencode'],
+.dark .agent-type-select__trigger-icon[src*='hermes'],
+.dark .agent-type-select__trigger-icon[src*='codex'],
 .dark .agent-type-select__trigger-icon[src*='other'],
 .dark .agent-type-select__option-icon[src*='openai'],
 .dark .agent-type-select__option-icon[src*='anthropic'],
 .dark .agent-type-select__option-icon[src*='vercel'],
 .dark .agent-type-select__option-icon[src*='opencode'],
+.dark .agent-type-select__option-icon[src*='hermes'],
+.dark .agent-type-select__option-icon[src*='codex'],
 .dark .agent-type-select__option-icon[src*='other'] {
   filter: invert(1);
 }
@@ -186,16 +204,25 @@
   }
 
   .agent-type-select__dropdown {
-    flex-direction: column;
-    max-height: min(58vh, 420px);
-    overflow-y: auto;
+    right: 0;
+    width: auto;
+    min-width: 0;
+    max-width: none;
   }
 
   .agent-type-select__group-label {
     padding: 8px 10px 4px;
+    white-space: normal;
   }
 
   .agent-type-select__option {
     min-height: 40px;
+    white-space: normal;
+  }
+}
+
+@media (max-width: 480px) {
+  .agent-type-select__groups {
+    column-count: 1;
   }
 }

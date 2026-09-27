@@ -2,6 +2,7 @@ import { createServer } from 'http';
 import { ConfigService } from '@nestjs/config';
 import { OpenaiOauthService, OAuthTokenBlob } from './openai-oauth.service';
 import { ProviderService } from '../../routing-core/provider.service';
+import { mockSubscriptionCredentialLock } from '../__tests__/mock-subscription-lock';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fetchMock = jest.fn() as jest.Mock<Promise<any>>;
@@ -31,11 +32,17 @@ describe('OpenaiOauthService', () => {
   let discoveryService: { discoverModels: jest.Mock };
 
   beforeEach(() => {
+    const upsertProvider = jest.fn().mockResolvedValue({ provider: {}, isNew: true });
+    const getFreshSubscriptionCredential = jest.fn().mockResolvedValue(null);
     providerService = {
-      upsertProvider: jest.fn().mockResolvedValue({ provider: {}, isNew: true }),
+      upsertProvider,
       recalculateTiers: jest.fn().mockResolvedValue(undefined),
       nextOAuthLabel: jest.fn().mockResolvedValue(undefined),
-      getFreshSubscriptionCredential: jest.fn().mockResolvedValue(null),
+      getFreshSubscriptionCredential,
+      withSubscriptionCredentialLock: mockSubscriptionCredentialLock({
+        getFreshSubscriptionCredential,
+        upsertProvider,
+      }),
     } as unknown as jest.Mocked<ProviderService>;
 
     configService = {
@@ -286,7 +293,7 @@ describe('OpenaiOauthService', () => {
 
       expect(result).toBe('new-access');
       expect(providerService.upsertProvider).toHaveBeenCalledWith(
-        'agent-1',
+        null,
         'tenant-1',
         'openai',
         expect.any(String),

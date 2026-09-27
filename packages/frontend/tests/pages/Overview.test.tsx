@@ -1,11 +1,29 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
+
+// Controllable SSE ping: lets a test bump `messagePing()` to drive a background
+// refetch and assert it does NOT flash the skeleton (unlike a range change).
+const pingBox = vi.hoisted(() => ({ read: (): number => 0, set: (_: number) => {} }));
 
 let mockAgentName = 'test-agent';
 let mockLocationState: any = null;
 const mockNavigate = vi.fn();
+// Reactive agent-name source for `useParams().agentName`. Solid's router
+// returns a reactive params store, so switching agents (e.g. via the sidebar)
+// updates `agentName` in place without remounting the route component — a
+// plain object here would miss that. The getter re-reads the signal on every
+// access, which is enough for Solid's tracking to pick it up as a dependency.
+const agentNameBox = vi.hoisted(() => ({
+  read: (): string => 'test-agent',
+  set: (_: string) => {},
+}));
 vi.mock('@solidjs/router', () => ({
-  useParams: () => ({ agentName: mockAgentName }),
+  useParams: () => ({
+    get agentName() {
+      return agentNameBox.read();
+    },
+  }),
   useLocation: () => ({ pathname: `/harnesses/${mockAgentName}`, state: mockLocationState }),
   useNavigate: () => mockNavigate,
   A: (props: any) => (
@@ -26,6 +44,7 @@ const mockSetMessageFeedback = vi.fn();
 const mockClearMessageFeedback = vi.fn();
 vi.mock('../../src/services/api.js', () => ({
   getOverview: (...args: unknown[]) => mockGetOverview(...args),
+  getOverviewDetails: () => Promise.resolve({}),
   getCustomProviders: (...args: unknown[]) => mockGetCustomProviders(...args),
   setMessageFeedback: (...args: unknown[]) => mockSetMessageFeedback(...args),
   clearMessageFeedback: (...args: unknown[]) => mockClearMessageFeedback(...args),
@@ -34,6 +53,7 @@ vi.mock('../../src/services/api.js', () => ({
 vi.mock('../../src/services/sse.js', () => ({
   pingCount: () => 0,
   messagePing: () => 0,
+  analyticsPing: () => pingBox.read(),
   agentPing: () => 0,
   routingPing: () => 0,
 }));
@@ -51,6 +71,7 @@ vi.mock('../../src/services/formatters.js', () => ({
   formatCost: (v: number) => `$${v.toFixed(2)}`,
   formatNumber: (v: number) => String(v),
   formatStatus: (s: string) => s,
+  formatErrorOrigin: (o: string | null | undefined) => o ?? null,
   formatTime: (t: string) => t,
   formatErrorMessage: (s: string) => s,
   customProviderColor: vi.fn(() => '#6366f1'),
@@ -61,15 +82,59 @@ vi.mock('../../src/services/setup-status.js', () => ({
   checkIsSelfHosted: () => mockCheckIsSelfHosted(),
 }));
 
-// The per-agent Overview renders ProviderChartCard → MultiAgentTokenChart and
-// fetches three per-provider timeseries. Stub the chart to a marker exposing
-// its series, and the API to a controllable resolver.
+// The per-agent Overview renders ProviderChartCard → MultiAgentTokenChart.
+// Stub the chart to a marker exposing its series, and the per-view provider
+// timeseries endpoints to a controllable resolver.
 const mockPerProvider = vi.fn(() => Promise.resolve({ agents: [], timeseries: [] }));
+const mockPerProviderTokens = vi.fn((...a: unknown[]) => mockPerProvider(...a));
+const mockPerProviderMessages = vi.fn((...a: unknown[]) => mockPerProvider(...a));
+const mockPerProviderCosts = vi.fn((...a: unknown[]) => mockPerProvider(...a));
+const mockGetAutofixStats = vi.fn();
 vi.mock('../../src/services/api/analytics.js', () => ({
-  getPerProviderTimeseries: (...a: unknown[]) => mockPerProvider(...a),
-  getPerProviderMessageTimeseries: (...a: unknown[]) => mockPerProvider(...a),
-  getPerProviderCostTimeseries: (...a: unknown[]) => mockPerProvider(...a),
+  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Autofix or fallback.',
+  REQUEST_SUCCESS_RATE_TOOLTIP:
+    'Successful requests over all requests. Recovered requests count as successful.',
+  totalAttemptsTooltip: (doctor: boolean) =>
+    doctor
+      ? 'Every provider call counts here, including fallback retries and autofixed attempts. One request can produce several attempts.'
+      : 'Every provider call counts here, including fallback retries. One request can produce several attempts.',
+  MODEL_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this model.',
+  PROVIDER_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this provider.',
+  CONNECTION_SUCCESS_RATE_TOOLTIP_30D:
+    'Successful attempts over all attempts for this connection, over the last 30 days.',
+  CONNECTION_SUCCESS_RATE_TOOLTIP:
+    'Successful attempts over all attempts for this connection, on the filtered period.',
+  CONNECTION_HARNESS_SUCCESS_RATE_TOOLTIP:
+    'Successful attempts over all attempts for this harness on this connection.',
+  HARNESS_SUCCESS_RATE_TOOLTIP: 'Successful requests over all requests for this harness.',
+  HARNESS_TOTAL_REQUESTS_TOOLTIP:
+    'Logical requests from this harness, one per call, whatever the number of attempts.',
+  attemptSuccessRate: (row: { attempts: number; succeeded?: number }) =>
+    !row.attempts || row.succeeded == null ? null : row.succeeded / row.attempts,
+  getPerProviderTimeseries: (...a: unknown[]) => mockPerProviderTokens(...a),
+  getPerProviderMessageTimeseries: (...a: unknown[]) => mockPerProviderMessages(...a),
+  getPerProviderCostTimeseries: (...a: unknown[]) => mockPerProviderCosts(...a),
+  getAttemptStats: () =>
+    Promise.resolve({
+      total_attempts: { value: 50, previous: 40 },
+      fallbacked_attempts: { value: 5, previous: 4 },
+    }),
+  getAttemptTimeseries: () => Promise.resolve({ range: '7d', by: 'metric', keys: [], buckets: [] }),
+  getWorkspaceAutofixStatus: () =>
+    Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
+  getAutofixStats: (...a: unknown[]) => mockGetAutofixStats(...a),
+  getAutofixTimeseries: () =>
+    Promise.resolve({ range: '7d', by: 'disposition', keys: [], buckets: [] }),
+  getPerProviderReliability: () => Promise.resolve([]),
+  getPerModelReliability: () => Promise.resolve([]),
+  getErrorBreakdown: () => Promise.resolve({ by_class: {}, by_origin: {}, auto_fixed: 0 }),
 }));
+
+vi.mock('../../src/services/api/routing.js', () => ({
+  getAutofix: () => Promise.resolve({ enabled: false }),
+}));
+
+import { resetPlanStore } from '../../src/services/plan-store';
 
 vi.mock('../../src/components/MultiAgentTokenChart.jsx', () => ({
   AGENT_COLORS: ['#111111', '#222222', '#333333'],
@@ -131,7 +196,10 @@ vi.mock('../../src/components/Select.jsx', () => ({
       onChange={(e: any) => props.onChange(e.target.value)}
     >
       {props.options?.map((o: any) => (
-        <option value={o.value}>{o.label}</option>
+        <option value={o.value} disabled={o.disabled}>
+          {o.label}
+          {o.badge ? ' - PRO' : ''}
+        </option>
       ))}
     </select>
   ),
@@ -204,13 +272,29 @@ describe('Overview', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    localStorage.setItem('manifest_global_group', 'provider');
     sessionStorage.clear();
+    const [ping, setPing] = createSignal(0);
+    pingBox.read = ping;
+    pingBox.set = setPing;
     mockIsRecentlyCreated.mockReturnValue(false);
     mockIsSetupPending.mockReturnValue(false);
     mockAgentName = 'test-agent';
     mockLocationState = null;
+    const [agentName, setAgentName] = createSignal(mockAgentName);
+    agentNameBox.read = agentName;
+    agentNameBox.set = setAgentName;
+    mockGetAutofixStats.mockResolvedValue({
+      success_rate: { value: 0.9, previous: 0.8 },
+      autofix_saves: { value: 7, previous: 5 },
+      fallback_saves: { value: 2, previous: 1 },
+      total_requests: { value: 100, previous: 90 },
+      errors_remaining: { value: 3, previous: 4 },
+      coverage: { rate: 0.7, previous_rate: 5 / 9 },
+    });
     mockGetCustomProviders.mockResolvedValue([]);
     mockPerProvider.mockResolvedValue({ agents: [], timeseries: [] });
+    resetPlanStore({ enabled: false, plan: 'free' });
   });
 
   it('renders Overview heading with agent name', () => {
@@ -236,19 +320,198 @@ describe('Overview', () => {
     expect(skeletons.length).toBeGreaterThan(0);
   });
 
-  it('keeps showing stale data during refetch instead of skeletons', async () => {
+  it('shows the loading skeleton when the range changes', async () => {
     mockGetOverview.mockResolvedValue(overviewData);
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
       expect(container.textContent).toContain('$3.50');
     });
 
-    // Trigger a refetch that never resolves
+    // Change the range; the new fetch never resolves.
     mockGetOverview.mockReturnValue(new Promise(() => {}));
     const select = container.querySelector('[data-testid="select"]') as HTMLSelectElement;
     await fireEvent.change(select, { target: { value: '24h' } });
 
-    // Should still show old data, not skeletons
+    // Stale data is replaced by the skeleton while the new range loads.
+    await vi.waitFor(() => {
+      expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    });
+    expect(container.textContent).not.toContain('$3.50');
+  });
+
+  it('shows the loading skeleton when switching to a different agent (issue #2267)', async () => {
+    mockGetOverview.mockResolvedValue(overviewData);
+    const { container } = render(() => <Overview />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('$3.50');
+    });
+
+    // Switch agents (e.g. clicking a different agent in the sidebar). The
+    // route component stays mounted — only the reactive `agentName` param
+    // changes — and the new agent's fetch never resolves.
+    mockGetOverview.mockReturnValue(new Promise(() => {}));
+    agentNameBox.set('other-agent');
+
+    // The previous agent's stale data must not linger; the skeleton takes over.
+    await vi.waitFor(() => {
+      expect(container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    });
+    expect(container.textContent).not.toContain('$3.50');
+  });
+
+  it('renders the new agent before secondary metrics finish loading', async () => {
+    const firstAgentStats = {
+      success_rate: { value: 0.9, previous: 0.8 },
+      autofix_saves: { value: 777, previous: 5 },
+      fallback_saves: { value: 2, previous: 1 },
+      total_requests: { value: 100, previous: 90 },
+      errors_remaining: { value: 3, previous: 4 },
+      coverage: { rate: 0.7, previous_rate: 5 / 9 },
+    };
+    const secondAgentStats = {
+      ...firstAgentStats,
+      autofix_saves: { value: 888, previous: 6 },
+    };
+    const secondAgentOverview = {
+      ...overviewData,
+      summary: {
+        ...overviewData.summary,
+        cost_today: { value: 9.99, trend_pct: 0 },
+      },
+    };
+    let overviewResolved = false;
+    let resolveSecondAgentStats!: (value: typeof secondAgentStats) => void;
+    const secondAgentStatsPromise = new Promise<typeof secondAgentStats>((resolve) => {
+      resolveSecondAgentStats = resolve;
+    });
+    mockGetOverview.mockImplementation((_range: string, agent: string) => {
+      if (agent !== 'other-agent') return Promise.resolve(overviewData);
+      return Promise.resolve(secondAgentOverview).then((value) => {
+        overviewResolved = true;
+        return value;
+      });
+    });
+    mockGetAutofixStats.mockImplementation((_range: string, agent: string) =>
+      agent === 'other-agent' ? secondAgentStatsPromise : Promise.resolve(firstAgentStats),
+    );
+
+    const { container } = render(() => <Overview />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('$3.50');
+      expect(container.textContent).toContain('777');
+    });
+
+    agentNameBox.set('other-agent');
+    await vi.waitFor(() => {
+      expect(overviewResolved).toBe(true);
+    });
+    await Promise.resolve();
+
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(container.textContent).toContain('$9.99');
+    expect(container.textContent).not.toContain('777');
+
+    resolveSecondAgentStats(secondAgentStats);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('$9.99');
+      expect(container.textContent).toContain('888');
+    });
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(container.textContent).not.toContain('777');
+  });
+
+  it('renders the critical overview when switching back before secondary metrics finish', async () => {
+    const firstAgentStats = {
+      success_rate: { value: 0.9, previous: 0.8 },
+      autofix_saves: { value: 777, previous: 5 },
+      fallback_saves: { value: 2, previous: 1 },
+      total_requests: { value: 100, previous: 90 },
+      errors_remaining: { value: 3, previous: 4 },
+      coverage: { rate: 0.7, previous_rate: 5 / 9 },
+    };
+    const secondAgentStats = {
+      ...firstAgentStats,
+      autofix_saves: { value: 888, previous: 6 },
+    };
+    const returningAgentStats = {
+      ...firstAgentStats,
+      autofix_saves: { value: 999, previous: 7 },
+    };
+    const secondAgentOverview = {
+      ...overviewData,
+      summary: {
+        ...overviewData.summary,
+        cost_today: { value: 9.99, trend_pct: 0 },
+      },
+    };
+    let resolveSecondAgentStats!: (value: typeof secondAgentStats) => void;
+    let resolveReturningAgentStats!: (value: typeof returningAgentStats) => void;
+    const secondAgentStatsPromise = new Promise<typeof secondAgentStats>((resolve) => {
+      resolveSecondAgentStats = resolve;
+    });
+    const returningAgentStatsPromise = new Promise<typeof returningAgentStats>((resolve) => {
+      resolveReturningAgentStats = resolve;
+    });
+    let firstAgentStatsCalls = 0;
+    mockGetOverview.mockImplementation((_range: string, agent: string) =>
+      Promise.resolve(agent === 'other-agent' ? secondAgentOverview : overviewData),
+    );
+    mockGetAutofixStats.mockImplementation((_range: string, agent: string) => {
+      if (agent === 'other-agent') return secondAgentStatsPromise;
+      firstAgentStatsCalls += 1;
+      return firstAgentStatsCalls === 1
+        ? Promise.resolve(firstAgentStats)
+        : returningAgentStatsPromise;
+    });
+
+    const { container } = render(() => <Overview />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('$3.50');
+      expect(container.textContent).toContain('777');
+    });
+
+    agentNameBox.set('other-agent');
+    await vi.waitFor(() => {
+      expect(mockGetOverview).toHaveBeenCalledWith('30d', 'other-agent', true);
+    });
+    agentNameBox.set('test-agent');
+    await vi.waitFor(() => {
+      expect(firstAgentStatsCalls).toBe(2);
+    });
+    await Promise.resolve();
+
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(container.textContent).toContain('$3.50');
+    expect(container.textContent).not.toContain('$9.99');
+    expect(container.textContent).not.toContain('777');
+
+    resolveSecondAgentStats(secondAgentStats);
+    await Promise.resolve();
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(container.textContent).not.toContain('888');
+
+    resolveReturningAgentStats(returningAgentStats);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('$3.50');
+      expect(container.textContent).toContain('999');
+    });
+    expect(container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(container.textContent).not.toContain('888');
+  });
+
+  it('keeps showing data during a background ping refetch instead of skeletons', async () => {
+    mockGetOverview.mockResolvedValue(overviewData);
+    const { container } = render(() => <Overview />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('$3.50');
+    });
+
+    // A background SSE ping refetch (same range) never resolves.
+    mockGetOverview.mockReturnValue(new Promise(() => {}));
+    pingBox.set(1);
+
+    // Old data stays put — no skeleton flash on in-place refreshes.
+    await Promise.resolve();
     expect(container.textContent).toContain('$3.50');
     expect(container.querySelectorAll('.skeleton').length).toBe(0);
   });
@@ -273,12 +536,12 @@ describe('Overview', () => {
     });
   });
 
-  it('hides trend badges when metric values are zero', async () => {
+  it('shows trend badges even when metric values are zero (trend is still meaningful)', async () => {
     const zeroData = {
       ...overviewData,
       summary: {
         ...overviewData.summary,
-        cost_today: { value: 0, trend_pct: -34497259 },
+        cost_today: { value: 0, trend_pct: -999 },
         tokens_today: { value: 0, trend_pct: 500, sub_values: { input: 0, output: 0 } },
         messages: { value: 0, trend_pct: -100 },
       },
@@ -288,7 +551,7 @@ describe('Overview', () => {
     await vi.waitFor(() => {
       expect(container.textContent).toContain('$0.00');
       const trends = container.querySelectorAll('.trend');
-      expect(trends.length).toBe(0);
+      expect(trends.length).toBeGreaterThan(0);
     });
   });
 
@@ -312,7 +575,7 @@ describe('Overview', () => {
     mockGetOverview.mockResolvedValue(overviewData);
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Recent Messages');
+      expect(container.textContent).toContain('Recent Requests');
       expect(container.textContent).toContain('msg-1234');
       expect(container.textContent).toContain('gpt-4o');
     });
@@ -322,7 +585,7 @@ describe('Overview', () => {
     mockGetOverview.mockResolvedValue(overviewData);
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Cost by Model');
+      expect(container.textContent).toContain('Model usage');
       expect(container.textContent).toContain('gpt-4o');
       expect(container.textContent).toContain('claude-3.5-sonnet');
       expect(container.textContent).toContain('60%');
@@ -354,7 +617,7 @@ describe('Overview', () => {
     await vi.waitFor(() => {
       const panels = container.querySelectorAll('.panel');
       // Find the Cost by Model panel
-      const costPanel = Array.from(panels).find((p) => p.textContent?.includes('Cost by Model'));
+      const costPanel = Array.from(panels).find((p) => p.textContent?.includes('Model usage'));
       expect(costPanel).toBeDefined();
       const rows = costPanel!.querySelectorAll('tbody tr');
       expect(rows.length).toBe(2);
@@ -369,7 +632,7 @@ describe('Overview', () => {
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
       const panels = container.querySelectorAll('.panel');
-      const costPanel = Array.from(panels).find((p) => p.textContent?.includes('Cost by Model'));
+      const costPanel = Array.from(panels).find((p) => p.textContent?.includes('Model usage'));
       expect(costPanel).toBeDefined();
       const keyBadge = costPanel!.querySelector('.provider-auth-badge--key');
       const subBadge = costPanel!.querySelector('.provider-auth-badge--sub');
@@ -394,13 +657,63 @@ describe('Overview', () => {
     });
   });
 
-  it('has clickable stat headers for cost, tokens and messages', async () => {
+  it('only fetches the visible provider chart series on mount', async () => {
+    mockGetOverview.mockResolvedValue(overviewData);
+    mockPerProvider.mockResolvedValue({
+      agents: ['openai'],
+      timeseries: [{ hour: '1', openai: 5 }],
+    });
+    render(() => <Overview />);
+
+    await vi.waitFor(() => {
+      expect(mockPerProviderMessages).toHaveBeenCalledWith('test-agent', '30d');
+    });
+    expect(mockPerProviderMessages).toHaveBeenCalledTimes(1);
+    expect(mockPerProviderTokens).not.toHaveBeenCalled();
+    expect(mockPerProviderCosts).not.toHaveBeenCalled();
+  });
+
+  it('fetches token and cost provider series when those chart views are opened', async () => {
+    mockGetOverview.mockResolvedValue(overviewData);
+    mockPerProvider.mockResolvedValue({
+      agents: ['openai'],
+      timeseries: [{ hour: '1', openai: 5 }],
+    });
+    const { container } = render(() => <Overview />);
+
+    await vi.waitFor(() => {
+      expect(mockPerProviderMessages).toHaveBeenCalledTimes(1);
+      expect(container.querySelectorAll('.chart-card__stat--clickable').length).toBe(4);
+    });
+    const stats = container.querySelectorAll('.chart-card__stat--clickable');
+    fireEvent.click(stats[2]); // cost (Requests=0, Recovered=1, Cost=2, Token usage=3)
+    await vi.waitFor(() => {
+      expect(mockPerProviderCosts).toHaveBeenCalledWith('test-agent', '30d');
+    });
+  });
+
+  it('has clickable stat headers for requests, recovered requests, cost and tokens', async () => {
     mockGetOverview.mockResolvedValue(overviewData);
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
       const clickable = container.querySelectorAll('.chart-card__stat--clickable');
-      expect(clickable.length).toBe(3);
+      expect(clickable.length).toBe(4);
     });
+    expect(screen.getAllByText('Recovered requests').length).toBeGreaterThan(0);
+  });
+
+  it('loads and renders the self-healed KPIs and tab for every tenant', async () => {
+    mockGetOverview.mockResolvedValue(overviewData);
+    render(() => <Overview />);
+
+    await vi.waitFor(() => {
+      expect(screen.getAllByText('Success rate').length).toBeGreaterThan(0);
+    });
+    expect(mockGetAutofixStats).toHaveBeenCalledWith('30d', 'test-agent');
+    // Tab + KPI cards share the label; both surfaces are present.
+    expect(screen.getAllByText('Recovered requests').length).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText('Recovered by Autofix')).toBeDefined();
+    expect(screen.getByText('Recovered by Fallback')).toBeDefined();
   });
 
   it('switches chart view when stat header clicked', async () => {
@@ -410,125 +723,28 @@ describe('Overview', () => {
       timeseries: [{ hour: '1', openai: 5 }],
     });
     const { container } = render(() => <Overview />);
-    // ProviderChartCard renders the multi-provider chart for every view; the
-    // active stat reflects the selection. Stat order is Cost / Messages / Tokens.
+    // The Requests view is status-only now (no per-provider request chart);
+    // usage views render the multi-provider chart. Order:
+    // Requests / Recovered requests / Cost / Tokens.
     await vi.waitFor(() => {
-      expect(container.querySelector('[data-testid="multi-agent-chart"]')).not.toBeNull();
+      expect(container.querySelectorAll('.chart-card__stat--clickable').length).toBe(4);
     });
+    expect(container.querySelector('[data-testid="multi-agent-chart"]')).toBeNull();
 
     const stats = container.querySelectorAll('.chart-card__stat--clickable');
-    expect(stats.length).toBe(3);
 
-    fireEvent.click(stats[0]); // cost
+    fireEvent.click(stats[2]); // cost
     await vi.waitFor(() => {
       const active = container.querySelector('.chart-card__stat--active');
       expect(active?.textContent).toContain('Cost');
     });
 
-    fireEvent.click(stats[1]); // messages
-    await vi.waitFor(() => {
-      const active = container.querySelector('.chart-card__stat--active');
-      expect(active?.textContent).toContain('Messages');
-    });
-
-    fireEvent.click(stats[2]); // tokens — renders the token-view chart
+    fireEvent.click(stats[3]); // tokens — renders the token-view chart
     await vi.waitFor(() => {
       const active = container.querySelector('.chart-card__stat--active');
       expect(active?.textContent).toContain('Token usage');
       expect(container.querySelector('[data-testid="multi-agent-chart"]')).not.toBeNull();
     });
-  });
-
-  it('renders the provider multiselect and filters chart series', async () => {
-    mockGetOverview.mockResolvedValue(overviewData);
-    mockPerProvider.mockResolvedValue({
-      agents: ['anthropic', 'openai'],
-      timeseries: [{ hour: '1', anthropic: 3, openai: 5 }],
-    });
-    const { container, getByText } = render(() => <Overview />);
-
-    // Provider multiselect appears (2 providers) and the chart shows both series.
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('All providers (2)');
-      const chart = container.querySelector('[data-testid="multi-agent-chart"]');
-      expect(chart?.getAttribute('data-series')).toBe('anthropic,openai');
-    });
-
-    // No explicit selection means "all"; toggling a provider off filters it out.
-    fireEvent.click(container.querySelector('.agent-filter-select__trigger')!);
-    fireEvent.click(getByText('Anthropic'));
-    await vi.waitFor(() => {
-      const chart = container.querySelector('[data-testid="multi-agent-chart"]');
-      expect(chart?.getAttribute('data-series')).toBe('openai');
-    });
-    expect(container.textContent).toContain('1 of 2 providers');
-
-    // "Select all" restores every series and resets the label to the all state.
-    fireEvent.click(getByText('Select all'));
-    await vi.waitFor(() => {
-      const chart = container.querySelector('[data-testid="multi-agent-chart"]');
-      expect(chart?.getAttribute('data-series')).toBe('anthropic,openai');
-    });
-    await vi.waitFor(() => {
-      expect(container.textContent).toContain('All providers (2)');
-    });
-  });
-
-  it('re-adds a provider when toggled back on, and closes the dropdown on Escape', async () => {
-    mockGetOverview.mockResolvedValue(overviewData);
-    mockPerProvider.mockResolvedValue({
-      agents: ['anthropic', 'openai'],
-      timeseries: [{ hour: '1', anthropic: 3, openai: 5 }],
-    });
-    const { container, getByText } = render(() => <Overview />);
-    await vi.waitFor(() => expect(container.textContent).toContain('All providers (2)'));
-
-    fireEvent.click(container.querySelector('.agent-filter-select__trigger')!);
-    // Toggle anthropic off (delete branch), then on again (add branch).
-    fireEvent.click(getByText('Anthropic'));
-    await vi.waitFor(() => {
-      expect(
-        container.querySelector('[data-testid="multi-agent-chart"]')?.getAttribute('data-series'),
-      ).toBe('openai');
-    });
-    fireEvent.click(getByText('Anthropic'));
-    await vi.waitFor(() => {
-      expect(
-        container.querySelector('[data-testid="multi-agent-chart"]')?.getAttribute('data-series'),
-      ).toBe('anthropic,openai');
-    });
-
-    // Escape closes the open dropdown.
-    expect(container.querySelector('.agent-filter-select__dropdown')).not.toBeNull();
-    fireEvent.keyDown(document, { key: 'Escape' });
-    await vi.waitFor(() => {
-      expect(container.querySelector('.agent-filter-select__dropdown')).toBeNull();
-    });
-  });
-
-  it('survives sessionStorage failures when loading and persisting the provider filter', async () => {
-    // Corrupt saved value → load catch; setItem throwing → persist catch.
-    sessionStorage.setItem('agent-overview-providers:test-agent', 'not-json{');
-    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw new Error('quota');
-    });
-    mockGetOverview.mockResolvedValue(overviewData);
-    mockPerProvider.mockResolvedValue({
-      agents: ['anthropic', 'openai'],
-      timeseries: [{ hour: '1', anthropic: 3, openai: 5 }],
-    });
-    const { container, getByText } = render(() => <Overview />);
-    await vi.waitFor(() => expect(container.textContent).toContain('All providers (2)'));
-
-    // Toggling persists → setItem throws → caught, no crash, filter still applies.
-    fireEvent.click(container.querySelector('.agent-filter-select__trigger')!);
-    fireEvent.click(getByText('Anthropic'));
-    await vi.waitFor(() => {
-      expect(
-        container.querySelector('[data-testid="multi-agent-chart"]')?.getAttribute('data-series'),
-      ).toBe('openai');
-    });
-    setItemSpy.mockRestore();
   });
 
   it('shows View more link to messages page', async () => {
@@ -541,8 +757,10 @@ describe('Overview', () => {
     });
   });
 
-  describe('error tooltip', () => {
-    it('shows tooltip when error_message is present on a failed row', async () => {
+  describe('status cell', () => {
+    it('renders a failed row as a Failed badge with no hover tooltip', async () => {
+      // The status-cell hover tooltip was removed — error detail is shown in the
+      // expanded accordion now, so the cell is just the binary Failed pill.
       const dataWithError = {
         ...overviewData,
         recent_activity: [
@@ -556,6 +774,7 @@ describe('Overview', () => {
             total_tokens: 0,
             cost: 0,
             status: 'error',
+            error_origin: 'provider',
             error_message: '401 Unauthorized: invalid API key',
           },
         ],
@@ -563,48 +782,11 @@ describe('Overview', () => {
       mockGetOverview.mockResolvedValue(dataWithError);
       const { container } = render(() => <Overview />);
       await vi.waitFor(() => {
-        const tooltip = container.querySelector('.status-badge-tooltip');
-        expect(tooltip).not.toBeNull();
-        const bubble = container.querySelector('.status-badge-tooltip__bubble');
-        expect(bubble).not.toBeNull();
-        expect(bubble!.textContent).toBe('401 Unauthorized: invalid API key');
+        const badge = container.querySelector('.status-badge--error');
+        expect(badge).not.toBeNull();
+        expect(badge!.textContent).toContain('Failed');
       });
-    });
-
-    it('does not show tooltip when error_message is absent', async () => {
-      mockGetOverview.mockResolvedValue(overviewData);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.textContent).toContain('msg-1234');
-        const tooltip = container.querySelector('.status-badge-tooltip');
-        expect(tooltip).toBeNull();
-      });
-    });
-
-    it('sets aria-label on the tooltip wrapper', async () => {
-      const dataWithError = {
-        ...overviewData,
-        recent_activity: [
-          {
-            id: 'msg-err99999',
-            timestamp: '2026-02-18T10:00:00Z',
-            agent_name: 'test-agent',
-            model: 'gpt-4o',
-            input_tokens: 0,
-            output_tokens: 0,
-            total_tokens: 0,
-            cost: 0,
-            status: 'error',
-            error_message: 'timeout',
-          },
-        ],
-      };
-      mockGetOverview.mockResolvedValue(dataWithError);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        const tooltip = container.querySelector('.status-badge-tooltip');
-        expect(tooltip?.getAttribute('aria-label')).toBe('timeout');
-      });
+      expect(container.querySelector('.status-badge-tooltip')).toBeNull();
     });
   });
 
@@ -620,7 +802,7 @@ describe('Overview', () => {
           agent_name: 'test-agent',
           model: 'custom:abc-123/my-llama',
           provider: 'custom:abc-123',
-          custom_provider_name: 'Cerebras',
+          custom_provider_name: 'Cohere',
           input_tokens: 100,
           output_tokens: 50,
           total_tokens: 150,
@@ -632,7 +814,7 @@ describe('Overview', () => {
         {
           model: 'custom:abc-123/my-llama',
           provider: 'custom:abc-123',
-          custom_provider_name: 'Cerebras',
+          custom_provider_name: 'Cohere',
           tokens: 30000,
           share_pct: 100,
           estimated_cost: 2.1,
@@ -645,7 +827,7 @@ describe('Overview', () => {
       mockGetOverview.mockResolvedValue(customOverview);
       const { container } = render(() => <Overview />);
       await vi.waitFor(() => {
-        const img = container.querySelector('img[alt="Cerebras"]');
+        const img = container.querySelector('img[alt="Cohere"]');
         expect(img).not.toBeNull();
       });
     });
@@ -663,7 +845,7 @@ describe('Overview', () => {
       mockGetOverview.mockResolvedValue(customOverview);
       const { container } = render(() => <Overview />);
       await vi.waitFor(() => {
-        const imgs = container.querySelectorAll('img[alt="Cerebras"]');
+        const imgs = container.querySelectorAll('img[alt="Cohere"]');
         // At least one in recent messages and one in cost by model
         expect(imgs.length).toBeGreaterThanOrEqual(2);
       });
@@ -921,6 +1103,31 @@ describe('Overview', () => {
         expect(select.value).toBe('30d');
       });
     });
+
+    it('limits Free users to 7-day dashboard ranges and labels longer ranges as Pro-only', async () => {
+      localStorage.setItem('manifest_chart_range', '365d');
+      resetPlanStore({ enabled: true, plan: 'free' });
+      mockGetOverview.mockResolvedValue(overviewData);
+
+      const { container } = render(() => <Overview />);
+
+      await vi.waitFor(() => {
+        expect(mockGetOverview).toHaveBeenCalledWith('7d', 'test-agent', true);
+      });
+      await vi.waitFor(() => {
+        expect(localStorage.getItem('manifest_chart_range')).toBe('7d');
+      });
+
+      const select = container.querySelector('[data-testid="select"]') as HTMLSelectElement;
+      const lockedOptions = Array.from(select.options).filter((option) =>
+        ['30d', '90d', '365d'].includes(option.value),
+      );
+      expect(lockedOptions.map((option) => option.disabled)).toEqual([true, true, true]);
+      expect(select.textContent).toContain('Last 30 days - PRO');
+
+      fireEvent.change(select, { target: { value: '90d' } });
+      expect(localStorage.getItem('manifest_chart_range')).toBe('7d');
+    });
   });
 
   describe('smart default range', () => {
@@ -1005,7 +1212,7 @@ describe('Overview', () => {
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
       const panels = container.querySelectorAll('.panel');
-      const costPanel = Array.from(panels).find((p) => p.textContent?.includes('Cost by Model'));
+      const costPanel = Array.from(panels).find((p) => p.textContent?.includes('Model usage'));
       expect(costPanel).toBeDefined();
       // Verify the provider icon SVG is rendered (aria-hidden, not role="img")
       const icon = costPanel!.querySelector('svg[aria-hidden="true"]');
@@ -1032,7 +1239,7 @@ describe('Overview', () => {
     });
   });
 
-  it('renders the recorded cost for per-request subscriptions (e.g. OpenCode Go)', async () => {
+  it('renders the per-request cost for subscriptions (e.g. OpenCode Go)', async () => {
     const dataWithPerRequestSub = {
       ...overviewData,
       recent_activity: [
@@ -1104,9 +1311,10 @@ describe('Overview', () => {
     mockGetOverview.mockResolvedValue(dataWithFallback);
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
-      const badge = container.querySelector('.tier-badge--fallback');
+      // Fallback is now surfaced in the Self-heal column, not a Model-cell badge.
+      const badge = container.querySelector('[title="Fallback"]');
       expect(badge).not.toBeNull();
-      expect(badge!.textContent).toBe('fallback');
+      expect(badge!.getAttribute('title')).toBe('Fallback');
     });
   });
 
@@ -1120,144 +1328,42 @@ describe('Overview', () => {
     });
   });
 
-  it('renders fallback_error status with Handled badge in recent activity', async () => {
-    const dataWithHandled = {
+  it('renders a non-ok recent-activity row as a binary Failed status', async () => {
+    const dataWithFailure = {
       ...overviewData,
       recent_activity: [
         {
           ...overviewData.recent_activity[0],
           status: 'fallback_error',
           model: 'gemini-flash',
+          error_origin: 'provider',
           error_message: 'Provider returned HTTP 429, routed to fallback',
         },
       ],
     };
-    mockGetOverview.mockResolvedValue(dataWithHandled);
+    mockGetOverview.mockResolvedValue(dataWithFailure);
     const { container } = render(() => <Overview />);
     await vi.waitFor(() => {
-      const badge = container.querySelector('.status-badge--fallback_error');
+      // Status is now binary: any non-ok row is "Failed" (with an origin
+      // descriptor); fallback_error is no longer its own pill.
+      expect(container.querySelector('.status-badge--fallback_error')).toBeNull();
+      const badge = container.querySelector('.status-badge--error');
       expect(badge).not.toBeNull();
-      expect(badge!.textContent).toBe('fallback_error');
+      expect(badge!.textContent).toContain('Failed');
     });
   });
 
-  describe('feedback', () => {
-    it('calls setMessageFeedback with like when thumb up is clicked', async () => {
-      mockSetMessageFeedback.mockResolvedValue(undefined);
-      mockGetOverview.mockResolvedValue(overviewData);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn')).not.toBeNull();
-      });
-      const likeBtn = container.querySelector('.feedback-btn') as HTMLElement;
-      fireEvent.click(likeBtn);
-      expect(mockSetMessageFeedback).toHaveBeenCalledWith('msg-12345678', { rating: 'like' });
+  it('recent request rows navigate to the Requests page with the request selected', async () => {
+    mockGetOverview.mockResolvedValue(overviewData);
+    const { container } = render(() => <Overview />);
+    await vi.waitFor(() => {
+      expect(container.querySelector('.msg-row--clickable')).not.toBeNull();
     });
-
-    it('calls setMessageFeedback with dislike and opens modal', async () => {
-      mockSetMessageFeedback.mockResolvedValue(undefined);
-      mockGetOverview.mockResolvedValue(overviewData);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn')).not.toBeNull();
-      });
-      const dislikeBtn = container.querySelectorAll('.feedback-btn')[1] as HTMLElement;
-      fireEvent.click(dislikeBtn);
-      expect(mockSetMessageFeedback).toHaveBeenCalledWith('msg-12345678', { rating: 'dislike' });
-      const modal = container.querySelector('[data-testid="feedback-modal"]');
-      expect(modal?.getAttribute('data-open')).toBe('true');
-    });
-
-    it('calls clearMessageFeedback when active like is clicked', async () => {
-      mockClearMessageFeedback.mockResolvedValue(undefined);
-      const dataWithFeedback = {
-        ...overviewData,
-        recent_activity: [{ ...overviewData.recent_activity[0], feedback_rating: 'like' }],
-      };
-      mockGetOverview.mockResolvedValue(dataWithFeedback);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn--active-like')).not.toBeNull();
-      });
-      const likeBtn = container.querySelector('.feedback-btn--active-like') as HTMLElement;
-      fireEvent.click(likeBtn);
-      expect(mockClearMessageFeedback).toHaveBeenCalledWith('msg-12345678');
-    });
-
-    it('submits feedback details from modal', async () => {
-      mockSetMessageFeedback.mockResolvedValue(undefined);
-      mockGetOverview.mockResolvedValue(overviewData);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn')).not.toBeNull();
-      });
-      const dislikeBtn = container.querySelectorAll('.feedback-btn')[1] as HTMLElement;
-      fireEvent.click(dislikeBtn);
-      const submitBtn = container.querySelector('[data-testid="feedback-submit"]') as HTMLElement;
-      fireEvent.click(submitBtn);
-      expect(mockSetMessageFeedback).toHaveBeenCalledWith('msg-12345678', {
-        rating: 'dislike',
-        tags: ['Too slow'],
-        details: 'test',
-      });
-    });
-
-    it('hides feedback column and modal in the self-hosted version', async () => {
-      mockCheckIsSelfHosted.mockResolvedValue(true);
-      mockGetOverview.mockResolvedValue(overviewData);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.data-table')).not.toBeNull();
-      });
-      expect(container.querySelector('.feedback-btn')).toBeNull();
-      expect(container.querySelector('[data-testid="feedback-modal"]')).toBeNull();
-      mockCheckIsSelfHosted.mockResolvedValue(false);
-    });
-
-    it('reverts optimistic like on API error', async () => {
-      mockSetMessageFeedback.mockRejectedValue(new Error('fail'));
-      mockGetOverview.mockResolvedValue(overviewData);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn')).not.toBeNull();
-      });
-      const likeBtn = container.querySelector('.feedback-btn') as HTMLElement;
-      fireEvent.click(likeBtn);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn--active-like')).toBeNull();
-      });
-    });
-
-    it('reverts optimistic dislike on API error', async () => {
-      mockSetMessageFeedback.mockRejectedValue(new Error('fail'));
-      mockGetOverview.mockResolvedValue(overviewData);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn')).not.toBeNull();
-      });
-      const dislikeBtn = container.querySelectorAll('.feedback-btn')[1] as HTMLElement;
-      fireEvent.click(dislikeBtn);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn--active-dislike')).toBeNull();
-      });
-    });
-
-    it('reverts optimistic clear on API error', async () => {
-      mockClearMessageFeedback.mockRejectedValue(new Error('fail'));
-      const dataWithFeedback = {
-        ...overviewData,
-        recent_activity: [{ ...overviewData.recent_activity[0], feedback_rating: 'like' }],
-      };
-      mockGetOverview.mockResolvedValue(dataWithFeedback);
-      const { container } = render(() => <Overview />);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn--active-like')).not.toBeNull();
-      });
-      const likeBtn = container.querySelector('.feedback-btn--active-like') as HTMLElement;
-      fireEvent.click(likeBtn);
-      await vi.waitFor(() => {
-        expect(container.querySelector('.feedback-btn--active-like')).not.toBeNull();
-      });
-    });
+    fireEvent.click(container.querySelector('.msg-row--clickable')!);
+    // No inline accordion: the click deep-links into the Requests page drawer.
+    expect(container.querySelector('.msg-row--expanded')).toBeNull();
+    expect(mockNavigate).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/harnesses\/test-agent\/messages\?request=/),
+    );
   });
 });

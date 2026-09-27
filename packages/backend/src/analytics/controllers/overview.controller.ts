@@ -1,4 +1,4 @@
-import { Controller, Get, Query, UseInterceptors } from '@nestjs/common';
+import { Controller, Get, Optional, Query, UseInterceptors } from '@nestjs/common';
 import { CacheTTL } from '@nestjs/cache-manager';
 import { RangeQueryDto } from '../../common/dto/range-query.dto';
 import { isHourlyRange } from '../../common/utils/range.util';
@@ -12,6 +12,26 @@ import { ResolveAgentService } from '../../routing/routing-core/resolve-agent.se
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { AgentEnabledProvider } from '../../entities/agent-enabled-provider.entity';
+import { computeTrend } from '../services/query-helpers';
+import { MessagesQueryService } from '../services/messages-query.service';
+import { OverviewQueryDto } from '../dto/overview-query.dto';
+
+/** Sum the timeseries buckets into current-window totals for the summary cards. */
+function sumTimeseries(tsData: {
+  tokenUsage: { input_tokens: number; output_tokens: number }[];
+  costUsage: { cost: number }[];
+  messageUsage: { count: number }[];
+}): { input: number; output: number; cost: number; messages: number } {
+  let input = 0;
+  let output = 0;
+  for (const b of tsData.tokenUsage) {
+    input += b.input_tokens;
+    output += b.output_tokens;
+  }
+  const cost = tsData.costUsage.reduce((sum, b) => sum + b.cost, 0);
+  const messages = tsData.messageUsage.reduce((sum, b) => sum + b.count, 0);
+  return { input, output, cost, messages };
+}
 
 @Controller('api/v1')
 @UseInterceptors(UserCacheInterceptor)
@@ -24,41 +44,85 @@ export class OverviewController {
     private readonly resolveAgent: ResolveAgentService,
     @InjectRepository(AgentEnabledProvider)
     private readonly enabledProviderRepo: Repository<AgentEnabledProvider>,
+    @Optional()
+    private readonly messagesQuery?: MessagesQueryService,
   ) {}
 
   @Get('overview')
-  async getOverview(@Query() query: RangeQueryDto, @TenantCtx() ctx: TenantContext) {
+  async getOverview(@Query() query: OverviewQueryDto, @TenantCtx() ctx: TenantContext) {
     const range = query.range ?? '24h';
     const agentName = query.agent_name;
+    const fast = query.fast === 'true';
     const hourly = isHourlyRange(range);
     const tenantId = ctx.tenantId;
+    // Scoped to one harness => show only what that harness's routing did. A
+    // `direct` row is a model the caller pinned in the request body, which
+    // bypassed routing entirely, so it is not this harness's traffic. The
+    // unscoped (global) Overview and the Messages log stay complete — that is
+    // where direct requests are accounted for and where spend reconciles.
+    const excludeDirect = !!agentName;
 
-    const [summary, tsData, costByModel, recentActivity, activeSkills, hasData, hasProviders] =
-      await Promise.all([
-        // The overview excludes the reserved Playground (is_playground) agent's
-        // traffic EVERYWHERE: the per-agent/per-provider charts on the same page
-        // always drop it, so the summary cards, the aggregate timeseries and the
-        // breakdown widgets must agree or the page contradicts itself. Every call
-        // below passes excludePlayground=true so has_data and the visible widgets
-        // never disagree (a Playground-only tenant reads as empty, not a populated
-        // state painted over blank charts).
-        this.aggregation.getSummaryMetrics(range, tenantId, agentName, undefined, undefined, true),
-        this.timeseries.getTimeseries(
-          range,
-          tenantId,
-          hourly,
-          agentName,
-          undefined,
-          undefined,
-          true,
-        ),
-        this.timeseries.getCostByModel(range, tenantId, agentName, true),
-        this.timeseries.getRecentActivity(range, tenantId, 5, agentName, true),
-        this.timeseries.getActiveSkills(range, tenantId, agentName, true),
-        this.aggregation.hasAnyData(tenantId, agentName, true),
-        this.hasActiveProviders(tenantId, agentName),
-      ]);
+    const [
+      prevMetrics,
+      requestReliability,
+      tsData,
+      costByModel,
+      recentActivity,
+      activeSkills,
+      hasData,
+      hasProviders,
+    ] = await Promise.all([
+      // The overview excludes the reserved Playground (is_playground) agent's
+      // traffic EVERYWHERE: the per-agent/per-provider charts on the same page
+      // always drop it, so the summary cards, the aggregate timeseries and the
+      // breakdown widgets must agree or the page contradicts itself. Every call
+      // below passes excludePlayground=true so has_data and the visible widgets
+      // never disagree (a Playground-only tenant reads as empty, not a populated
+      // state painted over blank charts).
+      //
+      // `excludeDirect` rides along on exactly the same rule: every widget on
+      // this page has to drop it or none of them can.
+      //
+      // The current-window summary is derived from the timeseries buckets
+      // below (which scan the same Playground-excluded rows), so we only query
+      // the previous window here for the trend arrows instead of repeating the
+      // full current+previous double-scan.
+      this.aggregation.getPreviousWindowMetrics(range, tenantId, agentName, true, excludeDirect),
+      fast
+        ? Promise.resolve(null)
+        : this.aggregation.getRequestReliability(range, tenantId, agentName, true, excludeDirect),
+      this.timeseries.getTimeseries(
+        range,
+        tenantId,
+        hourly,
+        agentName,
+        undefined,
+        undefined,
+        true,
+        undefined,
+        undefined,
+        excludeDirect,
+      ),
+      fast
+        ? Promise.resolve([])
+        : this.timeseries.getCostByModel(range, tenantId, agentName, true, excludeDirect),
+      fast
+        ? Promise.resolve([])
+        : this.getRecentActivity(range, tenantId, agentName, excludeDirect),
+      fast
+        ? Promise.resolve([])
+        : this.timeseries.getActiveSkills(range, tenantId, agentName, true, excludeDirect),
+      this.aggregation.hasAnyData(tenantId, agentName, true, excludeDirect),
+      this.hasActiveProviders(tenantId, agentName),
+    ]);
 
+    const summary = AggregationService.buildSummary(sumTimeseries(tsData), prevMetrics);
+    if (requestReliability) {
+      summary.messages = {
+        value: requestReliability.total,
+        trend_pct: computeTrend(requestReliability.total, requestReliability.previous_total),
+      };
+    }
     return {
       summary: {
         tokens_today: summary.tokens.tokens_today,
@@ -72,8 +136,28 @@ export class OverviewController {
       cost_by_model: costByModel,
       recent_activity: recentActivity,
       active_skills: activeSkills,
+      request_reliability: requestReliability,
       has_data: hasData,
       has_providers: hasProviders,
+    };
+  }
+
+  @Get('overview/details')
+  async getOverviewDetails(@Query() query: RangeQueryDto, @TenantCtx() ctx: TenantContext) {
+    const range = query.range ?? '24h';
+    const agentName = query.agent_name;
+    const excludeDirect = !!agentName;
+    const [costByModel, recentActivity, requestReliability, activeSkills] = await Promise.all([
+      this.timeseries.getCostByModel(range, ctx.tenantId, agentName, true, excludeDirect),
+      this.getRecentActivity(range, ctx.tenantId, agentName, excludeDirect),
+      this.aggregation.getRequestReliability(range, ctx.tenantId, agentName, true, excludeDirect),
+      this.timeseries.getActiveSkills(range, ctx.tenantId, agentName, true, excludeDirect),
+    ]);
+    return {
+      cost_by_model: costByModel,
+      recent_activity: recentActivity,
+      request_reliability: requestReliability,
+      active_skills: activeSkills,
     };
   }
 
@@ -185,5 +269,27 @@ export class OverviewController {
     } catch {
       return false;
     }
+  }
+
+  private getRecentActivity(
+    range: string,
+    tenantId: string | null,
+    agentName: string | undefined,
+    excludeDirect: boolean,
+  ) {
+    return this.messagesQuery
+      ? this.messagesQuery
+          .getMessages({
+            range,
+            tenantId,
+            agent_name: agentName,
+            limit: 5,
+            include_total: false,
+            include_filter_options: false,
+            exclude_playground: true,
+            exclude_direct: excludeDirect,
+          })
+          .then((result) => result.items)
+      : this.timeseries.getRecentActivity(range, tenantId, 5, agentName, true, excludeDirect);
   }
 }

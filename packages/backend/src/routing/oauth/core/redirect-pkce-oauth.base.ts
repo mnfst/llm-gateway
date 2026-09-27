@@ -20,7 +20,11 @@ import { generatePkce, generateState } from './pkce';
 import { oauthDoneHtml } from './callback-page';
 import { PendingStore } from './pending-store';
 import { parseOAuthTokenBlob, serializeOAuthTokenBlob, type OAuthTokenBlob } from './oauth-blob';
-import { coordinateOAuthRefresh, oauthRefreshKey } from './oauth-refresh-coordinator';
+import {
+  coordinateOAuthRefresh,
+  oauthRefreshKey,
+  subscriptionCredentialLock,
+} from './oauth-refresh-coordinator';
 
 export interface RedirectPkceOauthConfig {
   /** Provider id stored on `tenant_providers.provider_id`. */
@@ -114,11 +118,15 @@ export abstract class RedirectPkceOauthBaseService {
     protected readonly oauthConfig: RedirectPkceOauthConfig,
   ) {
     this.logger = new Logger(oauthConfig.serviceName);
+    // `||`, not `??`: docker-compose forwards unset optional vars as an empty
+    // string, and `??` would take `''` as a deliberate override — leaving the
+    // provider with a blank client id and an OAuth flow that fails at the
+    // authorize redirect instead of falling back to the shipped default.
     this.clientId =
-      configService.get<string>(oauthConfig.clientIdEnvVar) ?? oauthConfig.defaultClientId;
+      configService.get<string>(oauthConfig.clientIdEnvVar)?.trim() || oauthConfig.defaultClientId;
     this.clientSecret = oauthConfig.clientSecretEnvVar
-      ? (configService.get<string>(oauthConfig.clientSecretEnvVar) ??
-        oauthConfig.defaultClientSecret)
+      ? configService.get<string>(oauthConfig.clientSecretEnvVar)?.trim() ||
+        oauthConfig.defaultClientSecret
       : oauthConfig.defaultClientSecret;
     this.redirectUri =
       oauthConfig.redirectUri ?? `http://localhost:${oauthConfig.callbackPort}/auth/callback`;
@@ -289,22 +297,15 @@ export abstract class RedirectPkceOauthBaseService {
         key: oauthRefreshKey(providerId, tenantId, keyLabel),
         logger: this.logger,
         callerBlob: blob,
-        readFreshRaw: () =>
-          this.providerService.getFreshSubscriptionCredential(tenantId, providerId, keyLabel),
         parse: parseOAuthTokenBlob,
         refresh: (current) => this.refreshAccessToken(current.r, current.u),
-        persist: (refreshed) =>
-          this.providerService
-            .upsertProvider(
-              agentId,
-              tenantId,
-              providerId,
-              serializeOAuthTokenBlob(refreshed),
-              'subscription',
-              undefined,
-              keyLabel,
-            )
-            .then(() => undefined),
+        withLock: subscriptionCredentialLock(
+          (t, p, l, fn) => this.providerService.withSubscriptionCredentialLock(t, p, l, fn),
+          tenantId,
+          providerId,
+          keyLabel,
+          serializeOAuthTokenBlob,
+        ),
       });
       return resolved.t;
     } catch (err) {
@@ -435,8 +436,12 @@ export abstract class RedirectPkceOauthBaseService {
 
   private isAllowedRedirectOrigin(url: string): boolean {
     try {
-      const parsed = new URL(url);
-      const hostname = parsed.hostname;
+      // Node's WHATWG URL parser wraps IPv6 hosts in brackets (`[::1]`), so a
+      // bare `'::1'` comparison never matches — IPv6 loopback would be dropped
+      // at storage and fall back to the inline HTML page. Strip the brackets
+      // before comparing so `[::1]` is treated the same as localhost /
+      // 127.0.0.1 in both the storage gate and the redirect gate.
+      const hostname = new URL(url).hostname.replace(/^\[|\]$/g, '');
       return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1';
     } catch {
       return false;

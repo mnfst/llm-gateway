@@ -12,6 +12,9 @@ import { randomUUID } from 'crypto';
 import {
   CANONICAL_LOCAL_IDS,
   SHARED_PROVIDER_BY_ID_OR_ALIAS,
+  deriveCustomProviderAlias,
+  isReservedCustomProviderAlias,
+  normalizeCustomProviderAlias,
   normalizeProviderName,
 } from 'manifest-shared';
 import type { AuthType } from 'manifest-shared';
@@ -67,6 +70,20 @@ function authTypeForCustomProvider(name: string): AuthType {
   return isLocalCustomProviderName(name) ? 'local' : 'api_key';
 }
 
+const ALIAS_UNIQUE_INDEX = 'IDX_custom_providers_tenant_alias';
+const PG_UNIQUE_VIOLATION = '23505';
+
+/**
+ * Two requests can both pass the in-memory alias check and race to the
+ * partial unique index. TypeORM copies the pg error's `code` and
+ * `constraint` onto the QueryFailedError it throws, so the loser is
+ * recognisable and gets the same 409 the pre-check would have produced.
+ */
+function isAliasUniqueViolation(err: unknown): boolean {
+  const pg = err as { code?: unknown; constraint?: unknown } | null;
+  return pg?.code === PG_UNIQUE_VIOLATION && pg.constraint === ALIAS_UNIQUE_INDEX;
+}
+
 @Injectable()
 export class CustomProviderService {
   constructor(
@@ -90,6 +107,31 @@ export class CustomProviderService {
    */
   private notifyChange(tenantId: string, actorUserId?: string | null): void {
     this.eventBus.emit(tenantId, 'routing', actorUserId);
+  }
+
+  /**
+   * Reject an explicit alias that would shadow a built-in provider route or
+   * another custom provider of the tenant (case-insensitive, like the name).
+   */
+  private assertAliasAvailable(
+    alias: string,
+    allForTenant: CustomProvider[],
+    excludeId?: string,
+  ): void {
+    if (isReservedCustomProviderAlias(alias)) {
+      throw new BadRequestException(`Alias "${alias}" is reserved for a built-in provider`);
+    }
+    const dup = allForTenant.find((r) => r.id !== excludeId && r.alias?.toLowerCase() === alias);
+    if (dup) {
+      throw new ConflictException(`Alias "${alias}" is already used by "${dup.name}"`);
+    }
+  }
+
+  /** Default alias for a new provider: derived from the name, or none when taken. */
+  private defaultAlias(name: string, allForTenant: CustomProvider[]): string | null {
+    const derived = deriveCustomProviderAlias(name);
+    if (!derived) return null;
+    return allForTenant.some((r) => r.alias?.toLowerCase() === derived) ? null : derived;
   }
 
   /** Provider key used in TenantProvider tables. */
@@ -211,6 +253,16 @@ export class CustomProviderService {
       throw new ConflictException(`Custom provider "${dto.name}" already exists`);
     }
 
+    // An omitted alias gets a default derived from the name, silently left
+    // empty when that default is unusable or taken — the user can set one
+    // later. An explicit alias (including null, meaning "none") is honoured
+    // as sent and validated like the name is.
+    const alias =
+      dto.alias === undefined
+        ? this.defaultAlias(dto.name, allForTenant)
+        : normalizeCustomProviderAlias(dto.alias);
+    if (alias && dto.alias !== undefined) this.assertAliasAvailable(alias, allForTenant);
+
     try {
       await validatePublicUrl(dto.base_url, { allowPrivate: isSelfHosted() });
     } catch (err) {
@@ -225,6 +277,7 @@ export class CustomProviderService {
       tenant_id: tenantId,
       created_by_user_id: createdByUserId ?? null,
       name: dto.name,
+      alias,
       base_url: dto.base_url,
       api_kind: dto.api_kind ?? 'openai',
       models: this.enrichCustomProviderModels(dto.name, dto.models),
@@ -243,20 +296,27 @@ export class CustomProviderService {
     // messages carry the grey-house badge and the row shows up under the
     // Local tab. A null agentId tells the provider service the change is
     // tenant-global rather than tied to one agent.
-    await this.repo.manager.transaction(async (manager) => {
-      await manager.getRepository(CustomProvider).insert(cp);
-      await this.providerService.upsertProvider(
-        null,
-        tenantId,
-        provKey,
-        dto.apiKey,
-        authTypeForCustomProvider(dto.name),
-        undefined,
-        undefined,
-        createdByUserId,
-        manager,
-      );
-    });
+    try {
+      await this.repo.manager.transaction(async (manager) => {
+        await manager.getRepository(CustomProvider).insert(cp);
+        await this.providerService.upsertProvider(
+          null,
+          tenantId,
+          provKey,
+          dto.apiKey,
+          authTypeForCustomProvider(dto.name),
+          undefined,
+          undefined,
+          createdByUserId,
+          manager,
+        );
+      });
+    } catch (err) {
+      if (isAliasUniqueViolation(err)) {
+        throw new ConflictException(`Alias "${alias}" is already used by another provider`);
+      }
+      throw err;
+    }
 
     // Rebuild the shared pricing cache so the proxy can compute cost for
     // requests routed to this custom provider's models immediately (without
@@ -293,6 +353,18 @@ export class CustomProviderService {
       cp.name = dto.name;
     }
 
+    // Renaming never touches the alias: client configs carry
+    // `<alias>/<model>` and must survive a display-name change. Only an
+    // explicit alias field changes it (null or '' clears it).
+    if (dto.alias !== undefined) {
+      const alias = normalizeCustomProviderAlias(dto.alias);
+      if (alias && alias !== cp.alias) {
+        const allForTenant = await this.repo.find({ where: { tenant_id: tenantId } });
+        this.assertAliasAvailable(alias, allForTenant, id);
+      }
+      cp.alias = alias;
+    }
+
     if (dto.base_url !== undefined) {
       try {
         await validatePublicUrl(dto.base_url, { allowPrivate: isSelfHosted() });
@@ -310,7 +382,16 @@ export class CustomProviderService {
       cp.models = this.enrichCustomProviderModels(cp.name, dto.models);
     }
 
-    await this.repo.save(cp);
+    try {
+      await this.repo.save(cp);
+    } catch (err) {
+      if (isAliasUniqueViolation(err)) {
+        throw new ConflictException(`Alias "${cp.alias}" is already used by another provider`);
+      }
+      throw err;
+    }
+    // Fans out to the discovered-model cache of every agent in the tenant, so
+    // an alias or model-list edit shows in /v1/models on the next request.
     this.routingCache.invalidateTenant(tenantId);
 
     // Reload pricing cache when the model list changes so explicit routes to

@@ -80,7 +80,11 @@ describe('proxy-friendly-response', () => {
       expect(result.meta.model).toBe('manifest');
       expect(result.meta.provider).toBe('manifest');
       expect(result.meta.confidence).toBe(1);
-      expect(result.meta.reason).toBe('friendly_error');
+      expect(result.meta.reason).toBe('manifest_internal_error');
+      // The rendered text rides on meta so the recorder can persist it verbatim
+      // instead of a generic stand-in.
+      expect(result.meta.manifest_error_message).toBe('Hello world');
+      expect(result.meta.manifest_error_code).toBeUndefined();
 
       const json = (await result.forward.response.json()) as Record<string, unknown>;
       expect(json.object).toBe('chat.completion');
@@ -89,6 +93,21 @@ describe('proxy-friendly-response', () => {
       const choices = json.choices as { message: { role: string; content: string } }[];
       expect(choices[0].message.role).toBe('assistant');
       expect(choices[0].message.content).toBe('Hello world');
+    });
+
+    it('carries the Manifest error code through meta when one is supplied', () => {
+      const result = buildFriendlyResponse(
+        '[🦚 Manifest M100] No anthropic API key yet.',
+        false,
+        'no_provider_key',
+        'M100',
+      );
+
+      expect(result.meta.reason).toBe('no_provider_key');
+      expect(result.meta.manifest_error_code).toBe('M100');
+      expect(result.meta.manifest_error_message).toBe(
+        '[🦚 Manifest M100] No anthropic API key yet.',
+      );
     });
 
     it('returns streaming SSE response', async () => {

@@ -30,6 +30,15 @@ export class Agent {
   @Column('boolean', { default: false })
   complexity_routing_enabled!: boolean;
 
+  // Autofix: when enabled, a request-side 4xx is sent to the healing service
+  // (Phoenix) and the patched request is resent once before the fallback chain runs.
+  // Nullable: NULL means "no explicit choice — inherit the deployment-mode default"
+  // (ON in cloud, OFF in self-hosted), resolved in AutofixService.resolveEnabled().
+  @Column('boolean', { nullable: true })
+  autofix_enabled!: boolean | null;
+
+  // Enabled for newly created agents. Existing agents keep their persisted
+  // choice because the migration changes only the column default.
   @Column('boolean', { default: true })
   record_messages!: boolean;
 

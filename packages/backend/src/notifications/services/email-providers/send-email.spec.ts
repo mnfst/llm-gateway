@@ -2,8 +2,45 @@ jest.mock('./resolve-provider', () => ({
   createProvider: jest.fn(),
 }));
 
-import { sendEmail } from './send-email';
+import { sendEmail, isEmailConfigured } from './send-email';
 import { createProvider } from './resolve-provider';
+
+describe('isEmailConfigured', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env['EMAIL_PROVIDER'];
+    delete process.env['EMAIL_API_KEY'];
+    delete process.env['EMAIL_DOMAIN'];
+    delete process.env['MAILGUN_API_KEY'];
+    delete process.env['MAILGUN_DOMAIN'];
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('returns false when no provider is configured', () => {
+    expect(isEmailConfigured()).toBe(false);
+  });
+
+  it('returns true for the unified EMAIL_* scheme', () => {
+    process.env['EMAIL_PROVIDER'] = 'resend';
+    process.env['EMAIL_API_KEY'] = 're_key';
+    expect(isEmailConfigured()).toBe(true);
+  });
+
+  it('returns false for mailgun without a domain', () => {
+    process.env['EMAIL_PROVIDER'] = 'mailgun';
+    process.env['EMAIL_API_KEY'] = 'key';
+    expect(isEmailConfigured()).toBe(false);
+  });
+
+  it('honors an explicit env override argument', () => {
+    expect(isEmailConfigured({ emailProvider: 'resend', emailApiKey: 're_key' })).toBe(true);
+  });
+});
 
 describe('sendEmail', () => {
   const originalEnv = process.env;

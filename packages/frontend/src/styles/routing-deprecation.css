@@ -1,0 +1,45 @@
+/* Deprecation notice shown on the routing surfaces being retired
+ * (complexity routing + task-specific routing). Only legacy/invested agents
+ * ever render these sections, so the banner is implicitly scoped to them. */
+.routing-deprecation {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 14px;
+  margin-bottom: 16px;
+  border: 1px solid hsl(38 92% 50% / 0.35);
+  border-left: 3px solid hsl(38 92% 50%);
+  background: hsl(38 92% 50% / 0.08);
+  border-radius: var(--radius-sm, 0.375rem);
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: hsl(var(--foreground));
+}
+
+.routing-deprecation__icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: hsl(38 92% 42%);
+}
+
+.dark .routing-deprecation__icon {
+  color: hsl(38 92% 55%);
+}
+
+.routing-deprecation__title {
+  font-weight: 600;
+}
+
+.routing-deprecation__body {
+  color: hsl(var(--muted-foreground));
+}
+
+.routing-deprecation a {
+  color: inherit;
+  text-decoration: underline;
+}
+
+.routing-deprecation__link {
+  white-space: nowrap;
+  font-weight: 500;
+}

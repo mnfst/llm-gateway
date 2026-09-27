@@ -471,7 +471,7 @@ describe('HeaderTierCard', () => {
     expect(container.querySelector('.routing-card__key-chip')?.textContent).toContain('Personal');
   });
 
-  it('shows the per-request cost for per-request subscriptions', () => {
+  it('shows the included per-request quota burn rate for per-request subscriptions', () => {
     const tierSub = {
       ...baseTier,
       override_route: {
@@ -501,8 +501,7 @@ describe('HeaderTierCard', () => {
         onFallbacksUpdate={vi.fn()}
       />
     ));
-    expect(container.textContent).toContain('$0.0136/req');
-    expect(container.textContent).not.toContain('Included in subscription');
+    expect(container.textContent).toContain('Included ($0.0136 quota/req)');
   });
 
   it('renders a + Add model button when override_route is null', () => {

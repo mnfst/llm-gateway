@@ -84,6 +84,11 @@ describe('ProviderService — Qwen region resolution', () => {
 
   it('keeps an existing resolved region when neither region nor key is given', async () => {
     expect(await resolve(undefined, undefined, { region: 'us' })).toBe('us');
+    expect(
+      await resolve(undefined, undefined, {
+        region: 'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode',
+      }),
+    ).toBe('https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode');
     expect(await resolve(undefined, undefined, null)).toBeNull();
   });
 
@@ -93,6 +98,12 @@ describe('ProviderService — Qwen region resolution', () => {
 
   it('returns a concrete requested region unchanged', async () => {
     expect(await resolve('singapore', undefined)).toBe('singapore');
+  });
+
+  it('normalizes a valid Alibaba Model Studio base URL', async () => {
+    await expect(
+      resolve('https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode/v1', undefined),
+    ).resolves.toBe('https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode');
   });
 
   it('auto-detects using a decrypted stored key', async () => {

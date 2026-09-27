@@ -1,4 +1,4 @@
-import type { ModelRoute } from 'manifest-shared';
+import { MAX_KEYS_PER_PROVIDER, type ModelRoute } from 'manifest-shared';
 import { ProviderService } from '../provider.service';
 import { TenantProvider } from '../../../entities/tenant-provider.entity';
 import { TierAssignment } from '../../../entities/tier-assignment.entity';
@@ -22,15 +22,28 @@ const route = (
   model,
 });
 
-const makeQueryBuilder = (agentIds: string[] = ['agent-1']) => ({
+type AgentRow = string | { id: string; name?: string | null; display_name?: string | null };
+
+const makeQueryBuilder = (agents: AgentRow[] = ['agent-1']) => ({
   leftJoin: jest.fn().mockReturnThis(),
   where: jest.fn().mockReturnThis(),
   andWhere: jest.fn().mockReturnThis(),
   select: jest.fn().mockReturnThis(),
-  getRawMany: jest.fn().mockResolvedValue(agentIds.map((id) => ({ id }))),
+  addSelect: jest.fn().mockReturnThis(),
+  getRawMany: jest.fn().mockResolvedValue(
+    agents.map((agent) =>
+      typeof agent === 'string'
+        ? { id: agent, name: agent, display_name: null }
+        : {
+            id: agent.id,
+            name: agent.name ?? agent.id,
+            display_name: agent.display_name ?? null,
+          },
+    ),
+  ),
 });
 
-const makeRepo = (agentIds: string[] = ['agent-1']) => ({
+const makeRepo = (agents: AgentRow[] = ['agent-1']) => ({
   find: jest.fn().mockResolvedValue([]),
   findOne: jest.fn().mockResolvedValue(null),
   insert: jest.fn().mockResolvedValue(undefined),
@@ -38,11 +51,12 @@ const makeRepo = (agentIds: string[] = ['agent-1']) => ({
   delete: jest.fn().mockResolvedValue(undefined),
   remove: jest.fn().mockResolvedValue(undefined),
   update: jest.fn().mockResolvedValue(undefined),
-  manager: { transaction: jest.fn() },
-  createQueryBuilder: jest.fn().mockReturnValue(makeQueryBuilder(agentIds)),
+  manager: { transaction: jest.fn(), getRepository: jest.fn() },
+  createQueryBuilder: jest.fn().mockReturnValue(makeQueryBuilder(agents)),
 });
 
 describe('ProviderService — route-only cleanup paths', () => {
+  const previousMode = process.env['MANIFEST_MODE'];
   let providerRepo: ReturnType<typeof makeRepo>;
   let tierRepo: ReturnType<typeof makeRepo>;
   let specRepo: ReturnType<typeof makeRepo>;
@@ -57,6 +71,7 @@ describe('ProviderService — route-only cleanup paths', () => {
   let svc: ProviderService;
 
   beforeEach(() => {
+    process.env['MANIFEST_MODE'] = 'selfhosted';
     providerRepo = makeRepo();
     tierRepo = makeRepo();
     specRepo = makeRepo();
@@ -80,6 +95,11 @@ describe('ProviderService — route-only cleanup paths', () => {
     );
   });
 
+  afterAll(() => {
+    if (previousMode === undefined) delete process.env['MANIFEST_MODE'];
+    else process.env['MANIFEST_MODE'] = previousMode;
+  });
+
   describe('removeProvider — route guards', () => {
     it('blocks disconnect when a tier override uses the provider', async () => {
       providerRepo.find.mockResolvedValueOnce([
@@ -95,6 +115,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       ]);
       tierRepo.find.mockResolvedValueOnce([
         {
+          agent_id: 'agent-1',
           tier: 'standard',
           override_route: route('OpenAI', 'gpt-4o'),
           fallback_routes: null,
@@ -123,6 +144,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       ]);
       tierRepo.find.mockResolvedValueOnce([
         {
+          agent_id: 'agent-1',
           tier: 'standard',
           override_route: { provider: '', authType: 'api_key', model: 'custom-x/some' },
           fallback_routes: null,
@@ -152,6 +174,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       pricingCache.getByModel.mockReturnValue({ provider: 'openai' } as never);
       tierRepo.find.mockResolvedValueOnce([
         {
+          agent_id: 'agent-1',
           tier: 'standard',
           override_route: { provider: '', authType: 'api_key', model: 'opaque-id' },
           fallback_routes: null,
@@ -181,9 +204,10 @@ describe('ProviderService — route-only cleanup paths', () => {
       tierRepo.find.mockResolvedValueOnce([]);
       specRepo.find.mockResolvedValueOnce([
         {
+          agent_id: 'agent-1',
           category: 'coding',
           override_route: null,
-          fallback_routes: [route('openai', 'gpt-4o-mini')],
+          fallback_routes: [route('anthropic', 'claude-sonnet'), route('openai', 'gpt-4o-mini')],
         } as unknown as SpecificityAssignment,
       ]);
       headerTierRepo.find.mockResolvedValue([]);
@@ -207,6 +231,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       providerRepo.find.mockResolvedValueOnce([row]);
       tierRepo.find.mockResolvedValueOnce([
         {
+          agent_id: 'agent-1',
           tier: 'standard',
           override_route: { provider: 'other', authType: 'api_key', model: 'custom-x/some' },
           fallback_routes: null,
@@ -226,6 +251,160 @@ describe('ProviderService — route-only cleanup paths', () => {
       expect(routingCache.invalidateTenant).toHaveBeenCalledWith('tenant-1');
     });
 
+    it('skips route checks when the tenant has no owned agents', async () => {
+      const row = {
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'openai',
+        auth_type: 'api_key',
+        label: 'Default',
+        priority: 0,
+        is_active: true,
+      } as unknown as TenantProvider;
+      const localSvc = new ProviderService(
+        providerRepo as unknown as Repository<TenantProvider>,
+        tierRepo as unknown as Repository<TierAssignment>,
+        specRepo as unknown as Repository<SpecificityAssignment>,
+        makeRepo([]) as unknown as Repository<Agent>,
+        headerTierRepo as unknown as Repository<HeaderTier>,
+        pricingCache as unknown as ModelPricingCacheService,
+        routingCache as unknown as RoutingCacheService,
+      );
+      providerRepo.find.mockResolvedValueOnce([row]);
+
+      await expect(localSvc.removeProvider(null, 'tenant-1', 'openai')).resolves.toEqual({
+        notifications: [],
+      });
+
+      expect(tierRepo.find).not.toHaveBeenCalled();
+      expect(row.is_active).toBe(false);
+      expect(providerRepo.save).toHaveBeenCalledWith([row]);
+    });
+
+    it('ignores inactive specificity rows and disabled header tiers', async () => {
+      const row = {
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'openai',
+        auth_type: 'api_key',
+        label: 'Default',
+        priority: 0,
+        is_active: true,
+      } as unknown as TenantProvider;
+      providerRepo.find.mockResolvedValueOnce([row]);
+      tierRepo.find.mockResolvedValueOnce([]);
+      specRepo.find.mockResolvedValueOnce([
+        {
+          agent_id: 'agent-1',
+          category: 'coding',
+          is_active: false,
+          override_route: route('openai', 'gpt-4o'),
+          fallback_routes: null,
+        } as unknown as SpecificityAssignment,
+      ]);
+      headerTierRepo.find.mockResolvedValueOnce([
+        {
+          agent_id: 'agent-1',
+          name: 'Debug',
+          enabled: false,
+          override_route: route('openai', 'gpt-4o'),
+          fallback_routes: null,
+        } as unknown as HeaderTier,
+      ]);
+
+      await expect(svc.removeProvider('agent-1', 'tenant-1', 'openai')).resolves.toEqual({
+        notifications: [],
+      });
+
+      expect(providerRepo.save).toHaveBeenCalledWith([row]);
+    });
+
+    it('ignores routes on agents where the target provider is not enabled', async () => {
+      const row = {
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'openai',
+        auth_type: 'api_key',
+        label: 'Default',
+        priority: 0,
+        is_active: true,
+      } as unknown as TenantProvider;
+      const agentRepo = makeRepo([{ id: 'agent-1', name: 'support-bot' }]);
+      const enabledRepo = makeRepo();
+      enabledRepo.find.mockResolvedValueOnce([]);
+      const localSvc = new ProviderService(
+        providerRepo as unknown as Repository<TenantProvider>,
+        tierRepo as unknown as Repository<TierAssignment>,
+        specRepo as unknown as Repository<SpecificityAssignment>,
+        agentRepo as unknown as Repository<Agent>,
+        headerTierRepo as unknown as Repository<HeaderTier>,
+        pricingCache as unknown as ModelPricingCacheService,
+        routingCache as unknown as RoutingCacheService,
+        enabledRepo as unknown as Repository<AgentEnabledProvider>,
+      );
+      providerRepo.find.mockResolvedValueOnce([row]);
+      tierRepo.find.mockResolvedValueOnce([
+        {
+          agent_id: 'agent-1',
+          tier: 'standard',
+          override_route: route('openai', 'gpt-4o'),
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+      specRepo.find.mockResolvedValueOnce([]);
+      headerTierRepo.find.mockResolvedValueOnce([]);
+
+      await expect(localSvc.removeProvider('agent-1', 'tenant-1', 'openai')).resolves.toEqual({
+        notifications: [],
+      });
+
+      expect(providerRepo.save).toHaveBeenCalledWith([row]);
+      expect(enabledRepo.delete).toHaveBeenCalledWith({ tenant_provider_id: In(['p1']) });
+    });
+
+    it('blocks routes on agents where the target provider is enabled', async () => {
+      const row = {
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'openai',
+        auth_type: 'api_key',
+        label: 'Default',
+        priority: 0,
+        is_active: true,
+      } as unknown as TenantProvider;
+      const agentRepo = makeRepo([{ id: 'agent-1', name: 'support-bot' }]);
+      const enabledRepo = makeRepo();
+      enabledRepo.find.mockResolvedValueOnce([
+        { agent_id: 'agent-1', tenant_provider_id: 'p1' } as AgentEnabledProvider,
+      ]);
+      const localSvc = new ProviderService(
+        providerRepo as unknown as Repository<TenantProvider>,
+        tierRepo as unknown as Repository<TierAssignment>,
+        specRepo as unknown as Repository<SpecificityAssignment>,
+        agentRepo as unknown as Repository<Agent>,
+        headerTierRepo as unknown as Repository<HeaderTier>,
+        pricingCache as unknown as ModelPricingCacheService,
+        routingCache as unknown as RoutingCacheService,
+        enabledRepo as unknown as Repository<AgentEnabledProvider>,
+      );
+      providerRepo.find.mockResolvedValueOnce([row]);
+      tierRepo.find.mockResolvedValueOnce([
+        {
+          agent_id: 'agent-1',
+          tier: 'standard',
+          override_route: route('openai', 'gpt-4o'),
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+
+      await expect(localSvc.removeProvider('agent-1', 'tenant-1', 'openai')).rejects.toThrow(
+        'Update routing first (agent "support-bot", tier standard, primary: gpt-4o).',
+      );
+
+      expect(providerRepo.save).not.toHaveBeenCalled();
+      expect(enabledRepo.delete).not.toHaveBeenCalled();
+    });
+
     it('blocks only disconnected auth-type routes when another auth type stays active', async () => {
       providerRepo.find.mockResolvedValueOnce([
         {
@@ -240,6 +419,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       ]);
       tierRepo.find.mockResolvedValueOnce([
         {
+          agent_id: 'agent-1',
           tier: 'standard',
           override_route: route('anthropic', 'claude-sonnet-4-6', 'subscription'),
           fallback_routes: [route('anthropic', 'claude-haiku-4-6', 'api_key')],
@@ -396,6 +576,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       ]);
       tierRepo.find.mockResolvedValue([
         {
+          agent_id: 'agent-1',
           tier: 'standard',
           override_route: route('openai', 'gpt-4o'),
           fallback_routes: null,
@@ -409,6 +590,82 @@ describe('ProviderService — route-only cleanup paths', () => {
       ).resolves.toEqual({ notifications: [] });
 
       expect(providerRepo.remove).toHaveBeenCalledWith(target);
+      expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
+      expect(routingCache.invalidateTenant).toHaveBeenCalledWith('tenant-1');
+    });
+
+    it('deletes exact usage history before hard-deleting an inactive labeled key', async () => {
+      const messageRepo = makeRepo();
+      const enabledRepo = makeRepo();
+      const messages = [
+        { id: 'target-1', tenant_id: 'tenant-1', tenant_provider_id: 'inactive-sub' },
+        { id: 'target-2', tenant_id: 'tenant-1', tenant_provider_id: 'inactive-sub' },
+        { id: 'other-tenant', tenant_id: 'tenant-2', tenant_provider_id: 'inactive-sub' },
+        { id: 'other-key', tenant_id: 'tenant-1', tenant_provider_id: 'active-sub' },
+        { id: 'legacy-null', tenant_id: 'tenant-1', tenant_provider_id: null },
+      ];
+      const target = {
+        id: 'inactive-sub',
+        agent_id: null,
+        provider: 'anthropic',
+        auth_type: 'subscription',
+        label: 'Old Claude',
+        priority: 0,
+        is_active: false,
+      } as unknown as TenantProvider;
+      providerRepo.find.mockImplementation(async (options?: { order?: unknown }) =>
+        options?.order ? [] : [target],
+      );
+      messageRepo.delete.mockImplementation(async ({ tenant_id, tenant_provider_id }) => {
+        const before = messages.length;
+        for (let index = messages.length - 1; index >= 0; index -= 1) {
+          const message = messages[index];
+          if (
+            message.tenant_id === tenant_id &&
+            message.tenant_provider_id === tenant_provider_id
+          ) {
+            messages.splice(index, 1);
+          }
+        }
+        return { affected: before - messages.length, raw: [] };
+      });
+      providerRepo.manager.getRepository.mockReturnValue(messageRepo);
+      tierRepo.find.mockResolvedValue([]);
+      specRepo.find.mockResolvedValue([]);
+      headerTierRepo.find.mockResolvedValue([]);
+      const localSvc = new ProviderService(
+        providerRepo as unknown as Repository<TenantProvider>,
+        tierRepo as unknown as Repository<TierAssignment>,
+        specRepo as unknown as Repository<SpecificityAssignment>,
+        makeRepo() as unknown as Repository<Agent>,
+        headerTierRepo as unknown as Repository<HeaderTier>,
+        pricingCache as unknown as ModelPricingCacheService,
+        routingCache as unknown as RoutingCacheService,
+        enabledRepo as unknown as Repository<AgentEnabledProvider>,
+      );
+
+      await expect(
+        localSvc.removeProvider('agent-1', 'tenant-1', 'anthropic', 'subscription', 'Old Claude'),
+      ).resolves.toEqual({ notifications: [] });
+
+      expect(messageRepo.delete).toHaveBeenCalledWith({
+        tenant_id: 'tenant-1',
+        tenant_provider_id: 'inactive-sub',
+      });
+      expect(messages).toEqual([
+        { id: 'other-tenant', tenant_id: 'tenant-2', tenant_provider_id: 'inactive-sub' },
+        { id: 'other-key', tenant_id: 'tenant-1', tenant_provider_id: 'active-sub' },
+        { id: 'legacy-null', tenant_id: 'tenant-1', tenant_provider_id: null },
+      ]);
+      expect(messageRepo.delete.mock.invocationCallOrder[0]).toBeLessThan(
+        providerRepo.remove.mock.invocationCallOrder[0],
+      );
+      expect(providerRepo.remove).toHaveBeenCalledWith(target);
+      expect(enabledRepo.delete).toHaveBeenCalledWith({
+        tenant_provider_id: In(['inactive-sub']),
+      });
+      expect(providerRepo.save).not.toHaveBeenCalled();
+      expect(providerRepo.findOne).not.toHaveBeenCalled();
       expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
       expect(routingCache.invalidateTenant).toHaveBeenCalledWith('tenant-1');
     });
@@ -483,6 +740,18 @@ describe('ProviderService — route-only cleanup paths', () => {
     });
 
     it('blocks bulk disable when a route references an active provider', async () => {
+      const agentRepo = makeRepo([
+        { id: 'agent-1', name: 'support-bot', display_name: 'Support Bot' },
+      ]);
+      const localSvc = new ProviderService(
+        providerRepo as unknown as Repository<TenantProvider>,
+        tierRepo as unknown as Repository<TierAssignment>,
+        specRepo as unknown as Repository<SpecificityAssignment>,
+        agentRepo as unknown as Repository<Agent>,
+        headerTierRepo as unknown as Repository<HeaderTier>,
+        pricingCache as unknown as ModelPricingCacheService,
+        routingCache as unknown as RoutingCacheService,
+      );
       providerRepo.find.mockResolvedValueOnce([
         {
           id: 'p1',
@@ -495,6 +764,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       ]);
       tierRepo.find.mockResolvedValueOnce([
         {
+          agent_id: 'agent-1',
           tier: 'standard',
           override_route: route('openai', 'gpt-4o'),
           fallback_routes: null,
@@ -503,9 +773,52 @@ describe('ProviderService — route-only cleanup paths', () => {
       specRepo.find.mockResolvedValue([]);
       headerTierRepo.find.mockResolvedValue([]);
 
-      await expect(svc.deactivateAllProviders('agent-1', 'tenant-1')).rejects.toThrow(
-        /Cannot disconnect provider/,
+      await expect(localSvc.deactivateAllProviders('agent-1', 'tenant-1')).rejects.toThrow(
+        'Update routing first (agent "Support Bot", tier standard, primary: gpt-4o).',
       );
+      expect(providerRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('checks owned-agent routes in batches and stops after the first match', async () => {
+      const agentRepo = makeRepo([
+        { id: 'agent-1', name: 'first-bot', display_name: 'First Bot' },
+        { id: 'agent-2', name: 'second-bot', display_name: 'Second Bot' },
+      ]);
+      const localSvc = new ProviderService(
+        providerRepo as unknown as Repository<TenantProvider>,
+        tierRepo as unknown as Repository<TierAssignment>,
+        specRepo as unknown as Repository<SpecificityAssignment>,
+        agentRepo as unknown as Repository<Agent>,
+        headerTierRepo as unknown as Repository<HeaderTier>,
+        pricingCache as unknown as ModelPricingCacheService,
+        routingCache as unknown as RoutingCacheService,
+      );
+      providerRepo.find.mockResolvedValueOnce([
+        {
+          id: 'p1',
+          provider: 'openai',
+          auth_type: 'api_key',
+          label: 'Default',
+          priority: 0,
+          is_active: true,
+        } as unknown as TenantProvider,
+      ]);
+      tierRepo.find.mockResolvedValueOnce([
+        {
+          agent_id: 'agent-2',
+          tier: 'standard',
+          override_route: route('openai', 'gpt-4o'),
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+
+      await expect(localSvc.deactivateAllProviders('agent-1', 'tenant-1')).rejects.toThrow(
+        'Update routing first (agent "Second Bot", tier standard, primary: gpt-4o).',
+      );
+
+      expect(tierRepo.find).toHaveBeenCalledTimes(1);
+      expect(specRepo.find).not.toHaveBeenCalled();
+      expect(headerTierRepo.find).not.toHaveBeenCalled();
       expect(providerRepo.update).not.toHaveBeenCalled();
     });
   });
@@ -542,12 +855,14 @@ describe('ProviderService — route-only cleanup paths', () => {
       headerTierRepo.find.mockResolvedValue([
         {
           id: 'h1',
+          agent_id: 'agent-1',
           override_route: headerPin('Key 2'),
           fallback_routes: [headerPin('Key 2'), headerPin('Default')],
         } as unknown as HeaderTier,
         // Non-matching tier (different pinned label) must be left untouched.
         {
           id: 'h2',
+          agent_id: 'agent-1',
           override_route: headerPin('Default'),
           fallback_routes: null,
         } as unknown as HeaderTier,
@@ -577,6 +892,7 @@ describe('ProviderService — route-only cleanup paths', () => {
       headerTierRepo.find.mockResolvedValue([
         {
           id: 'h1',
+          agent_id: 'agent-1',
           override_route: headerPin('Key 2'),
           fallback_routes: null,
         } as unknown as HeaderTier,
@@ -644,6 +960,27 @@ describe('ProviderService — route-only cleanup paths', () => {
       }
     });
 
+    it('renames a key at tenant scope when no agent is given', async () => {
+      providerRepo.find.mockResolvedValue([
+        {
+          id: 'target',
+          provider: 'openai',
+          auth_type: 'api_key',
+          label: 'Key 2',
+          is_active: true,
+        },
+      ]);
+      tierRepo.find.mockResolvedValue([]);
+      specRepo.find.mockResolvedValue([]);
+      headerTierRepo.find.mockResolvedValue([]);
+
+      const renamed = await svc.renameKey(null, 'tenant-1', 'openai', 'api_key', 'Key 2', 'New');
+
+      expect(renamed.label).toBe('New');
+      expect(routingCache.invalidateAgent).not.toHaveBeenCalledWith(null);
+      expect(routingCache.invalidateTenant).toHaveBeenCalledWith('tenant-1');
+    });
+
     it('blocks full provider disconnect while header tiers route to it', async () => {
       providerRepo.find.mockResolvedValue([
         {
@@ -661,12 +998,14 @@ describe('ProviderService — route-only cleanup paths', () => {
       headerTierRepo.find.mockResolvedValue([
         {
           id: 'h1',
+          agent_id: 'agent-1',
           override_route: route('OpenAI', 'gpt-4o'),
           fallback_routes: [route('openai', 'gpt-4o-mini'), route('anthropic', 'claude')],
         } as unknown as HeaderTier,
         // Belongs to another provider — must survive.
         {
           id: 'h2',
+          agent_id: 'agent-1',
           override_route: route('anthropic', 'claude'),
           fallback_routes: null,
         } as unknown as HeaderTier,
@@ -754,6 +1093,19 @@ describe('ProviderService — route-only cleanup paths', () => {
       const result = await svc.getProviders('tenant-1');
       expect(result).toBe(cached);
       expect(providerRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('filters legacy built-in local providers from cloud routing', async () => {
+      process.env['MANIFEST_MODE'] = 'cloud';
+      providerRepo.find.mockResolvedValue([
+        { id: 'p1', provider: 'ollama', auth_type: 'local', is_active: true },
+        { id: 'p2', provider: 'custom:runtime-id', auth_type: 'local', is_active: true },
+      ]);
+
+      const result = await svc.getProviders('tenant-1');
+
+      expect(result.map((provider) => provider.provider)).toEqual(['custom:runtime-id']);
+      expect(routingCache.setProviders).toHaveBeenCalledWith('tenant-1', result);
     });
   });
 
@@ -879,6 +1231,75 @@ describe('ProviderService — route-only cleanup paths', () => {
       await expect(
         svc.upsertProvider('agent-1', 'tenant-1', 'minimax', 'sk-cp-token', 'subscription', 'eu'),
       ).rejects.toThrow('MiniMax subscription region must be one of: global, cn');
+    });
+  });
+
+  describe('upsertProvider — MiniMax API-key region', () => {
+    let originalSecret: string | undefined;
+    beforeAll(() => {
+      originalSecret = process.env.BETTER_AUTH_SECRET;
+      process.env.BETTER_AUTH_SECRET = 'a'.repeat(48);
+    });
+    afterAll(() => {
+      if (originalSecret === undefined) delete process.env.BETTER_AUTH_SECRET;
+      else process.env.BETTER_AUTH_SECRET = originalSecret;
+    });
+
+    it('persists region=cn on a MiniMax API-key row', async () => {
+      providerRepo.findOne.mockResolvedValue(null);
+
+      await svc.upsertProvider(
+        'agent-1',
+        'tenant-1',
+        'minimax',
+        'sk-test-api-key',
+        'api_key',
+        'cn',
+      );
+
+      expect(providerRepo.insert).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'minimax', auth_type: 'api_key', region: 'cn' }),
+      );
+    });
+
+    it('preserves existing MiniMax API-key region when caller omits it', async () => {
+      providerRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'minimax',
+        auth_type: 'api_key',
+        label: 'Default',
+        region: 'cn',
+        is_active: true,
+      });
+
+      await svc.upsertProvider('agent-1', 'tenant-1', 'minimax', 'sk-rotated', 'api_key');
+
+      expect(providerRepo.save).toHaveBeenCalledWith(expect.objectContaining({ region: 'cn' }));
+    });
+
+    it('drops a non-MiniMax stored region when caller omits it', async () => {
+      providerRepo.findOne.mockResolvedValue({
+        id: 'p1',
+        agent_id: 'agent-1',
+        provider: 'minimax',
+        auth_type: 'api_key',
+        label: 'Default',
+        region: 'eu',
+        is_active: true,
+      });
+
+      await svc.upsertProvider('agent-1', 'tenant-1', 'minimax', 'sk-rotated', 'api_key');
+
+      expect(providerRepo.save).toHaveBeenCalledWith(expect.objectContaining({ region: null }));
+    });
+
+    it('rejects unsupported MiniMax API-key regions', async () => {
+      providerRepo.findOne.mockResolvedValue(null);
+
+      await expect(
+        svc.upsertProvider('agent-1', 'tenant-1', 'minimax', 'sk-test-api-key', 'api_key', 'eu'),
+      ).rejects.toThrow('MiniMax API-key region must be one of: global, cn');
     });
   });
 
@@ -1304,6 +1725,34 @@ describe('ProviderService — symmetric provider↔agent auto-connect', () => {
         { agent: 'agent-1', provider: provider.id },
         { agent: 'agent-2', provider: provider.id },
       ]);
+    });
+
+    it('rejects a new credential only at the 50-key safety ceiling', async () => {
+      const enabled: Array<{ agent: string; provider: string }> = [];
+      const { svc, providerRepo } = build(['agent-1'], enabled);
+      providerRepo.find.mockResolvedValue(
+        Array.from({ length: MAX_KEYS_PER_PROVIDER }, (_, index) => ({
+          id: `provider-${index}`,
+          provider: 'openai',
+          auth_type: 'api_key',
+          label: `Key ${index + 1}`,
+          priority: index,
+          is_active: true,
+        })) as TenantProvider[],
+      );
+
+      await expect(
+        svc.upsertProvider(
+          'agent-1',
+          'tenant-1',
+          'openai',
+          'sk-overflow',
+          'api_key',
+          undefined,
+          'Overflow',
+        ),
+      ).rejects.toThrow(`at most ${MAX_KEYS_PER_PROVIDER}`);
+      expect(providerRepo.insert).not.toHaveBeenCalled();
     });
 
     it('enables a brand-new tokenless subscription provider for every owned agent', async () => {

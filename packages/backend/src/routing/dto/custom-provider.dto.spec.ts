@@ -21,6 +21,54 @@ function makeModels(count: number): CustomProviderModelDto[] {
   return Array.from({ length: count }, (_, i) => ({ model_name: `model-${i + 1}` }));
 }
 
+describe('alias validation', () => {
+  const base = {
+    name: 'Vercel AI Gateway',
+    base_url: 'https://ai-gateway.vercel.sh/v1',
+    models: [{ model_name: 'alibaba/qwen-3-14b' }],
+  };
+
+  it('accepts a well-formed alias on create and update', async () => {
+    expect(await validate(toDto({ ...base, alias: 'vercel-ai.gw' }))).toHaveLength(0);
+    expect(await validate(toUpdateDto({ alias: 'vercel' }))).toHaveLength(0);
+  });
+
+  it('normalises the alias to trimmed lowercase before validating', async () => {
+    const dto = toDto({ ...base, alias: '  Vercel-GW ' });
+    expect(dto.alias).toBe('vercel-gw');
+    expect(await validate(dto)).toHaveLength(0);
+  });
+
+  it('turns an empty alias into null so it reads as "clear"', async () => {
+    const dto = toUpdateDto({ alias: '   ' });
+    expect(dto.alias).toBeNull();
+    expect(await validate(dto)).toHaveLength(0);
+  });
+
+  it('accepts an explicit null and an omitted alias', async () => {
+    expect(await validate(toDto({ ...base, alias: null }))).toHaveLength(0);
+    expect(await validate(toDto(base))).toHaveLength(0);
+  });
+
+  it('rejects separators in the wrong place and forbidden characters', async () => {
+    for (const alias of ['-vercel', 'vercel-', 'ver//cel', 'vercel gw', 'a--b']) {
+      const errors = await validate(toUpdateDto({ alias }));
+      expect(errors).toHaveLength(1);
+      expect(errors[0].constraints?.matches).toContain('lowercase letters');
+    }
+  });
+
+  it('rejects an alias longer than 50 chars', async () => {
+    const errors = await validate(toUpdateDto({ alias: 'a'.repeat(51) }));
+    expect(errors[0].constraints?.maxLength).toBeDefined();
+  });
+
+  it('rejects a non-string alias untouched by normalisation', async () => {
+    const errors = await validate(toUpdateDto({ alias: 42 }));
+    expect(errors[0].constraints?.isString).toBeDefined();
+  });
+});
+
 describe('CreateCustomProviderDto', () => {
   it('accepts valid input', async () => {
     const dto = toDto({

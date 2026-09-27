@@ -7,10 +7,12 @@ import AuthLayout from './layouts/AuthLayout.jsx';
 import Workspace from './pages/Workspace.jsx';
 import RootRedirect from './components/RootRedirect.jsx';
 import AgentGuard from './components/AgentGuard.jsx';
+import AuthGuard from './components/AuthGuard.jsx';
 import GuestGuard from './components/GuestGuard.jsx';
 import NotFound from './pages/NotFound.jsx';
 import ToastContainer from './components/ToastContainer.jsx';
 import { lazyReload, clearReloadFlag } from './services/lazy-reload.js';
+import { RightSidebarProvider } from './services/right-sidebar.jsx';
 import type { ParentComponent } from 'solid-js';
 import './styles/theme.css';
 
@@ -28,10 +30,16 @@ const Routing = lazyReload(() => import('./pages/Routing.jsx'));
 const Playground = lazyReload(() => import('./pages/Playground.jsx'));
 const Limits = lazyReload(() => import('./pages/Limits.jsx'));
 const Account = lazyReload(() => import('./pages/Account.jsx'));
+const Upgrade = lazyReload(() => import('./pages/Upgrade.jsx'));
+const CliAuth = lazyReload(() => import('./pages/CliAuth.jsx'));
+const Consent = lazyReload(() => import('./pages/Consent.jsx'));
+const OauthError = lazyReload(() => import('./pages/OauthError.jsx'));
 const Login = lazyReload(() => import('./pages/Login.jsx'));
 const Register = lazyReload(() => import('./pages/Register.jsx'));
 const ResetPassword = lazyReload(() => import('./pages/ResetPassword.jsx'));
 const Setup = lazyReload(() => import('./pages/Setup.jsx'));
+const Discovery = lazyReload(() => import('./pages/Discovery.jsx'));
+const Welcome = lazyReload(() => import('./pages/Welcome.jsx'));
 const ModelPrices = lazyReload(() => import('./pages/ModelPrices.jsx'));
 const Help = lazyReload(() => import('./pages/Help.jsx'));
 const FreeModels = lazyReload(() => import('./pages/FreeModels.jsx'));
@@ -40,11 +48,27 @@ const Subscriptions = lazyReload(() => import('./pages/providers/Subscriptions.j
 const Byok = lazyReload(() => import('./pages/providers/Byok.jsx'));
 const LocalProviders = lazyReload(() => import('./pages/providers/Local.jsx'));
 const ConnectionDetail = lazyReload(() => import('./pages/providers/ConnectionDetail.jsx'));
+const McpServer = lazyReload(() => import('./pages/integrations/McpServer.jsx'));
+const Cli = lazyReload(() => import('./pages/integrations/Cli.jsx'));
 
 const GuestLayout: ParentComponent = (props) => (
   <GuestGuard>
     <AuthLayout>{props.children}</AuthLayout>
   </GuestGuard>
+);
+
+// Post-signup discovery step (self-hosted only): authenticated, rendered as
+// its own centered two-column card outside the App shell. The page itself
+// redirects anyone who should not see it (cloud, already completed or skipped).
+const DiscoveryLayout: ParentComponent = (props) => <AuthGuard>{props.children}</AuthGuard>;
+
+// Full-page onboarding: authenticated but outside the App dashboard shell.
+// The embedded Playground step calls useRightSidebar, so the provider App
+// normally supplies must be recreated here.
+const WelcomeLayout: ParentComponent = (props) => (
+  <AuthGuard>
+    <RightSidebarProvider>{props.children}</RightSidebarProvider>
+  </AuthGuard>
 );
 
 // Remove the static <title> from index.html so @solidjs/meta can manage
@@ -76,6 +100,8 @@ render(
           <Route path="/providers/usage-based" component={Byok} />
           <Route path="/providers/local" component={LocalProviders} />
           <Route path="/providers/connections/:connectionId" component={ConnectionDetail} />
+          <Route path="/integrations/mcp" component={McpServer} />
+          <Route path="/integrations/cli" component={Cli} />
           <Route path="/harnesses/:agentName" component={AgentGuard}>
             {/* Redirects: /limits → /guardrails, /messages → global /messages */}
             <Route path="/limits" component={AgentLimitsRedirect} />
@@ -119,6 +145,18 @@ render(
           <Route path="/connect-provider" component={ConnectProvider} />
           <Route path="/account" component={Account} />
         </Route>
+        <Route path="/upgrade" component={AuthGuard}>
+          <Route path="/" component={Upgrade} />
+        </Route>
+        <Route path="/cli/auth" component={AuthGuard}>
+          <Route path="/" component={CliAuth} />
+        </Route>
+        <Route path="/consent" component={AuthGuard}>
+          <Route path="/" component={Consent} />
+        </Route>
+        <Route path="/oauth-error" component={AuthLayout}>
+          <Route path="/" component={OauthError} />
+        </Route>
         <Route path="/" component={GuestLayout}>
           <Route path="/login" component={Login} />
           <Route path="/register" component={Register} />
@@ -126,6 +164,12 @@ render(
         </Route>
         <Route path="/setup" component={AuthLayout}>
           <Route path="/" component={Setup} />
+        </Route>
+        <Route path="/discovery" component={DiscoveryLayout}>
+          <Route path="/" component={Discovery} />
+        </Route>
+        <Route path="/welcome" component={WelcomeLayout}>
+          <Route path="/" component={Welcome} />
         </Route>
         <Route path="*404" component={NotFound} />
       </Router>

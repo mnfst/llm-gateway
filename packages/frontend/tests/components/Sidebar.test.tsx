@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@solidjs/testing-library";
 
 let mockPathname = "/overview";
@@ -27,24 +27,21 @@ vi.mock("@solidjs/router", () => ({
   useLocation: () => ({ get pathname() { return mockPathname; } }),
 }));
 
-// getAgents returns the harness list rendered in the in-nav switcher. Each test
-// can override the resolved value via mockGetAgents.
-const mockGetAgents = vi.fn();
-vi.mock("../../src/services/api.js", () => ({
-  getAgents: (...args: unknown[]) => mockGetAgents(...args),
-}));
-
-// The SSE ping signal drives the agents resource refetch — a stable 0 is fine.
-vi.mock("../../src/services/sse.js", () => ({
-  agentPing: () => 0,
+const mockGetBillingStatus = vi.fn();
+vi.mock("../../src/services/api/billing.js", () => ({
+  getBillingStatus: (...args: unknown[]) => mockGetBillingStatus(...args),
 }));
 
 // Local providers only exist on self-hosted installs; the Sidebar hides the
 // Local nav entry in cloud. Default to self-hosted so the legacy link
 // assertions keep applying; cloud tests flip the flag.
 let mockIsSelfHosted = true;
+// MCP is on by default; an install served over plain HTTP runs without it and
+// the nav entry goes with it.
+let mockMcpEnabled = true;
 vi.mock("../../src/services/setup-status.js", () => ({
   checkIsSelfHosted: () => Promise.resolve(mockIsSelfHosted),
+  checkMcpEnabled: () => Promise.resolve(mockMcpEnabled),
 }));
 
 // Stub the create-harness modal so the Sidebar test stays isolated from the
@@ -70,26 +67,16 @@ vi.mock("../../src/components/AddAgentModal.jsx", async () => {
 
 import Sidebar from "../../src/components/Sidebar";
 
-const SAMPLE_AGENTS = [
-  {
-    agent_name: "alpha",
-    display_name: "Alpha Harness",
-    agent_platform: "openclaw",
-    agent_category: "personal",
-  },
-  {
-    // No display_name → falls back to agent_name. No platform → no icon.
-    agent_name: "beta",
-    agent_platform: null,
-    agent_category: null,
-  },
-];
-
 beforeEach(() => {
+  sessionStorage.clear();
   vi.clearAllMocks();
   mockPathname = "/overview";
   mockIsSelfHosted = true;
-  mockGetAgents.mockResolvedValue({ agents: SAMPLE_AGENTS });
+  mockGetBillingStatus.mockResolvedValue({
+    enabled: false,
+    plan: "free",
+    requests: { used: null, limit: null, periodEnd: null },
+  });
 });
 
 describe("Sidebar — global nav links", () => {
@@ -98,9 +85,9 @@ describe("Sidebar — global nav links", () => {
     expect(screen.getByText("Overview")).toBeDefined();
   });
 
-  it("renders Messages link", () => {
+  it("renders Requests link", () => {
     render(() => <Sidebar />);
-    expect(screen.getByText("Messages")).toBeDefined();
+    expect(screen.getByText("Requests")).toBeDefined();
   });
 
   it("renders provider section links (Local resolves async, self-hosted)", async () => {
@@ -121,9 +108,12 @@ describe("Sidebar — global nav links", () => {
     expect(container.textContent).not.toContain("Local");
   });
 
-  it("renders the HARNESSES section label", () => {
-    render(() => <Sidebar />);
-    expect(screen.getByText("HARNESSES")).toBeDefined();
+  it("renders the Harnesses nav link under Requests", () => {
+    const { container } = render(() => <Sidebar />);
+    const links = Array.from(container.querySelectorAll("a.sidebar__link")).map((a) =>
+      a.getAttribute("href"),
+    );
+    expect(links.indexOf("/harnesses")).toBe(links.indexOf("/messages") + 1);
   });
 
   it("renders the TOOLS section with Playground link", () => {
@@ -151,7 +141,7 @@ describe("Sidebar — global nav links", () => {
     expect(container.querySelector('a[href="/playground"]')).not.toBeNull();
   });
 
-  it("keeps exactly the expected sidebar__link set (no static Harnesses link)", async () => {
+  it("keeps exactly the expected sidebar__link set", async () => {
     const { container } = render(() => <Sidebar />);
     await waitFor(() =>
       expect(container.querySelector('a[href="/providers/local"]')).not.toBeNull(),
@@ -162,14 +152,41 @@ describe("Sidebar — global nav links", () => {
     expect(links).toEqual([
       "/overview",
       "/messages",
-      "/providers/subscriptions",
-      "/providers/usage-based",
+      "/harnesses",
       "/providers/local",
+      "/providers/usage-based",
+      "/providers/subscriptions",
+      "/integrations/mcp",
+      "/integrations/cli",
       "/playground",
     ]);
-    // The collapsible section replaces the old static link — there is no
-    // sidebar__link pointing at /harnesses anymore.
-    expect(container.querySelector('a.sidebar__link[href="/harnesses"]')).toBeNull();
+  });
+
+  it("hides the MCP entry when the backend runs without the MCP server", async () => {
+    mockMcpEnabled = false;
+    try {
+      const { container } = render(() => <Sidebar />);
+      await waitFor(() =>
+        expect(container.querySelector('a[href="/integrations/mcp"]')).toBeNull(),
+      );
+      // The rest of the Integrations section stays.
+      expect(container.querySelector('a[href="/integrations/cli"]')).not.toBeNull();
+    } finally {
+      mockMcpEnabled = true;
+    }
+  });
+
+  it("shows the Integrations entries with their New pills", async () => {
+    const { container } = render(() => <Sidebar />);
+    await waitFor(() =>
+      expect(container.querySelector('a[href="/providers/local"]')).not.toBeNull(),
+    );
+    const mcp = container.querySelector('a[href="/integrations/mcp"]');
+    const cli = container.querySelector('a[href="/integrations/cli"]');
+    expect(mcp?.textContent).toContain("MCP server");
+    expect(cli?.textContent).toContain("CLI");
+    expect(mcp?.querySelector(".sidebar__badge")?.textContent).toBe("New");
+    expect(cli?.querySelector(".sidebar__badge")?.textContent).toBe("New");
   });
 });
 
@@ -225,169 +242,28 @@ describe("Sidebar — global nav active state", () => {
   });
 });
 
-describe("Sidebar — harness switcher list", () => {
-  it("renders one harness item per agent", async () => {
+describe("Sidebar — harnesses nav link", () => {
+  it("renders Harnesses as a nav link to /harnesses with the create button beside it", () => {
     const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelectorAll("a.sidebar__agent-item").length).toBe(2);
-    });
-    expect(mockGetAgents).toHaveBeenCalledWith();
+    const row = container.querySelector(".sidebar__link-row");
+    expect(row).not.toBeNull();
+    const link = row!.querySelector('a.sidebar__link[href="/harnesses"]');
+    expect(link?.textContent).toBe("Harnesses");
+    expect(row!.querySelector("button.sidebar__section-add")).not.toBeNull();
   });
 
-  it("links each item to /harnesses/:name and shows the display name", async () => {
+  it("marks the link active on /harnesses and its subpages", () => {
+    mockPathname = "/harnesses/alpha/routing";
     const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector('a[href="/harnesses/alpha"]')).not.toBeNull();
-    });
-    const alpha = container.querySelector('a[href="/harnesses/alpha"]');
-    expect(alpha?.textContent).toContain("Alpha Harness");
+    const link = container.querySelector('a.sidebar__link[href="/harnesses"]');
+    expect(link?.classList.contains("active")).toBe(true);
+    expect(link?.getAttribute("aria-current")).toBe("page");
   });
 
-  it("URL-encodes harness names with special characters in the item href", async () => {
-    mockGetAgents.mockResolvedValueOnce({ agents: [{ agent_name: "a/b c", display_name: "A B" }] });
+  it("does not render the old per-agent switcher", () => {
     const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector("a.sidebar__agent-item")).not.toBeNull();
-    });
-    const item = container.querySelector("a.sidebar__agent-item");
-    expect(item?.getAttribute("href")).toBe("/harnesses/a%2Fb%20c");
-  });
-
-  it("falls back to agent_name when display_name is missing", async () => {
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector('a[href="/harnesses/beta"]')).not.toBeNull();
-    });
-    const beta = container.querySelector('a[href="/harnesses/beta"]');
-    expect(beta?.textContent).toContain("beta");
-  });
-
-  it("renders a platform icon for agents that have one and omits it otherwise", async () => {
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelectorAll("a.sidebar__agent-item").length).toBe(2);
-    });
-    const alpha = container.querySelector('a[href="/harnesses/alpha"]');
-    const beta = container.querySelector('a[href="/harnesses/beta"]');
-    // alpha has a known platform → icon present; beta has no platform → no icon.
-    expect(alpha?.querySelector("img.sidebar__agent-icon")).not.toBeNull();
-    expect(beta?.querySelector("img.sidebar__agent-icon")).toBeNull();
-  });
-
-  it("marks the current /harnesses/:name route active", async () => {
-    mockPathname = "/harnesses/alpha";
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector('a[href="/harnesses/alpha"]')).not.toBeNull();
-    });
-    const alpha = container.querySelector('a[href="/harnesses/alpha"]');
-    const beta = container.querySelector('a[href="/harnesses/beta"]');
-    expect(alpha?.getAttribute("aria-current")).toBe("page");
-    expect(alpha?.classList.contains("sidebar__agent-item--active")).toBe(true);
-    expect(beta?.getAttribute("aria-current")).not.toBe("page");
-  });
-
-  it("excludes Playground agents by calling getAgents() with the default (no includePlayground)", async () => {
-    render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(mockGetAgents).toHaveBeenCalled();
-    });
-    // Default invocation = playground agents excluded (getAgents(false)).
-    expect(mockGetAgents).toHaveBeenCalledWith();
-  });
-
-  it("resolves a bare array response (no { agents } wrapper)", async () => {
-    mockGetAgents.mockResolvedValue(SAMPLE_AGENTS);
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelectorAll("a.sidebar__agent-item").length).toBe(2);
-    });
-  });
-
-  it("renders the empty state only once the resource resolves empty (not while loading)", async () => {
-    // Hold the resource in its loading state with a promise we resolve manually.
-    let resolveAgents!: (v: unknown) => void;
-    mockGetAgents.mockReturnValue(
-      new Promise((res) => {
-        resolveAgents = res;
-      }),
-    );
-    const { container } = render(() => <Sidebar />);
-    // The section is expanded, but while loading the empty state must NOT flash.
-    expect(container.querySelector(".sidebar__agents-list")).not.toBeNull();
-    expect(container.querySelector(".sidebar__agents-empty")).toBeNull();
-
-    // Resolve to an empty list → empty state appears now that loading is done.
-    resolveAgents({ agents: [] });
-    await waitFor(() => {
-      expect(container.querySelector(".sidebar__agents-empty")).not.toBeNull();
-    });
-    expect(container.querySelector(".sidebar__agents-empty")?.textContent).toContain(
-      "No harnesses yet",
-    );
-    expect(container.querySelectorAll("a.sidebar__agent-item").length).toBe(0);
-  });
-
-  it("falls back to an empty list (and empty state) when getAgents rejects", async () => {
-    mockGetAgents.mockRejectedValue(new Error("boom"));
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector(".sidebar__agents-empty")).not.toBeNull();
-    });
-  });
-
-  it("falls back to an empty list when getAgents resolves to null", async () => {
-    mockGetAgents.mockResolvedValue(null);
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector(".sidebar__agents-empty")).not.toBeNull();
-    });
-    expect(container.querySelectorAll("a.sidebar__agent-item").length).toBe(0);
-  });
-});
-
-describe("Sidebar — collapse toggle", () => {
-  it("the collapse toggle is a real button labelled HARNESSES with aria-expanded", async () => {
-    const { container } = render(() => <Sidebar />);
-    const caret = container.querySelector(".sidebar__section-caret");
-    // Keyboard-operable: it is a <button> (native keyboard semantics), not a div.
-    expect(caret?.tagName).toBe("BUTTON");
-    expect((caret as HTMLButtonElement).type).toBe("button");
-    expect(caret?.textContent).toContain("HARNESSES");
-    expect(caret?.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("hides the harness list when the toggle is clicked, and re-shows on toggle back", async () => {
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector(".sidebar__agents-list")).not.toBeNull();
-    });
-
-    const caret = container.querySelector(".sidebar__section-caret") as HTMLButtonElement;
-    expect(caret.getAttribute("aria-expanded")).toBe("true");
-
-    await fireEvent.click(caret);
     expect(container.querySelector(".sidebar__agents-list")).toBeNull();
-    expect(caret.getAttribute("aria-expanded")).toBe("false");
-
-    await fireEvent.click(caret);
-    expect(container.querySelector(".sidebar__agents-list")).not.toBeNull();
-    expect(caret.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("the section toggle and the + create button are sibling buttons (not nested)", () => {
-    const { container } = render(() => <Sidebar />);
-    const caret = container.querySelector(".sidebar__section-caret");
-    const add = container.querySelector(".sidebar__section-add");
-    expect(caret?.tagName).toBe("BUTTON");
-    expect(add?.tagName).toBe("BUTTON");
-    // A button must never contain another button.
-    expect(caret?.querySelector("button")).toBeNull();
-    expect(add?.querySelector("button")).toBeNull();
-    // They share the same parent — true siblings.
-    expect(add?.parentElement).toBe(caret?.parentElement);
-    // No interactive <div> remains for the section header.
-    expect(container.querySelector("div.sidebar__section-label--interactive")).toBeNull();
+    expect(container.querySelector(".sidebar__section-caret")).toBeNull();
   });
 });
 
@@ -419,15 +295,12 @@ describe("Sidebar — create-harness modal", () => {
     expect(mockAddModal).toHaveBeenCalledWith(true);
   });
 
-  it("clicking + does not also toggle the section collapse", async () => {
-    const { container } = render(() => <Sidebar />);
-    await waitFor(() => {
-      expect(container.querySelector(".sidebar__agents-list")).not.toBeNull();
-    });
+  it("clicking + opens the modal without triggering navigation", async () => {
+    const onNavigate = vi.fn();
+    const { container } = render(() => <Sidebar onNavigate={onNavigate} />);
     const addBtn = container.querySelector(".sidebar__section-add") as HTMLButtonElement;
     await fireEvent.click(addBtn);
-    // List stays visible — the + click stopped propagation to the label toggle.
-    expect(container.querySelector(".sidebar__agents-list")).not.toBeNull();
+    expect(onNavigate).not.toHaveBeenCalled();
   });
 });
 
@@ -458,25 +331,99 @@ describe("Sidebar — structure and interaction", () => {
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onNavigate when a harness item is clicked", async () => {
+  it("calls onNavigate when the Harnesses link is clicked", async () => {
     const onNavigate = vi.fn();
     const { container } = render(() => <Sidebar onNavigate={onNavigate} />);
-    await waitFor(() => {
-      expect(container.querySelector('a[href="/harnesses/alpha"]')).not.toBeNull();
-    });
-    const item = container.querySelector('a[href="/harnesses/alpha"]') as HTMLAnchorElement;
+    const item = container.querySelector('a.sidebar__link[href="/harnesses"]') as HTMLAnchorElement;
     item.addEventListener("click", (event) => event.preventDefault(), { once: true });
     await fireEvent.click(item);
     expect(onNavigate).toHaveBeenCalled();
   });
 
-  it("renders Feedback section with hint and external attributes", () => {
+  it("does not render the old Feedback section", () => {
     const { container } = render(() => <Sidebar />);
-    expect(screen.getByText("Feedback")).toBeDefined();
-    expect(container.textContent).toContain("Share ideas or report bugs");
-    const feedbackLink = container.querySelector("a.sidebar__feedback") as HTMLAnchorElement;
-    expect(feedbackLink).not.toBeNull();
-    expect(feedbackLink.target).toBe("_blank");
-    expect(feedbackLink.rel).toContain("noopener");
+    expect(container.querySelector("a.sidebar__feedback")).toBeNull();
+  });
+});
+
+describe("Sidebar — usage card", () => {
+  beforeEach(() => {
+    // The usage meter only occupies the bottom-left slot in cloud; self-hosted
+    // always shows the Autofix card there.
+    mockIsSelfHosted = false;
+  });
+  afterEach(() => {
+    mockIsSelfHosted = true;
+  });
+
+  it("renders free-plan usage and the near-limit warning state", async () => {
+    mockGetBillingStatus.mockResolvedValue({
+      enabled: true,
+      plan: "free",
+      requests: { used: 8_500, limit: 10_000, periodEnd: null },
+    });
+
+    const { container } = render(() => <Sidebar />);
+
+    await screen.findByText(/8,500/);
+    expect(container.querySelector(".sidebar-usage__count--danger")).not.toBeNull();
+    expect(container.querySelector(".sidebar-usage__fill--danger")).not.toBeNull();
+    expect(container.textContent).toContain(
+      "You're limited to 10,000 requests this month. Upgrade for unlimited.",
+    );
+    expect(container.querySelector('a[href="/upgrade"]')).not.toBeNull();
+  });
+
+  it("renders the reached-limit warning state", async () => {
+    mockGetBillingStatus.mockResolvedValue({
+      enabled: true,
+      plan: "free",
+      requests: { used: 10_001, limit: 10_000, periodEnd: null },
+    });
+
+    const { container } = render(() => <Sidebar />);
+
+    await screen.findByText(/10,001/);
+    expect(container.textContent).toContain(
+      "You've reached your monthly limit. Requests are being blocked.",
+    );
+    expect(container.querySelector(".sidebar-usage__fill--danger")).not.toBeNull();
+  });
+
+  it("hides the usage card when the billing fetch fails (fail-soft fallback)", async () => {
+    mockGetBillingStatus.mockRejectedValue(new Error("boom"));
+    const { container } = render(() => <Sidebar />);
+    await waitFor(() => expect(mockGetBillingStatus).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(container.querySelector(".sidebar-usage")).toBeNull();
+  });
+
+  it("renders the warning fill before the danger threshold", async () => {
+    mockGetBillingStatus.mockResolvedValue({
+      enabled: true,
+      plan: "free",
+      requests: { used: 5_500, limit: 10_000, periodEnd: null },
+    });
+
+    const { container } = render(() => <Sidebar />);
+
+    await screen.findByText(/5,500/);
+    expect(container.querySelector(".sidebar-usage__fill--warning")).not.toBeNull();
+    expect(container.querySelector(".sidebar-usage__fill--danger")).toBeNull();
+  });
+});
+
+describe("Sidebar — Autofix announcement card", () => {
+  it("always renders the Autofix announcement card", async () => {
+    const { container } = render(() => <Sidebar />);
+    await screen.findByText("Make sure your APIs no longer crash");
+    expect(container.querySelector(".sidebar-autofix")).not.toBeNull();
+  });
+
+  it("renders the Autofix announcement card in cloud too", async () => {
+    mockIsSelfHosted = false;
+    const { container } = render(() => <Sidebar />);
+    await screen.findByText("Make sure your APIs no longer crash");
+    expect(container.querySelector(".sidebar-autofix")).not.toBeNull();
   });
 });

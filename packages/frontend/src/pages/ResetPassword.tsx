@@ -1,15 +1,24 @@
 import { A, useSearchParams } from '@solidjs/router';
 import { Title, Meta } from '@solidjs/meta';
-import { type Component, createSignal, createUniqueId, Show } from 'solid-js';
+import { type Component, createSignal, createUniqueId, onMount, Show } from 'solid-js';
 import { authClient } from '../services/auth-client.js';
+import { checkEmailConfigured } from '../services/setup-status.js';
 
 const RequestResetForm: Component = () => {
   const [email, setEmail] = createSignal('');
   const [sent, setSent] = createSignal(false);
   const [error, setError] = createSignal('');
   const [loading, setLoading] = createSignal(false);
+  // Assume email works until the status check says otherwise, so the form
+  // renders immediately and only flips to the notice on a confirmed no-provider
+  // install (typically self-hosted without EMAIL_PROVIDER set).
+  const [emailConfigured, setEmailConfigured] = createSignal(true);
   const emailId = createUniqueId();
   const errorId = createUniqueId();
+
+  onMount(() => {
+    void checkEmailConfigured().then(setEmailConfigured);
+  });
 
   const handleSubmit = async (e: Event) => {
     e.preventDefault();
@@ -36,13 +45,28 @@ const RequestResetForm: Component = () => {
       <div class="auth-header">
         <h1 class="auth-header__title">Reset your password</h1>
         <p class="auth-header__subtitle">
-          {sent()
-            ? 'Check your email for a reset link'
-            : 'Enter your email to receive a reset link'}
+          {!emailConfigured()
+            ? "Email isn't set up on this server"
+            : sent()
+              ? 'Check your email for a reset link'
+              : 'Enter your email to receive a reset link'}
         </p>
       </div>
 
-      <Show when={!sent()}>
+      <Show when={!emailConfigured()}>
+        <div class="auth-form">
+          <div class="auth-form__notice" role="status">
+            Password reset by email isn't available on this install. Ask an admin to reset your
+            password, or sign in and update it from your{' '}
+            <A href="/account" class="auth-form__notice-link">
+              Account
+            </A>{' '}
+            page.
+          </div>
+        </div>
+      </Show>
+
+      <Show when={emailConfigured() && !sent()}>
         <form class="auth-form" onSubmit={handleSubmit}>
           {error() && (
             <div id={errorId} class="auth-form__error" role="alert">

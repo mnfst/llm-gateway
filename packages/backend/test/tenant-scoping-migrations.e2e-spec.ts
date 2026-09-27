@@ -3,10 +3,10 @@
  * (TenantOwnerColumn → TenantProviders → TenantScopedConfigs →
  * DropUserScopeFromRouting).
  *
- * Builds the fully-migrated schema, reverts JUST the four tenant migrations
- * (newest first), seeds a realistic pre-tenant user-scoped dataset, then
- * replays the chain and asserts every backfill — the part string-inspection
- * unit specs can't catch. Mirrors the replay pattern of
+ * Builds the fully-migrated schema, reverts the request/attempt migration and
+ * then the four tenant migrations (newest first), seeds a realistic pre-tenant
+ * user-scoped dataset, then replays the chain and asserts every backfill — the
+ * part string-inspection unit specs can't catch. Mirrors the replay pattern of
  * custom-providers-lift-migrations.e2e-spec.ts.
  */
 import { DataSource } from 'typeorm';
@@ -14,6 +14,7 @@ import { TenantOwnerColumn1792400000000 } from '../src/database/migrations/17924
 import { TenantProviders1792500000000 } from '../src/database/migrations/1792500000000-TenantProviders';
 import { TenantScopedConfigs1792600000000 } from '../src/database/migrations/1792600000000-TenantScopedConfigs';
 import { DropUserScopeFromRouting1792700000000 } from '../src/database/migrations/1792700000000-DropUserScopeFromRouting';
+import { AddRequestsAndProviderAttempts1801000000000 } from '../src/database/migrations/1801000000000-AddRequestsAndProviderAttempts';
 
 const USER = 'mig-user-1';
 const TENANT = 'mig-tenant-1';
@@ -65,7 +66,9 @@ describe('Tenant-canonical scoping migrations — data backfill (e2e)', () => {
       logging: false,
     });
     await ds.initialize();
-    await ds.runMigrations();
+    await ds.runMigrations({ transaction: 'each' });
+
+    await runDown(ds, new AddRequestsAndProviderAttempts1801000000000());
 
     // Revert the four tenant migrations, newest first → pre-tenant schema
     // (user_id scope columns everywhere, no owner_user_id).

@@ -1,4 +1,8 @@
-/* ── shadcn/ui design tokens — Light (default) ───── */
+/* ── shadcn/ui design tokens — single source of truth ─────────────────────
+ * Every design token lives here and ONLY here. theme.css imports this file
+ * and must never redeclare a token: a duplicate would silently win the
+ * cascade and fork the palette (that exact bug is why this header exists).
+ * Values below are the ones the app actually rendered before unification. */
 @layer base {
   :root {
     --background: 45 49% 97%;
@@ -12,7 +16,7 @@
     --secondary: 40 33% 93%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 40 33% 93%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted-foreground: 215 13% 34%;
     --accent: 40 33% 93%;
     --accent-foreground: 222.2 47.4% 11.2%;
     --destructive: 0 84.2% 60.2%;
@@ -21,16 +25,18 @@
     --input: 36 25% 88%;
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
+    --radius-sm: 0.375rem;
+    --radius-pill: 9999px;
 
     /* Chart palette */
     --chart-1: 178 75% 44%;
     --chart-2: 197 37% 24%;
     --chart-3: 167 70% 48%;
+    --chart-4: 349 52% 61%;
+    --chart-5: 43 96% 56%;
     --bar-input: 178 75% 34%;
     --bar-output: 178 55% 72%;
     --bar-output-axis: 178 55% 48%;
-    --chart-4: 349 52% 61%;
-    --chart-5: 43 96% 56%;
 
     /* Sidebar */
     --sidebar-background: 43 38% 95%;
@@ -45,6 +51,8 @@
     /* Success (emerald accent for our dashboard) */
     --success: 178 75% 44%;
     --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
   }
 
   .dark {
@@ -62,7 +70,7 @@
     --muted-foreground: 0 0% 55%;
     --accent: 0 0% 15%;
     --accent-foreground: 0 0% 93%;
-    --destructive: 0 62.8% 30.6%;
+    --destructive: 0 80% 62%;
     --destructive-foreground: 0 0% 93%;
     --border: 0 0% 18%;
     --input: 0 0% 18%;
@@ -88,6 +96,8 @@
 
     --success: 178 70% 50%;
     --success-foreground: 0 0% 100%;
+
+    --warning: 38 92% 50%;
   }
 }
 
@@ -104,10 +114,15 @@
   --gap-2xl: 48px;
 
   --font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-heading: 'Bricolage Grotesque', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
+  --font-size-3xs: 0.625rem;
+  --font-size-2xs: 0.6875rem;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
+  --tooltip-font-size: var(--font-size-sm);
   --font-size-base: 0.9375rem;
+  --font-size-md: 1rem;
   --font-size-lg: 1.125rem;
   --font-size-xl: 1.5rem;
   --font-size-2xl: 1.875rem;
@@ -117,6 +132,20 @@
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
   --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
 
+  /* Stacking layers. In-component stacking (z-index 0-2) needs no token;
+     anything above it takes a layer from this scale. */
+  --z-raised: 10;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 900;
+  --z-modal: 1000;
+  --z-toast: 8000;
+  --z-tooltip: 9999;
+
   --card-shadow: rgba(0, 0, 0, 0.06) 0px 0px 0px 1px, rgba(0, 0, 0, 0.03) 0px 2px 6px 0px;
   --card-shadow-hover: rgba(0, 0, 0, 0.08) 0px 0px 0px 1px, rgba(0, 0, 0, 0.06) 0px 3px 8px 0px;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.06);
+  --shadow-md: 0 4px 12px rgb(0 0 0 / 0.08);
+  --shadow-lg: 0 8px 28px rgb(0 0 0 / 0.18);
+  --shadow-ring: 0 0 0 1px rgb(0 0 0 / 0.08);
 }
