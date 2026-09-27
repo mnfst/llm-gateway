@@ -358,10 +358,16 @@ export function sanitizeOpenAiBody(
       continue;
     }
     // Rewrite max_tokens → max_completion_tokens for OpenAI-backed endpoints that
-    // require it (native OpenAI + Copilot for o-series / GPT-5+). Applies in both
-    // passthrough and non-passthrough branches.
+    // require it (native OpenAI + Copilot for o-series / GPT-5+, Bedrock Runtime
+    // GPT models). Applies in both passthrough and non-passthrough branches.
     if (convertMaxTokens && key === 'max_tokens') {
       cleaned['max_completion_tokens'] = value;
+      continue;
+    }
+    // When the endpoint only accepts max_completion_tokens and the caller sent
+    // BOTH fields, drop the legacy max_tokens so the upstream does not 400 on
+    // the unsupported/duplicated parameter (max_completion_tokens already wins).
+    if (needsMaxCompletionTokens && key === 'max_tokens') {
       continue;
     }
     if (passthroughTopLevel) {

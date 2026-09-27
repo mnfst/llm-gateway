@@ -3,6 +3,7 @@ import {
   bedrockRuntimeOpenAiEndpoints,
   bedrockRuntimeSupportsApi,
   getBedrockRuntimeCapabilities,
+  isBedrockRuntimeModelCatalogued,
   isBedrockRuntimeOpenAiCompatible,
 } from './bedrock-runtime-capabilities';
 
@@ -57,5 +58,20 @@ describe('Bedrock Runtime capability catalog', () => {
     expect(isBedrockRuntimeOpenAiCompatible('us.moonshotai.kimi-k2-thinking')).toBe(false);
     expect(getBedrockRuntimeCapabilities('global.vendor.future-model:1')).toBeNull();
     expect(isBedrockRuntimeOpenAiCompatible('global.vendor.future-model:1')).toBe(false);
+  });
+
+  it('matches model IDs exactly (a mis-cased ID must not inherit capabilities)', () => {
+    // The catalog is a safety contract: only the exact verified ID resolves.
+    expect(getBedrockRuntimeCapabilities('openai.gpt-6-sol')).not.toBeNull();
+    expect(getBedrockRuntimeCapabilities('OpenAI.GPT-6-Sol')).toBeNull();
+    expect(getBedrockRuntimeCapabilities('global.OPENAI.GPT-6-SOL')).toBeNull();
+    expect(bedrockRuntimeSupportsApi('OpenAI.GPT-6-Sol', 'chat_completions')).toBe(false);
+  });
+
+  it('reports catalog membership via isBedrockRuntimeModelCatalogued', () => {
+    expect(isBedrockRuntimeModelCatalogued('global.openai.gpt-6-sol')).toBe(true);
+    expect(isBedrockRuntimeModelCatalogued('openai.gpt-6-sol')).toBe(true);
+    expect(isBedrockRuntimeModelCatalogued('global.vendor.future-model:1')).toBe(false);
+    expect(isBedrockRuntimeModelCatalogued('OpenAI.GPT-6-Sol')).toBe(false);
   });
 });

@@ -800,7 +800,9 @@ describe('provider-client-converters', () => {
       expect(result).not.toHaveProperty('max_completion_tokens');
     });
 
-    it('should not convert when max_completion_tokens already present', () => {
+    it('drops max_tokens and keeps max_completion_tokens when both are present', () => {
+      // OpenAI-backed endpoints reject a request carrying both fields, so the
+      // legacy max_tokens must be dropped (max_completion_tokens wins).
       const body = {
         messages: [{ role: 'user', content: 'Hi' }],
         model: 'gpt-5.2',
@@ -811,7 +813,7 @@ describe('provider-client-converters', () => {
       const result = sanitizeOpenAiBody(body, 'openai', 'gpt-5.2');
 
       expect(result).toHaveProperty('max_completion_tokens', 2000);
-      expect(result).toHaveProperty('max_tokens', 1000);
+      expect(result).not.toHaveProperty('max_tokens');
     });
 
     it('should not convert max_tokens for non-OpenAI providers', () => {

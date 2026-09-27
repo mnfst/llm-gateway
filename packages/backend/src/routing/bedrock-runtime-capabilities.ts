@@ -75,20 +75,29 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG = [
   },
 ] as const satisfies readonly BedrockRuntimeModelCapabilities[];
 
+// Keyed by the EXACT foundation-model ID. The catalog is a safety contract:
+// an entry certifies verified Runtime APIs for that precise ID, so the lookup
+// must be case-sensitive. A mis-cased or otherwise unverified ID must miss the
+// catalog (and be treated as unknown) rather than inherit another model's
+// verified capabilities and slip past the local M304 guard.
 const CAPABILITIES_BY_MODEL = new Map<string, BedrockRuntimeModelCapabilities>(
-  BEDROCK_RUNTIME_CAPABILITY_CATALOG.map((entry) => [entry.modelId.toLowerCase(), entry]),
+  BEDROCK_RUNTIME_CAPABILITY_CATALOG.map((entry) => [entry.modelId, entry]),
 );
 
+/** Strip only the geographic profile prefix; preserve the base model ID casing. */
 function baseModelId(modelOrProfileId: string): string {
-  return (
-    getBedrockInferenceProfileBaseModelId(modelOrProfileId) ?? modelOrProfileId
-  ).toLowerCase();
+  return getBedrockInferenceProfileBaseModelId(modelOrProfileId) ?? modelOrProfileId;
 }
 
 export function getBedrockRuntimeCapabilities(
   modelOrProfileId: string,
 ): BedrockRuntimeModelCapabilities | null {
   return CAPABILITIES_BY_MODEL.get(baseModelId(modelOrProfileId)) ?? null;
+}
+
+/** True when the exact model ID has a verified capability-catalog entry. */
+export function isBedrockRuntimeModelCatalogued(modelOrProfileId: string): boolean {
+  return getBedrockRuntimeCapabilities(modelOrProfileId) !== null;
 }
 
 export function bedrockRuntimeSupportsApi(

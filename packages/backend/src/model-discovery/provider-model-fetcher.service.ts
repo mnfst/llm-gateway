@@ -1356,6 +1356,16 @@ export class ProviderModelFetcherService {
         nextToken = token && token !== nextToken ? token : undefined;
         pages++;
       } while (nextToken && pages < BEDROCK_PROFILE_MAX_PAGES);
+
+      // A leftover nextToken at the page cap means the profile list was
+      // truncated; log it so a partial catalog is distinguishable from a
+      // complete one (a silent truncation looks identical otherwise).
+      if (nextToken && pages >= BEDROCK_PROFILE_MAX_PAGES) {
+        this.logger.warn(
+          `Bedrock inference-profile pagination hit the ${BEDROCK_PROFILE_MAX_PAGES}-page cap ` +
+            `with more results remaining; the discovered profile list may be truncated`,
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Failed to fetch Bedrock inference profiles: ${message}`);

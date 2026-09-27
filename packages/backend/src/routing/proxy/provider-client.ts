@@ -828,17 +828,20 @@ export class ProviderClient {
                 endpointKey === 'xai-responses' ||
                 endpoint.acceptsMaxOutputTokens,
               // OpenAI and xAI /responses endpoints accept prompt_cache_key.
-              // Other Responses-shaped backends may 400 on unknown params.
+              // Bedrock Runtime's native /openai/v1/responses is OpenAI-shaped
+              // and accepts it too. Other Responses-shaped backends may 400 on
+              // unknown params.
               forwardPromptCacheKey:
                 endpointKey === 'openai-subscription' ||
                 endpointKey === 'openai-responses' ||
-                endpointKey === 'xai-responses',
+                endpointKey === 'xai-responses' ||
+                endpointKey === 'bedrock-runtime-responses',
               // Only OpenAI infrastructure is known to accept
               // reasoning.summary; other Responses backends may 400 on it.
               mapReasoningEffort:
                 endpointKey === 'openai-subscription' || endpointKey === 'openai-responses',
             });
-      if (endpointKey === 'xai-responses') {
+      if (endpointKey === 'xai-responses' || endpointKey === 'bedrock-runtime-responses') {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
       }
       if (endpointKey === 'openai-responses' && ctx.apiMode === 'messages') {
@@ -905,6 +908,12 @@ export class ProviderClient {
       applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
     }
     if (endpointKey === 'mistral') {
+      applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
+    }
+    // Bedrock Runtime's native Chat Completions surface (/openai/v1/chat/completions)
+    // is OpenAI-compatible and accepts prompt_cache_key, so give it Manifest's
+    // stable key to preserve cache affinity like the native `openai` endpoint.
+    if (endpointKey === 'bedrock-runtime') {
       applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
     }
     if (endpointKey === 'moonshot') {

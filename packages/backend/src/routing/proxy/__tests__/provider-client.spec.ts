@@ -732,6 +732,26 @@ describe('ProviderClient', () => {
       expect(sentBody.max_completion_tokens).toBeUndefined();
     });
 
+    it('adds scoped prompt cache affinity for Bedrock Runtime Chat without exposing the session', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'us.openai.gpt-6-sol',
+        body,
+        providerCacheKey: 'v1:tenant-agent-session-digest',
+        stream: false,
+      });
+
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions',
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.prompt_cache_key).toMatch(/^manifest-[a-f0-9]{32}$/);
+      expect(sentBody.prompt_cache_key).not.toContain('tenant-agent-session');
+    });
+
     it.each([
       'openai.gpt-5.4',
       'openai.gpt-5.5',

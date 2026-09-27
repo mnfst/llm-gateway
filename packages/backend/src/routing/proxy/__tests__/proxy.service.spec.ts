@@ -413,9 +413,8 @@ describe('ProxyService — orchestration', () => {
 
     it.each([
       ['chat_completions', 'us.moonshotai.kimi-k2-thinking'],
-      ['chat_completions', 'global.vendor.future-model:1'],
       ['messages', 'global.openai.gpt-6-sol'],
-    ] as const)('rejects unsupported %s for %s with M304', async (apiMode, model) => {
+    ] as const)('rejects unsupported %s for catalogued %s with M304', async (apiMode, model) => {
       resolveToBedrock(model);
       const body =
         apiMode === 'chat_completions'
@@ -426,6 +425,28 @@ describe('ProxyService — orchestration', () => {
         code: 'M304',
         status: 400,
       });
+    });
+
+    it('forwards an uncatalogued CRIS profile optimistically instead of throwing M304', async () => {
+      // A profile with no capability-catalog entry is unknown, not unsupported:
+      // Bedrock stays the authority and the fallback chain can still recover.
+      resolveToBedrock('global.vendor.future-model:1');
+      fallbackService.tryForwardToProvider.mockResolvedValue({
+        response: okResponse(200),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      });
+
+      await expect(
+        svc.proxyRequest(
+          baseOpts({
+            apiMode: 'chat_completions',
+            body: { messages: [{ role: 'user', content: 'hi' }] },
+          }),
+        ),
+      ).resolves.toBeDefined();
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalled();
     });
   });
 

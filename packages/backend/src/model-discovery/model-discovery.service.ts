@@ -770,13 +770,16 @@ export class ModelDiscoveryService {
           ? metadataEntry
           : this.modelsDevSync.lookupModel(pricingProvider, pricingModel);
       // CRIS profile pricing is normally identical to its underlying Bedrock
-      // model. Prefer an exact profile entry when present, then fall back only
-      // within the Bedrock catalog — never to the vendor/OpenRouter price.
+      // model. Prefer an exact profile entry ONLY when it carries a price;
+      // otherwise fall back to the priced Bedrock base-model entry so the CRIS
+      // model is not left unpriced — never to the vendor/OpenRouter price.
+      const bedrockBaseEntry = bedrockProfileBaseModel
+        ? this.modelsDevSync.lookupModel('bedrock', bedrockProfileBaseModel)
+        : null;
       const mdEntry =
-        exactEntry ??
-        (bedrockProfileBaseModel
-          ? this.modelsDevSync.lookupModel('bedrock', bedrockProfileBaseModel)
-          : null);
+        exactEntry && exactEntry.inputPricePerToken !== null
+          ? exactEntry
+          : (bedrockBaseEntry ?? exactEntry);
       if (mdEntry && mdEntry.inputPricePerToken !== null) {
         const capabilityEntry = metadataEntry ?? mdEntry;
         return this.computeScore({
