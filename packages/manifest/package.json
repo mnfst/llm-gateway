@@ -1,6 +1,6 @@
 {
   "name": "manifest",
-  "version": "6.26.0",
+  "version": "6.26.1",
   "private": true,
   "description": "Canonical release version for the Manifest Docker image. This package holds no code — the real backend and frontend live in ../backend and ../frontend. See README.md for details."
 }
