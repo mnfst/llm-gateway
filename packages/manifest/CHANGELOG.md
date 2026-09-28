@@ -1,5 +1,20 @@
 # manifest
 
+## 6.27.0
+
+### Minor Changes
+
+- 9c773fc: Custom providers take several API keys, each a separate connection managed like a native provider's keys.
+
+### Patch Changes
+
+- 60e0365: Forward `tool_choice` and `parallel_tool_calls` to Anthropic when translating Chat Completions or Responses requests. They were dropped, so a forced or disabled tool call was left to the model's own choice.
+- be73101: Route Bedrock GPT-6 models (and later numbered GPT families) through the namespaced OpenAI Responses API path, which Bedrock requires for them.
+- ac51ed8: Keep system prompts sent as content-part arrays when routing to Google Gemini. They were dropped from `systemInstruction`, so Gemini answered without the system prompt (including Responses API `developer` instructions).
+- cbb96fa: Send `developer` messages to Gemini as the system instruction instead of a user turn.
+- 74d8d04: Report a truncated or filtered non-streaming Responses API reply as `finish_reason: "length"` / `"content_filter"` instead of `"stop"`, matching the streaming path.
+- 20208e5: Keep cached-input and reasoning token counts on `/v1/responses` replies served by OpenAI-compatible Chat Completions upstreams, so clients see them and Manifest records and prices cache reads correctly.
+
 ## 6.26.1
 
 ### Patch Changes
