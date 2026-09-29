@@ -232,7 +232,7 @@ describe('resolveEndpointKey', () => {
 });
 
 describe('resolveBedrockEndpointKey', () => {
-  it.each(['openai.gpt-5.6-luna', 'us.openai.gpt-5.6-luna', 'bedrock/openai.gpt-5.6-luna'])(
+  it.each(['openai.gpt-5.6-luna', 'bedrock/openai.gpt-5.6-luna'])(
     'routes %s through Responses',
     (model) => {
       expect(resolveBedrockEndpointKey(model)).toBe('bedrock-responses');
@@ -248,6 +248,54 @@ describe('resolveBedrockEndpointKey', () => {
 
   it('keeps other Bedrock model families on Chat Completions', () => {
     expect(resolveBedrockEndpointKey('mistral.ministral-3-8b-instruct')).toBe('bedrock');
+  });
+
+  it.each([
+    'us.openai.gpt-5.6-luna',
+    'global.openai.gpt-6-astra',
+    'us.openai.gpt-6-sol',
+    'global.openai.gpt-6-luna',
+    'global.moonshotai.kimi-k3',
+    'bedrock/us.moonshotai.kimi-k3',
+  ])('routes the catalogued CRIS profile %s to Runtime on the API the agent called', (model) => {
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'chat_completions')).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'messages')).toBe('bedrock-runtime');
+    expect(resolveBedrockEndpointKey(model, 'responses')).toBe('bedrock-runtime-responses');
+  });
+
+  it('keeps uncatalogued CRIS profiles on their Mantle route', () => {
+    expect(resolveBedrockEndpointKey('us.anthropic.claude-sonnet-5', 'responses')).toBe(
+      'bedrock-anthropic',
+    );
+    expect(resolveBedrockEndpointKey('global.openai.gpt-7', 'responses')).toBe('bedrock-responses');
+    expect(resolveBedrockEndpointKey('eu.mistral.pixtral-large-2502-v1:0')).toBe('bedrock');
+  });
+});
+
+describe('Bedrock Runtime endpoints', () => {
+  it('serves Chat Completions under /openai/v1 on the Runtime host', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('openai');
+    expect(ep.buildPath('us.openai.gpt-6-sol')).toBe('/openai/v1/chat/completions');
+    expect(ep.buildHeaders('ABSK-test')).toEqual({
+      Authorization: 'Bearer ABSK-test',
+      'Content-Type': 'application/json',
+    });
+    expect(ep.streamUsageReporting).toBe('openai_stream_options');
+    expect(ep.acceptsPromptCacheKey).toBe(true);
+  });
+
+  it('serves Responses under /openai/v1 on the Runtime host', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime-responses'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('chatgpt');
+    expect(ep.buildPath('us.openai.gpt-6-sol')).toBe('/openai/v1/responses');
+    expect(ep.forwardResponsesStream).toBe(true);
+    expect(ep.acceptsMaxOutputTokens).toBe(true);
+    expect(ep.acceptsPromptCacheKey).toBe(true);
+    expect(ep.streamUsageReporting).toBeUndefined();
   });
 });
 

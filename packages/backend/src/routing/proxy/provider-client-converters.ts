@@ -314,6 +314,14 @@ function normalizeOpenAiMessages(messages: unknown, endpointKey: string): unknow
   });
 }
 
+export interface SanitizeOpenAiBodyOptions {
+  /**
+   * The upstream rejects `max_tokens` outright, so it is rewritten to
+   * `max_completion_tokens`, or dropped when both are present.
+   */
+  requireMaxCompletionTokens?: boolean;
+}
+
 /**
  * Normalize unconditional OpenAI-compatible wire differences. Provider- and
  * model-specific parameter corrections are intentionally left to Autofix.
@@ -322,12 +330,15 @@ export function sanitizeOpenAiBody(
   body: Record<string, unknown>,
   endpointKey: string,
   model: string,
+  options: SanitizeOpenAiBodyOptions = {},
 ): Record<string, unknown> {
   const passthroughTopLevel = PASSTHROUGH_PROVIDERS.has(endpointKey);
 
   // Strip vendor prefix (e.g., "openai/gpt-5" → "gpt-5") before matching.
   const bareForRegex = model.includes('/') ? model.substring(model.indexOf('/') + 1) : model;
-  const needsMaxCompletionTokens = usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
+  const needsMaxCompletionTokens =
+    options.requireMaxCompletionTokens === true ||
+    usesOpenAiMaxCompletionTokens(endpointKey, bareForRegex);
   const convertMaxTokens =
     needsMaxCompletionTokens && 'max_tokens' in body && !('max_completion_tokens' in body);
   // NVIDIA Nemotron hosts (reached through the OpenRouter passthrough) reject the
@@ -349,6 +360,9 @@ export function sanitizeOpenAiBody(
       cleaned['max_completion_tokens'] = value;
       continue;
     }
+    // Both caps were sent: `max_completion_tokens` stays, and the rejected
+    // `max_tokens` goes.
+    if (options.requireMaxCompletionTokens && key === 'max_tokens') continue;
     if (passthroughTopLevel) {
       // OpenRouter forwards the whole body for most models, but NVIDIA Nemotron
       // hosts validate strictly and reject Anthropic-style `thinking`. Drop it

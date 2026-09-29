@@ -20,7 +20,15 @@ import {
   normalizeProviderBaseUrl,
 } from '../routing/provider-base-url';
 import { getQwenCompatibleBaseUrl, normalizeQwenCompatibleBaseUrl } from '../routing/qwen-region';
-import { getBedrockMantleBaseUrl, normalizeBedrockMantleBaseUrl } from '../routing/bedrock-region';
+import {
+  getBedrockControlPlaneBaseUrl,
+  getBedrockMantleBaseUrl,
+  normalizeBedrockMantleBaseUrl,
+} from '../routing/bedrock-region';
+import {
+  getBedrockRuntimeCapabilities,
+  getBedrockRuntimeSupportedEndpoints,
+} from '../routing/bedrock-runtime-capabilities';
 import {
   getXiaomiTokenPlanBaseUrl,
   normalizeXiaomiTokenPlanBaseUrl,
@@ -194,6 +202,21 @@ const parseOpenAI = createModelParser<OpenAIModelEntry>({
   getDisplayName: (_entry, id) => id,
   inputModalities: (entry) => parseModalities(entry.input_modalities),
   outputModalities: (entry) => parseModalities(entry.output_modalities),
+});
+
+interface BedrockInferenceProfileEntry {
+  inferenceProfileId: string;
+  status: string;
+}
+
+/** Active CRIS profiles from `ListInferenceProfiles` that the capability catalog lists. */
+const parseBedrockCrisProfiles = createModelParser<BedrockInferenceProfileEntry>({
+  arrayKey: 'inferenceProfileSummaries',
+  filter: (entry) =>
+    entry.status === 'ACTIVE' && getBedrockRuntimeCapabilities(entry.inferenceProfileId) !== null,
+  getId: (entry) => entry.inferenceProfileId,
+  getDisplayName: (_entry, id) => id,
+  supportedEndpoints: (entry) => getBedrockRuntimeSupportedEndpoints(entry.inferenceProfileId),
 });
 
 /** Keep only the configured model family and prefer LiteLLM's vendor-prefixed ID. */
@@ -1083,6 +1106,11 @@ const OPENCODE_GO_CONTEXT_WINDOW = 200000;
 
 export interface ProviderModelFetchOptions {
   forceRefresh?: boolean;
+  /**
+   * Bedrock only: the connection's last discovered models. Their CRIS profiles
+   * are kept when the control plane can't be reached.
+   */
+  previousModels?: readonly DiscoveredModel[];
 }
 
 @Injectable()
@@ -1190,6 +1218,29 @@ export class ProviderModelFetcherService {
 
     const headers = config.buildHeaders(apiKey, authType);
 
+    if (configKey === 'bedrock') {
+      // Mantle lists no CRIS profiles, so they come from the control plane of
+      // the same region (the Mantle host is `bedrock-mantle.<region>.api.aws`).
+      const region = new URL(url).hostname.split('.')[1];
+      const [mantleModels, crisProfiles] = await Promise.all([
+        this.fetchModelList(url, headers, config, apiKey, providerId, configKey),
+        this.fetchBedrockCrisProfiles(apiKey, region, providerId, options?.previousModels ?? []),
+      ]);
+      const mantleIds = new Set(mantleModels.map((model) => model.id));
+      return [...mantleModels, ...crisProfiles.filter((profile) => !mantleIds.has(profile.id))];
+    }
+
+    return this.fetchModelList(url, headers, config, apiKey, providerId, configKey);
+  }
+
+  private async fetchModelList(
+    url: string,
+    headers: Record<string, string>,
+    config: FetcherConfig,
+    apiKey: string,
+    providerId: string,
+    configKey: string,
+  ): Promise<DiscoveredModel[]> {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -1213,6 +1264,44 @@ export class ProviderModelFetcherService {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.warn(`Failed to fetch models from ${providerId}: ${message}`);
       return [];
+    }
+  }
+
+  /**
+   * Catalogued CRIS profiles offered in the connection's region. If the control
+   * plane can't be reached, the profiles from the last discovery are kept.
+   */
+  private async fetchBedrockCrisProfiles(
+    apiKey: string,
+    region: string,
+    providerId: string,
+    previousModels: readonly DiscoveredModel[],
+  ): Promise<DiscoveredModel[]> {
+    const url =
+      `${getBedrockControlPlaneBaseUrl(region)}/inference-profiles` +
+      '?type=SYSTEM_DEFINED&maxResults=1000';
+    try {
+      const res = await fetch(url, {
+        headers: bearerHeaders(apiKey),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = (await res.json()) as { nextToken?: string };
+      if (body.nextToken) {
+        this.logger.warn(
+          'Bedrock listed more than 1000 inference profiles; only the first 1000 were checked',
+        );
+      }
+      return parseBedrockCrisProfiles(body, providerId);
+    } catch (err) {
+      const kept = previousModels.filter(
+        (model) => getBedrockRuntimeCapabilities(model.id) !== null,
+      );
+      this.logger.warn(
+        `Could not list Bedrock inference profiles (${String(err)}); ` +
+          `kept ${kept.length} from the last discovery`,
+      );
+      return kept;
     }
   }
 

@@ -47,6 +47,8 @@ import { qualifyChatGptResponse } from './chatgpt-response-qualifier';
 import { isProviderAvailableForDeployment } from '../../common/utils/provider-availability';
 import { ManifestError } from '../../common/errors/manifest-error';
 import { MANAGED_FREE_PROVIDER_BY_ID } from '../../common/constants/managed-free-providers';
+import { isBedrockProvider } from '../bedrock-region';
+import { getBedrockRuntimeCapabilities } from '../bedrock-runtime-capabilities';
 
 export interface ForwardResult {
   response: Response;
@@ -534,7 +536,7 @@ export class ProviderClient {
       if (override) resolved = override;
     }
     if (resolved === 'bedrock') {
-      resolved = resolveBedrockEndpointKey(model);
+      resolved = resolveBedrockEndpointKey(model, apiMode);
     }
     if (resolved === 'qwen-subscription') {
       const bareQwenModel = stripVendorPrefix(model);
@@ -810,7 +812,7 @@ export class ProviderClient {
               mapReasoningEffort:
                 endpointKey === 'openai-subscription' || endpointKey === 'openai-responses',
             });
-      if (endpointKey === 'xai-responses') {
+      if (endpointKey === 'xai-responses' || endpoint.acceptsPromptCacheKey) {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
       }
       if (endpointKey === 'openai-responses' && ctx.apiMode === 'messages') {
@@ -852,7 +854,12 @@ export class ProviderClient {
     }
 
     // OpenAI-compatible path (default)
-    const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model);
+    const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model, {
+      // GPT models on Bedrock Runtime reject `max_tokens`.
+      requireMaxCompletionTokens:
+        isBedrockProvider(ctx.provider) &&
+        getBedrockRuntimeCapabilities(ctx.model)?.chatTokenParameter === 'max_completion_tokens',
+    });
     if (stream && endpoint.streamUsageReporting === 'openai_stream_options') {
       const existing =
         typeof sanitized.stream_options === 'object' && sanitized.stream_options !== null
@@ -872,6 +879,9 @@ export class ProviderClient {
       applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
     }
     if (endpointKey === 'mistral') {
+      applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
+    }
+    if (endpoint.acceptsPromptCacheKey) {
       applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
     }
     if (endpointKey === 'moonshot') {

@@ -378,6 +378,44 @@ describe('ModelDiscoveryService', () => {
       expect(result[0].displayName).toBe('GPT-4 via OR');
     });
 
+    it('passes a Bedrock connection its cached models so CRIS profiles survive a control-plane failure', async () => {
+      const cached = [makeModel({ id: 'us.openai.gpt-6-sol', provider: 'bedrock' })];
+      fetcher.fetch.mockResolvedValue([]);
+
+      await service.discoverModels(
+        makeProvider({
+          provider: 'bedrock',
+          region: 'eu-west-1',
+          cached_models: cached,
+        } as Partial<TenantProvider>),
+      );
+
+      expect(fetcher.fetch).toHaveBeenCalledWith(
+        'bedrock',
+        'decrypted-key',
+        'api_key',
+        'https://bedrock-mantle.eu-west-1.api.aws',
+        { previousModels: cached },
+      );
+    });
+
+    it('passes an empty previous list on a first Bedrock discovery', async () => {
+      fetcher.fetch.mockResolvedValue([]);
+
+      await service.discoverModels(
+        makeProvider({ provider: 'bedrock', region: 'us-east-1' } as Partial<TenantProvider>),
+        { forceRefresh: true },
+      );
+
+      expect(fetcher.fetch).toHaveBeenCalledWith(
+        'bedrock',
+        'decrypted-key',
+        'api_key',
+        'https://bedrock-mantle.us-east-1.api.aws',
+        { forceRefresh: true, previousModels: [] },
+      );
+    });
+
     it('does not use underlying provider pricing for Bedrock models', async () => {
       mockPricingSync.lookupPricing.mockImplementation((key: string) => {
         if (key === 'anthropic/claude-opus-4.8') {

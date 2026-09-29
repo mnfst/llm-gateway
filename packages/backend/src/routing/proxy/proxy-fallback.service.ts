@@ -1032,6 +1032,7 @@ export class ProxyFallbackService {
       resourceUrl,
       customProvider,
       logger: this.logger,
+      apiMode: opts.apiMode,
     });
 
     const reasoningEndpointKey =

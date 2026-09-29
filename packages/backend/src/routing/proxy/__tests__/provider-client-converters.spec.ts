@@ -827,6 +827,37 @@ describe('provider-client-converters', () => {
       expect(result).not.toHaveProperty('max_completion_tokens');
     });
 
+    it('rewrites max_tokens for any endpoint when max_completion_tokens is required', () => {
+      const body = {
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 1000,
+      };
+
+      const result = sanitizeOpenAiBody(body, 'custom', 'us.openai.gpt-6-sol', {
+        requireMaxCompletionTokens: true,
+      });
+
+      expect(result).toHaveProperty('max_completion_tokens', 1000);
+      expect(result).not.toHaveProperty('max_tokens');
+    });
+
+    it('drops max_tokens when max_completion_tokens is required and both are sent', () => {
+      const body = {
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 1000,
+        max_completion_tokens: 2000,
+        temperature: 0.2,
+      };
+
+      const result = sanitizeOpenAiBody(body, 'custom', 'us.openai.gpt-6-sol', {
+        requireMaxCompletionTokens: true,
+      });
+
+      expect(result).toHaveProperty('max_completion_tokens', 2000);
+      expect(result).toHaveProperty('temperature', 0.2);
+      expect(result).not.toHaveProperty('max_tokens');
+    });
+
     /* ── max_tokens → max_completion_tokens: extended edge cases ── */
 
     it('should convert max_tokens for o1 model', () => {

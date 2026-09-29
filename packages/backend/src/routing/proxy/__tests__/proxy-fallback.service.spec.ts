@@ -1518,6 +1518,36 @@ describe('ProxyFallbackService', () => {
       );
     });
 
+    it('sends a catalogued Bedrock CRIS profile to Runtime on the API the agent called', async () => {
+      providerClient.forward.mockResolvedValue({
+        response: new Response('{}', { status: 200 }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: true,
+      });
+
+      await service.tryForwardToProvider({
+        provider: 'bedrock',
+        apiKey: 'ABSK-test',
+        model: 'us.openai.gpt-6-luna',
+        body,
+        stream: false,
+        sessionKey: 'sess-1',
+        authType: 'api_key',
+        providerRegion: 'us-west-2',
+        apiMode: 'responses',
+      });
+
+      expect(providerClient.forward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          customEndpoint: expect.objectContaining({
+            baseUrl: 'https://bedrock-runtime.us-west-2.amazonaws.com',
+            format: 'chatgpt',
+          }),
+        }),
+      );
+    });
+
     it('falls back to providerRegion=cn for pasted minimax subscription tokens', async () => {
       providerClient.forward.mockResolvedValue({
         response: new Response('{}', { status: 200 }),

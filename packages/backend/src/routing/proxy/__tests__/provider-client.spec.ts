@@ -762,6 +762,114 @@ describe('ProviderClient', () => {
       expect(sentBody.stream).toBe(false);
     });
 
+    it('sends catalogued CRIS profiles to Bedrock Runtime Chat Completions with max_completion_tokens', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const result = await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'us.openai.gpt-6-sol',
+        body: { ...body, max_tokens: 1024 },
+        stream: false,
+        apiMode: 'chat_completions',
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions',
+        expect.objectContaining({
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer bedrock-api-key-test',
+            'Content-Type': 'application/json',
+          },
+        }),
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.model).toBe('us.openai.gpt-6-sol');
+      expect(sentBody.max_completion_tokens).toBe(1024);
+      expect(sentBody.max_tokens).toBeUndefined();
+      expect(sentBody.prompt_cache_key).toBeUndefined();
+      expect(result.isChatGpt).toBe(false);
+    });
+
+    it('drops max_tokens when a Bedrock Runtime GPT request sends both caps', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'global.openai.gpt-6-luna',
+        body: { ...body, max_tokens: 1024, max_completion_tokens: 512 },
+        stream: false,
+      });
+
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.max_completion_tokens).toBe(512);
+      expect(sentBody.max_tokens).toBeUndefined();
+    });
+
+    it('keeps max_tokens for Bedrock Runtime models that accept it', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'global.moonshotai.kimi-k3',
+        body: { ...body, max_tokens: 1024 },
+        stream: false,
+      });
+
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions',
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.max_tokens).toBe(1024);
+      expect(sentBody.max_completion_tokens).toBeUndefined();
+    });
+
+    it('adds a stable prompt_cache_key and stream usage on Bedrock Runtime Chat Completions', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'us.openai.gpt-6-luna',
+        body,
+        providerCacheKey: 'v1:tenant-agent-session-digest',
+        stream: true,
+      });
+
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.prompt_cache_key).toMatch(/^manifest-[a-f0-9]{32}$/);
+      expect(sentBody.prompt_cache_key).not.toContain('tenant-agent-session');
+      expect(sentBody.stream_options).toEqual({ include_usage: true });
+    });
+
+    it('forwards Responses requests to Bedrock Runtime natively with a stable prompt_cache_key', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      const result = await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'global.moonshotai.kimi-k3',
+        body: { input: 'Hello', max_output_tokens: 64 },
+        providerCacheKey: 'v1:tenant-agent-session-digest',
+        stream: false,
+        apiMode: 'responses',
+      });
+
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/responses',
+      );
+      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(sentBody.model).toBe('global.moonshotai.kimi-k3');
+      expect(sentBody.input).toBe('Hello');
+      expect(sentBody.max_output_tokens).toBe(64);
+      expect(sentBody.prompt_cache_key).toMatch(/^manifest-[a-f0-9]{32}$/);
+      expect(result.isResponses).toBe(true);
+      expect(result.isChatGpt).toBe(false);
+    });
+
     it('routes Bedrock Anthropic models through the Messages API', async () => {
       mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 

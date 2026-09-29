@@ -1,7 +1,10 @@
 import {
   DEFAULT_BEDROCK_REGION,
   detectBedrockRegionFromApiKey,
+  getBedrockControlPlaneBaseUrl,
+  getBedrockInferenceProfileBaseModelId,
   getBedrockMantleBaseUrl,
+  getBedrockRuntimeBaseUrl,
   isBedrockProvider,
   isBedrockRegion,
   normalizeBedrockMantleBaseUrl,
@@ -60,5 +63,37 @@ describe('bedrock-region', () => {
     expect(detectBedrockRegionFromApiKey('bedrock-api-key-not-base64')).toBeNull();
     expect(detectBedrockRegionFromApiKey('ABSKTWFudGxlQXBpS2V5LWV4YW1wbGU=')).toBeNull();
     expect(detectBedrockRegionFromApiKey('sk-test')).toBeNull();
+  });
+
+  it('returns the base model ID of a CRIS profile', () => {
+    expect(getBedrockInferenceProfileBaseModelId('us.openai.gpt-6-sol')).toBe('openai.gpt-6-sol');
+    expect(getBedrockInferenceProfileBaseModelId('global.moonshotai.kimi-k3')).toBe(
+      'moonshotai.kimi-k3',
+    );
+    expect(getBedrockInferenceProfileBaseModelId('apac.amazon.nova-pro-v1:0')).toBe(
+      'amazon.nova-pro-v1:0',
+    );
+    expect(getBedrockInferenceProfileBaseModelId('bedrock/eu.openai.gpt-6-luna')).toBe(
+      'openai.gpt-6-luna',
+    );
+  });
+
+  it('returns null for model IDs without a geographic scope', () => {
+    expect(getBedrockInferenceProfileBaseModelId('openai.gpt-6-sol')).toBeNull();
+    expect(getBedrockInferenceProfileBaseModelId('ca.openai.gpt-6-sol')).toBeNull();
+    expect(getBedrockInferenceProfileBaseModelId('global.')).toBeNull();
+  });
+
+  it('builds Runtime and control-plane URLs for Bedrock regions, defaulting to us-east-1', () => {
+    expect(getBedrockRuntimeBaseUrl('eu-west-1')).toBe(
+      'https://bedrock-runtime.eu-west-1.amazonaws.com',
+    );
+    expect(getBedrockRuntimeBaseUrl('eu-west-3')).toBe(
+      'https://bedrock-runtime.us-east-1.amazonaws.com',
+    );
+    expect(getBedrockControlPlaneBaseUrl('ap-south-1')).toBe(
+      'https://bedrock.ap-south-1.amazonaws.com',
+    );
+    expect(getBedrockControlPlaneBaseUrl(null)).toBe('https://bedrock.us-east-1.amazonaws.com');
   });
 });

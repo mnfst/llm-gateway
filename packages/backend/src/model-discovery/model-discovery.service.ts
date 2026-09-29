@@ -10,6 +10,7 @@ import {
   PROVIDER_BLOCKLIST,
   PROVIDER_NON_CHAT,
   filterNonChatModels,
+  type ProviderModelFetchOptions,
 } from './provider-model-fetcher.service';
 import { ProviderModelRegistryService } from './provider-model-registry.service';
 import { DiscoveredModel, DEFAULT_CONTEXT_WINDOW } from './model-fetcher';
@@ -227,12 +228,23 @@ export class ModelDiscoveryService {
     const useCuratedSubscriptionModels =
       provider.auth_type === 'subscription' && (!apiKey || lowerProvider === 'anthropic');
 
+    const fetchOptions: ProviderModelFetchOptions = {
+      ...(options.forceRefresh ? { forceRefresh: true } : {}),
+      // Bedrock keeps its last discovered CRIS profiles if the control plane fails.
+      ...(isBedrockProvider(provider.provider)
+        ? { previousModels: provider.cached_models ?? [] }
+        : {}),
+    };
     const fetchProviderModels = () =>
-      options.forceRefresh
-        ? this.fetcher.fetch(provider.provider, apiKey, provider.auth_type, endpointOverride, {
-            forceRefresh: true,
-          })
-        : this.fetcher.fetch(provider.provider, apiKey, provider.auth_type, endpointOverride);
+      Object.keys(fetchOptions).length === 0
+        ? this.fetcher.fetch(provider.provider, apiKey, provider.auth_type, endpointOverride)
+        : this.fetcher.fetch(
+            provider.provider,
+            apiKey,
+            provider.auth_type,
+            endpointOverride,
+            fetchOptions,
+          );
 
     const buildModelsDevModels = () => {
       const models = buildModelsDevFallback(this.modelsDevSync, provider.provider, {

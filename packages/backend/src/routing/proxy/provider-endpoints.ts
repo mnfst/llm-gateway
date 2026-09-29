@@ -13,7 +13,8 @@ import {
   buildClaudeCodeSubscriptionHeaders,
 } from '../../common/constants/subscription-clients';
 import { normalizeProviderBaseUrl } from '../provider-base-url';
-import { getBedrockMantleBaseUrl } from '../bedrock-region';
+import { getBedrockMantleBaseUrl, getBedrockRuntimeBaseUrl } from '../bedrock-region';
+import { getBedrockRuntimeCapabilities } from '../bedrock-runtime-capabilities';
 import { getQwenCompatibleBaseUrl } from '../qwen-region';
 import { getXiaomiTokenPlanBaseUrl } from '../xiaomi-region';
 import { getZaiCodingPlanBaseUrl } from '../zai-region';
@@ -64,6 +65,8 @@ export interface ProviderEndpoint {
   forwardResponsesStream?: boolean;
   /** Map Chat Completions token caps to `max_output_tokens`. */
   acceptsMaxOutputTokens?: boolean;
+  /** Send Manifest's stable `prompt_cache_key` when the caller did not set one. */
+  acceptsPromptCacheKey?: boolean;
 }
 
 const openaiStreamUsage = { streamUsageReporting: 'openai_stream_options' as const };
@@ -93,7 +96,18 @@ const bedrockResponsesPath = (model: string) =>
 
 export function resolveBedrockEndpointKey(
   model: string,
-): 'bedrock' | 'bedrock-responses' | 'bedrock-anthropic' {
+  apiMode?: string,
+):
+  | 'bedrock'
+  | 'bedrock-responses'
+  | 'bedrock-anthropic'
+  | 'bedrock-runtime'
+  | 'bedrock-runtime-responses' {
+  // Mantle does not serve CRIS profiles. Catalogued ones go to Runtime on the
+  // API the agent called; every other model ID keeps its Mantle route.
+  if (getBedrockRuntimeCapabilities(model)) {
+    return apiMode === 'responses' ? 'bedrock-runtime-responses' : 'bedrock-runtime';
+  }
   const bareModel = stripVendorPrefix(model);
   if (BEDROCK_OPENAI_MODEL_RE.test(bareModel)) return 'bedrock-responses';
   if (BEDROCK_ANTHROPIC_MODEL_RE.test(bareModel)) return 'bedrock-anthropic';
@@ -215,6 +229,23 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     format: 'chatgpt',
     forwardResponsesStream: true,
     acceptsMaxOutputTokens: true,
+  },
+  'bedrock-runtime': {
+    baseUrl: getBedrockRuntimeBaseUrl(),
+    buildHeaders: openaiHeaders,
+    buildPath: () => '/openai/v1/chat/completions',
+    format: 'openai',
+    acceptsPromptCacheKey: true,
+    ...openaiStreamUsage,
+  },
+  'bedrock-runtime-responses': {
+    baseUrl: getBedrockRuntimeBaseUrl(),
+    buildHeaders: openaiHeaders,
+    buildPath: () => '/openai/v1/responses',
+    format: 'chatgpt',
+    forwardResponsesStream: true,
+    acceptsMaxOutputTokens: true,
+    acceptsPromptCacheKey: true,
   },
   'bedrock-anthropic': {
     baseUrl: getBedrockMantleBaseUrl(),
