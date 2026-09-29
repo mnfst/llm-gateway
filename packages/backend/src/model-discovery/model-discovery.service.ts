@@ -236,15 +236,13 @@ export class ModelDiscoveryService {
         : {}),
     };
     const fetchProviderModels = () =>
-      Object.keys(fetchOptions).length === 0
-        ? this.fetcher.fetch(provider.provider, apiKey, provider.auth_type, endpointOverride)
-        : this.fetcher.fetch(
-            provider.provider,
-            apiKey,
-            provider.auth_type,
-            endpointOverride,
-            fetchOptions,
-          );
+      this.fetcher.fetch(
+        provider.provider,
+        apiKey,
+        provider.auth_type,
+        endpointOverride,
+        fetchOptions,
+      );
 
     const buildModelsDevModels = () => {
       const models = buildModelsDevFallback(this.modelsDevSync, provider.provider, {

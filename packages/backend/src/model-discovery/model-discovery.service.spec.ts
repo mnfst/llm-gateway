@@ -187,7 +187,13 @@ describe('ModelDiscoveryService', () => {
 
       expect(getDecryptionSecrets).toHaveBeenCalled();
       expect(mockDecrypt).toHaveBeenCalledWith('encrypted-key', expect.any(String));
-      expect(fetcher.fetch).toHaveBeenCalledWith('openai', 'decrypted-key', 'api_key', undefined);
+      expect(fetcher.fetch).toHaveBeenCalledWith(
+        'openai',
+        'decrypted-key',
+        'api_key',
+        undefined,
+        {},
+      );
       expect(result).toHaveLength(1);
       expect(provider.cached_models).toEqual(result);
       expect(provider.models_fetched_at).toBeDefined();
@@ -251,7 +257,7 @@ describe('ModelDiscoveryService', () => {
       await service.discoverModels(provider);
 
       expect(mockDecrypt).not.toHaveBeenCalled();
-      expect(fetcher.fetch).toHaveBeenCalledWith('openai', '', 'api_key', undefined);
+      expect(fetcher.fetch).toHaveBeenCalledWith('openai', '', 'api_key', undefined, {});
     });
 
     it('should unwrap the Kiro OIDC token blob before fetching models', async () => {
@@ -270,7 +276,13 @@ describe('ModelDiscoveryService', () => {
 
       await service.discoverModels(provider);
 
-      expect(fetcher.fetch).toHaveBeenCalledWith('kiro', 'kiro-access', 'subscription', undefined);
+      expect(fetcher.fetch).toHaveBeenCalledWith(
+        'kiro',
+        'kiro-access',
+        'subscription',
+        undefined,
+        {},
+      );
     });
 
     it('should fill capability gaps from the curated known-modalities list', async () => {
@@ -1956,6 +1968,7 @@ describe('ModelDiscoveryService', () => {
         'access-token-123',
         'subscription',
         undefined,
+        {},
       );
     });
 
@@ -1974,7 +1987,7 @@ describe('ModelDiscoveryService', () => {
       );
 
       // No `t` field — should use the raw JSON string
-      expect(fetcher.fetch).toHaveBeenCalledWith('openai', blob, 'subscription', undefined);
+      expect(fetcher.fetch).toHaveBeenCalledWith('openai', blob, 'subscription', undefined, {});
     });
 
     it('should use raw key when OpenAI subscription value is not JSON', async () => {
@@ -1995,6 +2008,7 @@ describe('ModelDiscoveryService', () => {
         'plain-token-value',
         'subscription',
         undefined,
+        {},
       );
     });
 
@@ -2012,7 +2026,7 @@ describe('ModelDiscoveryService', () => {
         }),
       );
 
-      expect(fetcher.fetch).toHaveBeenCalledWith('qwen', blob, 'subscription', undefined);
+      expect(fetcher.fetch).toHaveBeenCalledWith('qwen', blob, 'subscription', undefined, {});
     });
 
     it('should use curated models for Anthropic subscription providers without live discovery probes', async () => {
@@ -2102,6 +2116,7 @@ describe('ModelDiscoveryService', () => {
         'decrypted-key',
         'subscription',
         undefined,
+        {},
       );
       expect(mockModelsDevSync.getModelsForProvider).not.toHaveBeenCalled();
       expect(mockPricingSync.getAll).not.toHaveBeenCalled();
@@ -2132,6 +2147,7 @@ describe('ModelDiscoveryService', () => {
         'minimax-access',
         'subscription',
         'https://api.minimax.io/anthropic',
+        {},
       );
     });
 
@@ -2154,6 +2170,7 @@ describe('ModelDiscoveryService', () => {
         'sk-cp-cn-token',
         'subscription',
         'https://api.minimaxi.com/anthropic/v1',
+        {},
       );
     });
 
@@ -2175,6 +2192,7 @@ describe('ModelDiscoveryService', () => {
         'sk-cp-global-token',
         'subscription',
         undefined,
+        {},
       );
     });
 
@@ -2196,6 +2214,7 @@ describe('ModelDiscoveryService', () => {
         'sk-minimax-api-key',
         'api_key',
         'https://api.minimaxi.com/v1',
+        {},
       );
     });
 
@@ -2217,6 +2236,7 @@ describe('ModelDiscoveryService', () => {
         'zai-sub-key',
         'subscription',
         'https://open.bigmodel.cn/api/coding/paas/v4',
+        {},
       );
     });
 
@@ -2233,7 +2253,13 @@ describe('ModelDiscoveryService', () => {
         }),
       );
 
-      expect(fetcher.fetch).toHaveBeenCalledWith('zai', 'zai-sub-key', 'subscription', undefined);
+      expect(fetcher.fetch).toHaveBeenCalledWith(
+        'zai',
+        'zai-sub-key',
+        'subscription',
+        undefined,
+        {},
+      );
     });
 
     it('routes Xiaomi MiMo Token Plan subscription discovery to the selected region host', async () => {
@@ -2254,6 +2280,7 @@ describe('ModelDiscoveryService', () => {
         'tp-mimo-token',
         'subscription',
         'https://token-plan-ams.xiaomimimo.com',
+        {},
       );
     });
 
@@ -2317,6 +2344,7 @@ describe('ModelDiscoveryService', () => {
         'decrypted-key',
         'api_key',
         'https://dashscope-intl.aliyuncs.com/compatible-mode',
+        {},
       );
       expect(result).toEqual([]);
       expect(provider.cached_models).toEqual([]);
@@ -2337,6 +2365,7 @@ describe('ModelDiscoveryService', () => {
         'decrypted-key',
         'api_key',
         'https://workspace-123.eu-central-1.maas.aliyuncs.com/compatible-mode',
+        {},
       );
     });
 
@@ -2543,6 +2572,7 @@ describe('ModelDiscoveryService', () => {
         'sk-sp-token-plan-key',
         'subscription',
         undefined,
+        {},
       );
       expect(result).toEqual([]);
     });
@@ -2570,6 +2600,7 @@ describe('ModelDiscoveryService', () => {
         'tid=copilot-api-token',
         'subscription',
         undefined,
+        {},
       );
     });
 
@@ -2618,6 +2649,7 @@ describe('ModelDiscoveryService', () => {
         'ghu_github_token',
         'subscription',
         undefined,
+        {},
       );
     });
 
@@ -2752,6 +2784,7 @@ describe('ModelDiscoveryService', () => {
         expect.stringContaining('ya29.google-access-token'),
         'subscription',
         undefined,
+        {},
       );
     });
 
@@ -3406,6 +3439,7 @@ describe('ModelDiscoveryService', () => {
         'decrypted-key',
         'subscription',
         undefined,
+        {},
       );
       expect(mockModelsDevSync.getModelsForProvider).not.toHaveBeenCalledWith('opencode-go');
       expect(result).toHaveLength(1);
@@ -3523,6 +3557,7 @@ describe('ModelDiscoveryService', () => {
         'decrypted-key',
         'subscription',
         undefined,
+        {},
       );
       expect(result[0].id).toBe('opencode-go/glm-5.1');
     });

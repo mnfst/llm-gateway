@@ -47,7 +47,9 @@ export function getBedrockMantleBaseUrl(region?: string | null): string {
 }
 
 // A cross-Region inference (CRIS) profile ID is a base model ID prefixed with a
-// geographic scope, such as `us.openai.gpt-6-sol`.
+// geographic scope, such as `us.openai.gpt-6-sol`. Bedrock also has `jp.`, `au.`
+// and `us-gov.` scopes; they are left out until a catalogued model is offered
+// under one of them.
 const BEDROCK_CRIS_PROFILE_RE = /^(?:global|us|eu|apac)\.(.+)$/;
 
 /** Base model ID of a CRIS profile (`us.openai.gpt-6-sol` → `openai.gpt-6-sol`), else null. */
