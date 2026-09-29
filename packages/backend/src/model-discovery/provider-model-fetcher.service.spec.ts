@@ -306,7 +306,7 @@ describe('ProviderModelFetcherService', () => {
     it('uses the default region and warns when the profile list is truncated', async () => {
       const warn = warnSpy();
       routeFetches(
-        mantleResponse([]),
+        mantleResponse(['mistral.ministral-3-8b-instruct']),
         profilesResponse({
           inferenceProfileSummaries: [
             { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
@@ -321,10 +321,26 @@ describe('ProviderModelFetcherService', () => {
         'https://bedrock.us-east-1.amazonaws.com/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000',
         expect.anything(),
       );
-      expect(result.map((m) => m.id)).toEqual(['us.openai.gpt-6-sol']);
+      expect(result.map((m) => m.id)).toEqual([
+        'mistral.ministral-3-8b-instruct',
+        'us.openai.gpt-6-sol',
+      ]);
       expect(warn).toHaveBeenCalledWith(
         'Bedrock listed more than 1000 inference profiles; only the first 1000 were checked',
       );
+    });
+
+    it('returns nothing when Mantle returns nothing, so discovery keeps its usual fallbacks', async () => {
+      routeFetches(
+        { ok: false, status: 503 },
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
+          ],
+        }),
+      );
+
+      await expect(service.fetch('bedrock', 'ABSK-test', 'api_key')).resolves.toEqual([]);
     });
 
     it('keeps the CRIS profiles from the last discovery when the control plane rejects the call', async () => {

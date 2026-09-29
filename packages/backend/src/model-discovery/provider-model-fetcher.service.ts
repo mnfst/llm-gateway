@@ -1226,6 +1226,10 @@ export class ProviderModelFetcherService {
         this.fetchModelList(url, headers, config, apiKey, providerId, configKey),
         this.fetchBedrockCrisProfiles(apiKey, region, providerId, options?.previousModels ?? []),
       ]);
+      // Mantle stays the primary source: when it returns nothing, discovery
+      // falls back to models.dev or the cache as before, instead of keeping
+      // only CRIS profiles.
+      if (mantleModels.length === 0) return [];
       const mantleIds = new Set(mantleModels.map((model) => model.id));
       return [...mantleModels, ...crisProfiles.filter((profile) => !mantleIds.has(profile.id))];
     }
