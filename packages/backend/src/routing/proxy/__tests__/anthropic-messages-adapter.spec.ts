@@ -1,7 +1,9 @@
 import {
   chatCompletionsResponseToMessages,
   createMessagesStreamTransformer,
+  dropUnsupportedAnthropicTools,
   messagesToChatCompletionsRequest,
+  unsupportedAnthropicToolNames,
 } from '../anthropic-messages-adapter';
 
 describe('Anthropic Messages adapter', () => {
@@ -666,6 +668,71 @@ describe('Anthropic Messages adapter', () => {
         messages: ['nope', null, { role: 'user', content: 'ok' }],
       } as Record<string, unknown>);
       expect(result.messages).toEqual([{ role: 'user', content: 'ok' }]);
+    });
+  });
+
+  describe('unsupportedAnthropicToolNames', () => {
+    it('finds server tools and schema-less typed tools, ignoring client tools', () => {
+      expect(
+        unsupportedAnthropicToolNames({
+          tools: [
+            { type: 'web_search_20250305', name: 'web_search' },
+            { type: 'mcp_toolset' },
+            { type: 'advisor_20260301', name: 'advisor' },
+            { name: 'lookup', input_schema: { type: 'object' } },
+            { type: 'custom', name: 'my_custom' },
+            { type: 'web_search_20250305', name: 'web_search' },
+          ],
+        }),
+      ).toEqual(['web_search', 'mcp_toolset', 'advisor']);
+    });
+
+    it('returns nothing when there are no tools', () => {
+      expect(unsupportedAnthropicToolNames({})).toEqual([]);
+    });
+  });
+
+  describe('dropUnsupportedAnthropicTools', () => {
+    it('removes dropped tools and relaxes a tool_choice pinned to one', () => {
+      const result = dropUnsupportedAnthropicTools(
+        {
+          tools: [
+            { type: 'function', function: { name: 'web_search' } },
+            { type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } },
+          ],
+          tool_choice: { type: 'function', function: { name: 'web_search' } },
+        },
+        {
+          tools: [
+            { type: 'web_search_20250305', name: 'web_search' },
+            { name: 'lookup', input_schema: { type: 'object' } },
+          ],
+        },
+      );
+      expect(result.tools).toEqual([
+        { type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } },
+      ]);
+      expect(result.tool_choice).toBe('auto');
+    });
+
+    it('drops the tools array and a required choice when nothing remains', () => {
+      const result = dropUnsupportedAnthropicTools(
+        { tools: [{ type: 'function', function: { name: 'bash' } }], tool_choice: 'required' },
+        { tools: [{ type: 'bash_20250124', name: 'bash' }] },
+      );
+      expect(result).not.toHaveProperty('tools');
+      expect(result.tool_choice).toBe('auto');
+    });
+
+    it('leaves the body untouched when no unsupported tools are present', () => {
+      const chatBody = {
+        tools: [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }],
+      };
+      expect(
+        dropUnsupportedAnthropicTools(chatBody, {
+          tools: [{ name: 'lookup', input_schema: { type: 'object' } }],
+        }),
+      ).toBe(chatBody);
     });
   });
 
