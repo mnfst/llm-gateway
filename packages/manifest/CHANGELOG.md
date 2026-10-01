@@ -1,5 +1,14 @@
 # manifest
 
+## 6.28.1
+
+### Patch Changes
+
+- 8f84cf6: Keep Claude prompt caching growing with the conversation on Amazon Bedrock and custom Anthropic providers, instead of stopping at the system prompt and tools.
+- 13ddffd: Count Gemini thinking tokens as output tokens. Google reports them in `thoughtsTokenCount`, apart from `candidatesTokenCount`, so thinking models on Google routes were recorded and priced without them.
+- 82e7c6a: Forward `tool_choice` to Gemini as `toolConfig` on Google routes. It was dropped, so a forced (`required` or named function) or disabled (`none`) tool call was left to the model's own choice.
+- 5fe5150: Model parameters dialog now saves any value you set, even when it equals the provider default, and shows unset params as "Not set" so the client's value is used. Fixes a `max_tokens` set in the dashboard being ignored (#3022).
+
 ## 6.28.0
 
 ### Minor Changes
