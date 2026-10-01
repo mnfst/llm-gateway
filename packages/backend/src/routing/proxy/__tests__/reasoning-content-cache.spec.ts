@@ -1,6 +1,17 @@
 import type { Repository } from 'typeorm';
 import { ReasoningContentCacheEntry } from '../../../entities/reasoning-content-cache-entry.entity';
-import { ReasoningContentCache, MAX_CACHE_ENTRIES } from '../reasoning-content-cache';
+import {
+  MAX_CACHE_ENTRIES,
+  MAX_PENDING_PERSIST_WRITES,
+  MAX_PERSIST_CONCURRENCY,
+  MAX_REASONING_CACHE_BYTES,
+  MAX_REASONING_CONTENT_BYTES,
+  ReasoningContentCache,
+} from '../reasoning-content-cache';
+
+async function flushMicrotasks(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
 
 const makeRepo = () =>
   ({
@@ -104,6 +115,71 @@ describe('ReasoningContentCache', () => {
       }),
       ['session_key', 'first_tool_call_id'],
     );
+  });
+
+  it('skips oversized reasoning_content in memory and shared persistence', () => {
+    const repo = makeRepo();
+    const sharedCache = new ReasoningContentCache(repo);
+    const oversized = '💭'.repeat(Math.floor(MAX_REASONING_CONTENT_BYTES / 4) + 1);
+
+    sharedCache.store('session-1', 'call_1', oversized);
+
+    expect(sharedCache.retrieve('session-1', 'call_1')).toBeNull();
+    expect(repo.upsert).not.toHaveBeenCalled();
+  });
+
+  it('coalesces queued writes for the same cache key and persists the latest value', async () => {
+    const repo = makeRepo();
+    const resolvers: Array<() => void> = [];
+    repo.upsert.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(() => resolve({} as never));
+        }),
+    );
+    const sharedCache = new ReasoningContentCache(repo);
+
+    for (let i = 0; i < MAX_PERSIST_CONCURRENCY; i++) {
+      sharedCache.store('session-1', `active-${i}`, `content-${i}`);
+    }
+    sharedCache.store('session-1', 'queued', 'old');
+    sharedCache.store('session-1', 'queued', 'latest');
+
+    expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY);
+    const pending = (
+      sharedCache as unknown as {
+        pendingPersists: Map<string, { content: string }>;
+      }
+    ).pendingPersists;
+    expect(pending.size).toBe(1);
+    expect([...pending.values()][0].content).toBe('latest');
+
+    resolvers.splice(0).forEach((resolve) => resolve());
+    await flushMicrotasks();
+
+    expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY + 1);
+    expect(repo.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: 'latest' }),
+      ['session_key', 'first_tool_call_id'],
+    );
+  });
+
+  it('bounds active and queued shared-cache writes during repository stalls', () => {
+    const repo = makeRepo();
+    repo.upsert.mockImplementation(() => new Promise(() => undefined));
+    const sharedCache = new ReasoningContentCache(repo);
+
+    for (let i = 0; i < MAX_PERSIST_CONCURRENCY + MAX_PENDING_PERSIST_WRITES + 5; i++) {
+      sharedCache.store('session-1', `call-${i}`, `content-${i}`);
+    }
+
+    const state = sharedCache as unknown as {
+      activePersistWrites: number;
+      pendingPersists: Map<string, unknown>;
+    };
+    expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY);
+    expect(state.activePersistWrites).toBe(MAX_PERSIST_CONCURRENCY);
+    expect(state.pendingPersists.size).toBe(MAX_PENDING_PERSIST_WRITES);
   });
 
   it('retrieves shared reasoning_content and warms the local cache', async () => {
@@ -378,6 +454,18 @@ describe('ReasoningContentCache', () => {
     expect(cache.retrieve('session', 'call_4')).toBeNull();
     expect(cache.retrieve('session', 'call_5')).not.toBeNull();
     expect(cache.retrieve('session', `call_${MAX_CACHE_ENTRIES + 4}`)).not.toBeNull();
+  });
+
+  it('evicts the oldest in-memory entries once the byte budget is exceeded', () => {
+    const content = 'x'.repeat(MAX_REASONING_CONTENT_BYTES);
+    const entriesAtBudget = MAX_REASONING_CACHE_BYTES / MAX_REASONING_CONTENT_BYTES;
+    for (let i = 0; i <= entriesAtBudget; i++) {
+      cache.store('session', `call_${i}`, content);
+    }
+
+    expect(cache.retrieve('session', 'call_0')).toBeNull();
+    expect(cache.retrieve('session', 'call_1')).toBe(content);
+    expect(cache.retrieve('session', `call_${entriesAtBudget}`)).toBe(content);
   });
 
   it('evicts expired entries lazily when cleanup interval has elapsed', () => {
