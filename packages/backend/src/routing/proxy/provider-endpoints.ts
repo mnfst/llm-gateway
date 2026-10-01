@@ -13,7 +13,11 @@ import {
   buildClaudeCodeSubscriptionHeaders,
 } from '../../common/constants/subscription-clients';
 import { normalizeProviderBaseUrl } from '../provider-base-url';
-import { getBedrockMantleBaseUrl, getBedrockRuntimeBaseUrl } from '../bedrock-region';
+import {
+  getBedrockInferenceProfileBaseModelId,
+  getBedrockMantleBaseUrl,
+  getBedrockRuntimeBaseUrl,
+} from '../bedrock-region';
 import { getBedrockRuntimeCapabilities } from '../bedrock-runtime-capabilities';
 import { getQwenCompatibleBaseUrl } from '../qwen-region';
 import { getXiaomiTokenPlanBaseUrl } from '../xiaomi-region';
@@ -102,7 +106,13 @@ export function resolveBedrockEndpointKey(
   | 'bedrock-responses'
   | 'bedrock-anthropic'
   | 'bedrock-runtime'
-  | 'bedrock-runtime-responses' {
+  | 'bedrock-runtime-responses'
+  | 'bedrock-runtime-anthropic' {
+  // Claude CRIS profiles go to Runtime's Anthropic Messages API on every API
+  // mode: Mantle 404s them, and some (Sonnet 5.5) are served only that way.
+  if (getBedrockInferenceProfileBaseModelId(model)?.startsWith('anthropic.')) {
+    return 'bedrock-runtime-anthropic';
+  }
   // Mantle does not serve CRIS profiles. Catalogued ones go to Runtime on the
   // API the agent called; every other model ID keeps its Mantle route.
   if (getBedrockRuntimeCapabilities(model)) {
@@ -249,6 +259,16 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
   },
   'bedrock-anthropic': {
     baseUrl: getBedrockMantleBaseUrl(),
+    buildHeaders: anthropicApiKeyHeaders,
+    buildPath: () => '/anthropic/v1/messages',
+    format: 'anthropic',
+    skipSubscriptionIdentity: true,
+  },
+  // Same Messages API on the Runtime host, for Claude CRIS profiles. Mantle
+  // 404s them, and Sonnet 5.5 is served only by Runtime via CRIS in commercial
+  // regions.
+  'bedrock-runtime-anthropic': {
+    baseUrl: getBedrockRuntimeBaseUrl(),
     buildHeaders: anthropicApiKeyHeaders,
     buildPath: () => '/anthropic/v1/messages',
     format: 'anthropic',

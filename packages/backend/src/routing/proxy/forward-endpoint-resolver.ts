@@ -26,7 +26,6 @@ import {
   getBedrockRuntimeBaseUrl,
   isBedrockRegion,
 } from '../bedrock-region';
-import { getBedrockRuntimeCapabilities } from '../bedrock-runtime-capabilities';
 import { getVertexBaseUrl, parseVertexDeployment } from '../vertex-deployment';
 import { MINIMAX_BASE_URLS } from '../oauth/minimax/minimax-oauth-helpers';
 import { getQwenCompatibleBaseUrl, isQwenResolvedEndpoint } from '../qwen-region';
@@ -137,11 +136,12 @@ export function resolveForwardEndpoint(
       forwardModel = CustomProviderService.rawModelName(model);
     }
   } else if (resolveEndpointKey(provider) === 'bedrock' && isBedrockRegion(providerRegion)) {
+    const bedrockEndpointKey = resolveBedrockEndpointKey(model, apiMode);
     customEndpoint = buildEndpointOverride(
-      getBedrockRuntimeCapabilities(model)
+      bedrockEndpointKey.startsWith('bedrock-runtime')
         ? getBedrockRuntimeBaseUrl(providerRegion)
         : getBedrockMantleBaseUrl(providerRegion),
-      resolveBedrockEndpointKey(model, apiMode),
+      bedrockEndpointKey,
     );
   } else if (resolveEndpointKey(provider) === 'vertex' && vertexDeployment) {
     // Connections that carry `project/location` address Vertex the way Google

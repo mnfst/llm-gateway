@@ -239,12 +239,28 @@ describe('resolveBedrockEndpointKey', () => {
     },
   );
 
-  it.each(['anthropic.claude-sonnet-5', 'us.anthropic.claude-sonnet-5'])(
-    'routes %s through Messages',
-    (model) => {
-      expect(resolveBedrockEndpointKey(model)).toBe('bedrock-anthropic');
-    },
-  );
+  it.each([
+    'anthropic.claude-sonnet-5',
+    'anthropic.claude-opus-5-5',
+    'bedrock/anthropic.claude-sonnet-5',
+  ])('routes %s through Messages', (model) => {
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-anthropic');
+  });
+
+  it.each([
+    'us.anthropic.claude-sonnet-5-5',
+    'eu.anthropic.claude-sonnet-5-5',
+    'global.anthropic.claude-sonnet-5-5',
+    'apac.anthropic.claude-sonnet-5-5',
+    'us.anthropic.claude-opus-5-5',
+    'bedrock/us.anthropic.claude-sonnet-5-5',
+    'bedrock/global.anthropic.claude-sonnet-5-5',
+  ])('routes the Claude CRIS profile %s to Runtime Messages on every API mode', (model) => {
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime-anthropic');
+    expect(resolveBedrockEndpointKey(model, 'chat_completions')).toBe('bedrock-runtime-anthropic');
+    expect(resolveBedrockEndpointKey(model, 'messages')).toBe('bedrock-runtime-anthropic');
+    expect(resolveBedrockEndpointKey(model, 'responses')).toBe('bedrock-runtime-anthropic');
+  });
 
   it('keeps other Bedrock model families on Chat Completions', () => {
     expect(resolveBedrockEndpointKey('mistral.ministral-3-8b-instruct')).toBe('bedrock');
@@ -265,15 +281,33 @@ describe('resolveBedrockEndpointKey', () => {
   });
 
   it('keeps uncatalogued CRIS profiles on their Mantle route', () => {
-    expect(resolveBedrockEndpointKey('us.anthropic.claude-sonnet-5', 'responses')).toBe(
-      'bedrock-anthropic',
-    );
     expect(resolveBedrockEndpointKey('global.openai.gpt-7', 'responses')).toBe('bedrock-responses');
     expect(resolveBedrockEndpointKey('eu.mistral.pixtral-large-2502-v1:0')).toBe('bedrock');
   });
 });
 
 describe('Bedrock Runtime endpoints', () => {
+  it('serves Claude CRIS profiles through the Anthropic Messages API on the Runtime host', () => {
+    const ep = PROVIDER_ENDPOINTS['bedrock-runtime-anthropic'];
+    expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');
+    expect(ep.format).toBe('anthropic');
+    expect(ep.buildPath('us.anthropic.claude-sonnet-5-5')).toBe('/anthropic/v1/messages');
+    expect(ep.skipSubscriptionIdentity).toBe(true);
+  });
+
+  it('builds Runtime Claude headers like the Mantle Anthropic endpoint, with a single credential', () => {
+    const runtime = PROVIDER_ENDPOINTS['bedrock-runtime-anthropic'];
+    const mantle = PROVIDER_ENDPOINTS['bedrock-anthropic'];
+    const headers = runtime.buildHeaders('ABSK-test');
+    expect(headers).toEqual(mantle.buildHeaders('ABSK-test'));
+    expect(headers).toEqual({
+      'x-api-key': 'ABSK-test',
+      'Content-Type': 'application/json',
+      'anthropic-version': '2023-06-01',
+    });
+    expect(headers).not.toHaveProperty('Authorization');
+  });
+
   it('serves Chat Completions under /openai/v1 on the Runtime host', () => {
     const ep = PROVIDER_ENDPOINTS['bedrock-runtime'];
     expect(ep.baseUrl).toBe('https://bedrock-runtime.us-east-1.amazonaws.com');

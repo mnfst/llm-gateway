@@ -902,6 +902,53 @@ describe('ProviderClient', () => {
       expect(result.wireApiMode).toBe('messages');
     });
 
+    it.each(['us.anthropic.claude-sonnet-5-5', 'bedrock/us.anthropic.claude-sonnet-5-5'])(
+      'sends the Claude CRIS profile %s to Bedrock Runtime Messages with the scope kept in the model',
+      async (model) => {
+        mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+        const result = await client.forward({
+          provider: 'bedrock',
+          apiKey: 'bedrock-api-key-test',
+          model,
+          body,
+          stream: false,
+        });
+
+        expect(mockFetch).toHaveBeenCalledWith(
+          'https://bedrock-runtime.us-east-1.amazonaws.com/anthropic/v1/messages',
+          expect.objectContaining({
+            method: 'POST',
+            headers: {
+              'x-api-key': 'bedrock-api-key-test',
+              'Content-Type': 'application/json',
+              'anthropic-version': '2023-06-01',
+            },
+          }),
+        );
+        const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(sentBody.model).toBe('us.anthropic.claude-sonnet-5-5');
+        expect(result.isAnthropic).toBe(true);
+        expect(result.wireApiMode).toBe('messages');
+      },
+    );
+
+    it('keeps the plain Claude id on Bedrock Mantle next to the CRIS profile route', async () => {
+      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+      await client.forward({
+        provider: 'bedrock',
+        apiKey: 'bedrock-api-key-test',
+        model: 'anthropic.claude-sonnet-5',
+        body,
+        stream: false,
+      });
+
+      expect(mockFetch.mock.calls[0][0]).toBe(
+        'https://bedrock-mantle.us-east-1.api.aws/anthropic/v1/messages',
+      );
+    });
+
     describe('conversation cache breakpoint on Anthropic-format upstreams (#3023)', () => {
       const conversation = {
         messages: [

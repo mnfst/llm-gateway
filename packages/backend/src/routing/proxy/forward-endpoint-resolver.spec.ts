@@ -272,18 +272,34 @@ describe('resolveForwardEndpoint', () => {
     },
   );
 
-  it('keeps an uncatalogued CRIS profile on Mantle in the selected region', () => {
+  it('keeps an uncatalogued non-Claude CRIS profile on Mantle in the selected region', () => {
     const out = resolveForwardEndpoint({
       provider: 'bedrock',
       authType: 'api_key',
-      model: 'us.anthropic.claude-sonnet-5',
+      model: 'global.openai.gpt-7',
       providerRegion: 'us-west-2',
       apiMode: 'responses',
     });
 
     expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-mantle.us-west-2.api.aws');
-    expect(out.customEndpoint?.format).toBe('anthropic');
   });
+
+  it.each(['us.anthropic.claude-sonnet-5-5', 'bedrock/us.anthropic.claude-sonnet-5-5'])(
+    'sends the Claude CRIS profile %s to Bedrock Runtime Messages in the selected region',
+    (model) => {
+      const out = resolveForwardEndpoint({
+        provider: 'bedrock',
+        authType: 'api_key',
+        model,
+        providerRegion: 'us-west-2',
+        apiMode: 'messages',
+      });
+
+      expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-runtime.us-west-2.amazonaws.com');
+      expect(out.customEndpoint?.format).toBe('anthropic');
+      expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/anthropic/v1/messages');
+    },
+  );
 
   it('sets no qwen override for an unresolved region', () => {
     const out = resolveForwardEndpoint({
