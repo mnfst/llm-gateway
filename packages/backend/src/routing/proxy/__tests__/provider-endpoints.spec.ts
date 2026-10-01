@@ -253,6 +253,8 @@ describe('resolveBedrockEndpointKey', () => {
     'global.anthropic.claude-sonnet-5-5',
     'apac.anthropic.claude-sonnet-5-5',
     'us.anthropic.claude-opus-5-5',
+    'us.anthropic.claude-sonnet-5',
+    'global.anthropic.claude-opus-5',
     'bedrock/us.anthropic.claude-sonnet-5-5',
     'bedrock/global.anthropic.claude-sonnet-5-5',
   ])('routes the Claude CRIS profile %s to Runtime Messages on every API mode', (model) => {

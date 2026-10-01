@@ -298,6 +298,8 @@ describe('resolveForwardEndpoint', () => {
       expect(out.customEndpoint?.baseUrl).toBe('https://bedrock-runtime.us-west-2.amazonaws.com');
       expect(out.customEndpoint?.format).toBe('anthropic');
       expect(out.customEndpoint?.buildPath(out.forwardModel)).toBe('/anthropic/v1/messages');
+      // The resolver never strips the `bedrock/` prefix; provider-client does that.
+      expect(out.forwardModel).toBe(model);
     },
   );
 
