@@ -1,5 +1,13 @@
 # manifest
 
+## 6.28.2
+
+### Patch Changes
+
+- 340df79: Route Claude cross-Region inference profiles on Amazon Bedrock (such as `us.anthropic.claude-sonnet-5-5`) to the Bedrock Runtime Anthropic Messages API instead of Mantle, which does not serve them.
+- 3c3214a: Translate Anthropic `tool_choice: {type: "none"}` and `disable_parallel_tool_use` on `/v1/messages` requests routed to non-Anthropic providers. Both were dropped, so the model could still call tools, or call several at once, when the client had turned that off.
+- b15b5c2: Forward `response_format` as `text.format` when a Chat Completions request is sent to a Responses endpoint (ChatGPT subscription, Responses-only OpenAI models, Copilot and xAI Responses). It was dropped, so a JSON schema or JSON mode request came back as free-form text.
+
 ## 6.28.1
 
 ### Patch Changes
