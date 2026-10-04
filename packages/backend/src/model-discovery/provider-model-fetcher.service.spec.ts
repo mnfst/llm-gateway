@@ -275,7 +275,7 @@ describe('ProviderModelFetcherService', () => {
             { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
             { inferenceProfileId: 'global.openai.gpt-6-luna', status: 'ACTIVE' },
             { inferenceProfileId: 'global.openai.gpt-6-astra', status: 'INACTIVE' },
-            { inferenceProfileId: 'global.anthropic.claude-sonnet-5', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.anthropic.claude-sonnet-4-6', status: 'ACTIVE' },
           ],
         }),
       );
@@ -349,7 +349,7 @@ describe('ProviderModelFetcherService', () => {
       const previous = [
         { id: 'openai.gpt-6-sol' },
         { id: 'us.moonshotai.kimi-k3' },
-        { id: 'us.anthropic.claude-sonnet-5' },
+        { id: 'us.anthropic.claude-sonnet-4-6' },
       ].map((m) => ({ ...m, provider: 'bedrock' })) as never[];
 
       const result = await service.fetch('bedrock', 'ABSK-test', 'api_key', undefined, {
@@ -359,6 +359,67 @@ describe('ProviderModelFetcherService', () => {
       expect(result.map((m) => m.id)).toEqual(['openai.gpt-6-sol', 'us.moonshotai.kimi-k3']);
       expect(warn).toHaveBeenCalledWith(
         'Could not list Bedrock inference profiles (Error: HTTP 403); kept 1 from the last discovery',
+      );
+    });
+
+    it('adds the active Claude CRIS profiles that Runtime Messages serves', async () => {
+      routeFetches(
+        mantleResponse(['openai.gpt-6-sol']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.anthropic.claude-sonnet-5-5', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.anthropic.claude-opus-5-5', status: 'ACTIVE' },
+            {
+              inferenceProfileId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+              status: 'ACTIVE',
+            },
+            { inferenceProfileId: 'us.anthropic.claude-fable-5', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
+            { inferenceProfileId: 'eu.anthropic.claude-opus-5', status: 'INACTIVE' },
+          ],
+        }),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'us.anthropic.claude-sonnet-5-5',
+        'global.anthropic.claude-opus-5-5',
+        'global.moonshotai.kimi-k3',
+      ]);
+      expect(result[1]).toMatchObject({
+        provider: 'bedrock',
+        supportedEndpoints: ['/v1/chat/completions', '/v1/messages'],
+      });
+      expect(result[2].supportedEndpoints).toEqual(['/v1/chat/completions', '/v1/messages']);
+      expect(result[3].supportedEndpoints).toEqual(['/v1/chat/completions', '/v1/responses']);
+    });
+
+    it('keeps previously discovered Claude profiles when the control plane fails, and drops unsupported ones', async () => {
+      const warn = warnSpy();
+      routeFetches(mantleResponse(['openai.gpt-6-sol']), { ok: false, status: 403 });
+      const previous = [
+        { id: 'openai.gpt-6-sol' },
+        { id: 'us.moonshotai.kimi-k3' },
+        { id: 'us.anthropic.claude-sonnet-5-5' },
+        { id: 'global.anthropic.claude-opus-5' },
+        { id: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0' },
+        { id: 'us.anthropic.claude-fable-5' },
+      ].map((m) => ({ ...m, provider: 'bedrock' })) as never[];
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key', undefined, {
+        previousModels: previous,
+      });
+
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'us.moonshotai.kimi-k3',
+        'us.anthropic.claude-sonnet-5-5',
+        'global.anthropic.claude-opus-5',
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not list Bedrock inference profiles (Error: HTTP 403); kept 3 from the last discovery',
       );
     });
 
