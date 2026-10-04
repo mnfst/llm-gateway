@@ -25,11 +25,7 @@ import {
   getBedrockMantleBaseUrl,
   normalizeBedrockMantleBaseUrl,
 } from '../routing/bedrock-region';
-import {
-  getBedrockRuntimeCapabilities,
-  getBedrockRuntimeSupportedEndpoints,
-  isBedrockRuntimeClaudeProfile,
-} from '../routing/bedrock-runtime-capabilities';
+import { getBedrockRuntimeSupportedEndpoints } from '../routing/bedrock-runtime-capabilities';
 import {
   getXiaomiTokenPlanBaseUrl,
   normalizeXiaomiTokenPlanBaseUrl,
@@ -210,9 +206,12 @@ interface BedrockInferenceProfileEntry {
   status: string;
 }
 
-/** CRIS profiles Bedrock Runtime serves: catalogued ones and verified Claude ones. */
+/**
+ * CRIS profiles Bedrock Runtime serves (catalogued or verified Claude): exactly
+ * those with at least one supported Manifest endpoint.
+ */
 const isBedrockRuntimeProfile = (id: string): boolean =>
-  getBedrockRuntimeCapabilities(id) !== null || isBedrockRuntimeClaudeProfile(id);
+  getBedrockRuntimeSupportedEndpoints(id).length > 0;
 
 /** Active CRIS profiles from `ListInferenceProfiles` that Bedrock Runtime serves. */
 const parseBedrockCrisProfiles = createModelParser<BedrockInferenceProfileEntry>({
