@@ -1,5 +1,11 @@
 # manifest
 
+## 6.28.5
+
+### Patch Changes
+
+- 7d49332: Forward `max_completion_tokens` and `stop` to Gemini as `maxOutputTokens` and `stopSequences` on Google routes. Both were dropped, so the output cap and stop sequences sent by OpenAI SDK clients (and `stop_sequences` on `/v1/messages`) were ignored.
+
 ## 6.28.4
 
 ### Patch Changes
