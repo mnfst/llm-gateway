@@ -761,6 +761,110 @@ describe('Responses adapter', () => {
       });
     });
 
+    it('reports a token-limited reply as incomplete with max_output_tokens', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [
+            {
+              finish_reason: 'length',
+              message: {
+                content: '{"answer":',
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{"id":' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        'm',
+      );
+
+      expect(result.status).toBe('incomplete');
+      expect(result.incomplete_details).toEqual({ reason: 'max_output_tokens' });
+      expect(result.completed_at).toBeNull();
+      expect(result.output).toEqual([
+        expect.objectContaining({ type: 'message', status: 'incomplete' }),
+        expect.objectContaining({ type: 'function_call', status: 'incomplete' }),
+      ]);
+    });
+
+    it('reports a filtered reply as incomplete with content_filter', () => {
+      const result = fromChatCompletionResponse(
+        { choices: [{ finish_reason: 'content_filter', message: { content: 'Partial' } }] },
+        'm',
+      );
+
+      expect(result.status).toBe('incomplete');
+      expect(result.incomplete_details).toEqual({ reason: 'content_filter' });
+    });
+
+    it.each(['stop', 'tool_calls', null, undefined])(
+      'keeps the reply completed for finish_reason %p',
+      (finishReason) => {
+        const result = fromChatCompletionResponse(
+          { choices: [{ finish_reason: finishReason, message: { content: 'Done' } }] },
+          'm',
+        );
+
+        expect(result.status).toBe('completed');
+        expect(result.incomplete_details).toBeNull();
+        expect(result.output).toEqual([expect.objectContaining({ status: 'completed' })]);
+      },
+    );
+
+    it('keeps an upstream refusal as a refusal content part', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [
+            {
+              message: { role: 'assistant', content: null, refusal: 'I cannot help with that.' },
+            },
+          ],
+        },
+        'm',
+      );
+
+      expect(result.status).toBe('completed');
+      expect(result.output).toEqual([
+        expect.objectContaining({
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'refusal', refusal: 'I cannot help with that.' }],
+        }),
+      ]);
+    });
+
+    it('puts the refusal after the text when a reply carries both', () => {
+      const result = fromChatCompletionResponse(
+        { choices: [{ message: { content: 'Part one.', refusal: 'Stopping here.' } }] },
+        'm',
+      );
+
+      expect(result.output).toEqual([
+        expect.objectContaining({
+          content: [
+            { type: 'output_text', text: 'Part one.', annotations: [] },
+            { type: 'refusal', refusal: 'Stopping here.' },
+          ],
+        }),
+      ]);
+    });
+
+    it('ignores an empty or non-string refusal', () => {
+      for (const refusal of ['', null, 7]) {
+        const result = fromChatCompletionResponse(
+          { choices: [{ message: { content: null, refusal } }] },
+          'm',
+        );
+        expect(result.output).toEqual([]);
+      }
+    });
+
     it('handles missing choices, non-string content, and missing usage', () => {
       const result = fromChatCompletionResponse({ choices: [{ message: { content: 7 } }] }, 'm');
       expect(result.model).toBe('m');
@@ -1264,6 +1368,136 @@ describe('Responses adapter', () => {
         expect(completed.response.completed_at).toBeGreaterThan(completed.response.created_at);
       } finally {
         nowSpy.mockRestore();
+      }
+    });
+
+    it('emits a refusal part with delta and done events', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      const first =
+        t.transform('{"choices":[{"delta":{"role":"assistant","refusal":"I cannot "}}]}') ?? '';
+      const second = t.transform('{"choices":[{"delta":{"refusal":"help."}}]}') ?? '';
+      t.transform('{"choices":[{"delta":{},"finish_reason":"stop"}]}');
+      const end = t.finalize() ?? '';
+
+      expect(eventTypes(first)).toEqual([
+        'response.created',
+        'response.in_progress',
+        'response.output_item.added',
+        'response.content_part.added',
+        'response.refusal.delta',
+      ]);
+      expect(firstEventData(first, 'response.content_part.added')!.part).toEqual({
+        type: 'refusal',
+        refusal: '',
+      });
+      expect(eventTypes(second)).toEqual(['response.refusal.delta']);
+
+      const itemId = firstEventData(first, 'response.output_item.added')!.item.id;
+      const delta = firstEventData(first, 'response.refusal.delta')!;
+      expect(delta).toMatchObject({ item_id: itemId, content_index: 0, delta: 'I cannot ' });
+
+      expect(eventTypes(end)).toEqual([
+        'response.refusal.done',
+        'response.content_part.done',
+        'response.output_item.done',
+        'response.completed',
+        '[DONE]',
+      ]);
+      expect(firstEventData(end, 'response.refusal.done')).toMatchObject({
+        item_id: itemId,
+        content_index: 0,
+        refusal: 'I cannot help.',
+      });
+      expect(firstEventData(end, 'response.content_part.done')!.part).toEqual({
+        type: 'refusal',
+        refusal: 'I cannot help.',
+      });
+
+      const completed = firstEventData(end, 'response.completed')!;
+      expect(completed.response.status).toBe('completed');
+      expect(completed.response.output).toEqual([
+        expect.objectContaining({
+          id: itemId,
+          type: 'message',
+          content: [{ type: 'refusal', refusal: 'I cannot help.' }],
+        }),
+      ]);
+    });
+
+    it('gives text and refusal parts their own content indexes', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      const text = t.transform('{"choices":[{"delta":{"content":"Part one."}}]}') ?? '';
+      const refusal = t.transform('{"choices":[{"delta":{"refusal":"No."}}]}') ?? '';
+      const end = t.finalize() ?? '';
+
+      expect(eventTypes(text)).toContain('response.output_text.delta');
+      expect(eventTypes(refusal)).toEqual([
+        'response.content_part.added',
+        'response.refusal.delta',
+      ]);
+      expect(firstEventData(refusal, 'response.content_part.added')!.content_index).toBe(1);
+      expect(firstEventData(refusal, 'response.refusal.delta')!.content_index).toBe(1);
+
+      const itemDone = firstEventData(end, 'response.output_item.done')!;
+      expect(itemDone.item.content).toEqual([
+        { type: 'output_text', text: 'Part one.', annotations: [] },
+        { type: 'refusal', refusal: 'No.' },
+      ]);
+      expect(firstEventData(end, 'response.completed')!.response.output[0].content).toEqual(
+        itemDone.item.content,
+      );
+    });
+
+    it('ends a token-limited stream with response.incomplete', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      t.transform('{"choices":[{"delta":{"content":"{\\"answer\\":"}}]}');
+      t.transform(
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\\"id\\":"}}]}}]}',
+      );
+      t.transform('{"choices":[{"delta":{},"finish_reason":"length"}]}');
+      const end = t.finalize() ?? '';
+
+      const types = eventTypes(end);
+      expect(types).toContain('response.incomplete');
+      expect(types).not.toContain('response.completed');
+      expect(types[types.length - 1]).toBe('[DONE]');
+
+      const incomplete = firstEventData(end, 'response.incomplete')!;
+      expect(incomplete.response.status).toBe('incomplete');
+      expect(incomplete.response.incomplete_details).toEqual({ reason: 'max_output_tokens' });
+      expect(incomplete.response.completed_at).toBeNull();
+      expect(incomplete.response.output).toEqual([
+        expect.objectContaining({ type: 'message', status: 'incomplete' }),
+        expect.objectContaining({ type: 'function_call', status: 'incomplete' }),
+      ]);
+      for (const item of end
+        .split('\n')
+        .filter((line) => line.startsWith('data: {'))
+        .map((line) => JSON.parse(line.slice(6)))
+        .filter((event) => event.type === 'response.output_item.done')
+        .map((event) => event.item)) {
+        expect(item.status).toBe('incomplete');
+      }
+    });
+
+    it('ends a content-filtered stream with response.incomplete', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      t.transform('{"choices":[{"delta":{"content":"Partial"},"finish_reason":"content_filter"}]}');
+      const end = t.finalize() ?? '';
+
+      expect(firstEventData(end, 'response.incomplete')!.response.incomplete_details).toEqual({
+        reason: 'content_filter',
+      });
+    });
+
+    it('still completes a stream that ends with stop or tool_calls', () => {
+      for (const finishReason of ['stop', 'tool_calls']) {
+        const t = createResponsesStreamTransformer('gpt-4o');
+        t.transform(`{"choices":[{"delta":{"content":"Hi"},"finish_reason":"${finishReason}"}]}`);
+        const end = t.finalize() ?? '';
+
+        expect(eventTypes(end)).toContain('response.completed');
+        expect(eventTypes(end)).not.toContain('response.incomplete');
       }
     });
   });

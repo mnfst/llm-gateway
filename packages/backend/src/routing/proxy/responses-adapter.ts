@@ -25,6 +25,21 @@ function textFromContent(content: unknown): string {
     .join('');
 }
 
+function textFromRefusal(refusal: unknown): string {
+  return typeof refusal === 'string' ? refusal : '';
+}
+
+/**
+ * Responses reports a reply cut short by the token limit or a content filter as
+ * `status: "incomplete"` with a reason; Chat Completions only says so through
+ * `finish_reason`.
+ */
+function incompleteReason(finishReason: unknown): 'max_output_tokens' | 'content_filter' | null {
+  if (finishReason === 'length') return 'max_output_tokens';
+  if (finishReason === 'content_filter') return 'content_filter';
+  return null;
+}
+
 function toChatContent(content: unknown, role: string): unknown {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return content;
@@ -333,14 +348,20 @@ export function fromChatCompletionResponse(
   const message = isRecord(firstChoice.message) ? firstChoice.message : {};
   const output: JsonRecord[] = [];
   const outputText = textFromContent(message.content);
+  const refusal = textFromRefusal(message.refusal);
+  const reason = incompleteReason(firstChoice.finish_reason);
+  const itemStatus = reason ? 'incomplete' : 'completed';
 
-  if (outputText) {
+  const content: JsonRecord[] = [];
+  if (outputText) content.push({ type: 'output_text', text: outputText, annotations: [] });
+  if (refusal) content.push({ type: 'refusal', refusal });
+  if (content.length > 0) {
     output.push({
       type: 'message',
       id: `msg_${randomUUID().replace(/-/g, '')}`,
-      status: 'completed',
+      status: itemStatus,
       role: 'assistant',
-      content: [{ type: 'output_text', text: outputText, annotations: [] }],
+      content,
     });
   }
 
@@ -355,7 +376,7 @@ export function fromChatCompletionResponse(
         ...options.toolNames?.get(String(toolCall.function.name)),
         arguments:
           typeof toolCall.function.arguments === 'string' ? toolCall.function.arguments : '{}',
-        status: 'completed',
+        status: itemStatus,
       });
     }
   }
@@ -365,10 +386,10 @@ export function fromChatCompletionResponse(
     id: `resp_${randomUUID().replace(/-/g, '')}`,
     object: 'response',
     created_at: created,
-    status: 'completed',
-    completed_at: created,
+    status: itemStatus,
+    completed_at: reason ? null : created,
     error: null,
-    incomplete_details: null,
+    incomplete_details: reason ? { reason } : null,
     instructions: null,
     max_output_tokens: null,
     model: typeof body.model === 'string' ? body.model : model,
@@ -634,6 +655,12 @@ interface ResponsesStreamState {
   createdAt: number;
   usage: unknown;
   text: string;
+  refusal: string;
+  finishReason: string | null;
+  // Content-part positions inside the message item, assigned when each part opens.
+  textPartIndex?: number;
+  refusalPartIndex?: number;
+  nextContentIndex: number;
   textFormat?: JsonRecord;
   createdEmitted: boolean;
   itemOpened: boolean;
@@ -674,6 +701,9 @@ export function createResponsesStreamTransformer(
     createdAt: Math.floor(Date.now() / 1000),
     usage: undefined,
     text: '',
+    refusal: '',
+    finishReason: null,
+    nextContentIndex: 0,
     textFormat: options.textFormat,
     createdEmitted: false,
     itemOpened: false,
@@ -725,30 +755,65 @@ function emitItemOpen(state: ResponsesStreamState): string[] {
         content: [],
       },
     }),
+  ];
+}
+
+function emitPartOpen(
+  state: ResponsesStreamState,
+  index: number | undefined,
+  part: JsonRecord,
+): { events: string[]; index: number } {
+  if (index !== undefined) return { events: [], index };
+  const events = emitItemOpen(state);
+  const contentIndex = state.nextContentIndex++;
+  events.push(
     formatResponsesEvent('response.content_part.added', {
       type: 'response.content_part.added',
       item_id: state.itemId,
       output_index: state.messageOutputIndex,
-      content_index: 0,
-      part: { type: 'output_text', text: '', annotations: [] },
+      content_index: contentIndex,
+      part,
     }),
-  ];
+  );
+  return { events, index: contentIndex };
 }
 
 function emitOutputTextDelta(state: ResponsesStreamState, delta: string): string[] {
   if (!delta) return [];
-  const events = emitItemOpen(state);
+  const opened = emitPartOpen(state, state.textPartIndex, {
+    type: 'output_text',
+    text: '',
+    annotations: [],
+  });
+  state.textPartIndex = opened.index;
   state.text += delta;
-  events.push(
+  return [
+    ...opened.events,
     formatResponsesEvent('response.output_text.delta', {
       type: 'response.output_text.delta',
       item_id: state.itemId,
       output_index: state.messageOutputIndex,
-      content_index: 0,
+      content_index: opened.index,
       delta,
     }),
-  );
-  return events;
+  ];
+}
+
+function emitRefusalDelta(state: ResponsesStreamState, delta: string): string[] {
+  if (!delta) return [];
+  const opened = emitPartOpen(state, state.refusalPartIndex, { type: 'refusal', refusal: '' });
+  state.refusalPartIndex = opened.index;
+  state.refusal += delta;
+  return [
+    ...opened.events,
+    formatResponsesEvent('response.refusal.delta', {
+      type: 'response.refusal.delta',
+      item_id: state.itemId,
+      output_index: state.messageOutputIndex,
+      content_index: opened.index,
+      delta,
+    }),
+  ];
 }
 
 function functionCallItem(
@@ -832,8 +897,16 @@ function transformResponsesStreamChunk(chunk: string, state: ResponsesStreamStat
     const choice = isRecord(choices[0]) ? choices[0] : null;
     const delta = isRecord(choice?.delta) ? choice.delta : {};
 
+    if (typeof choice?.finish_reason === 'string' && choice.finish_reason) {
+      state.finishReason = choice.finish_reason;
+    }
+
     if (typeof delta.content === 'string' && delta.content.length > 0) {
       events.push(...emitOutputTextDelta(state, delta.content));
+    }
+
+    if (typeof delta.refusal === 'string' && delta.refusal.length > 0) {
+      events.push(...emitRefusalDelta(state, delta.refusal));
     }
 
     events.push(...toolCallDeltas(delta.tool_calls, state));
@@ -848,31 +921,61 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
 
   const events: string[] = [...emitCreated(state)];
 
+  const reason = incompleteReason(state.finishReason);
+  const itemStatus = reason ? 'incomplete' : 'completed';
+
+  const parts: JsonRecord[] = [];
   if (state.itemOpened) {
+    if (state.textPartIndex !== undefined) {
+      const part = { type: 'output_text', text: state.text, annotations: [] };
+      parts[state.textPartIndex] = part;
+      events.push(
+        formatResponsesEvent('response.output_text.done', {
+          type: 'response.output_text.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.textPartIndex,
+          text: state.text,
+        }),
+        formatResponsesEvent('response.content_part.done', {
+          type: 'response.content_part.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.textPartIndex,
+          part,
+        }),
+      );
+    }
+    if (state.refusalPartIndex !== undefined) {
+      const part = { type: 'refusal', refusal: state.refusal };
+      parts[state.refusalPartIndex] = part;
+      events.push(
+        formatResponsesEvent('response.refusal.done', {
+          type: 'response.refusal.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.refusalPartIndex,
+          refusal: state.refusal,
+        }),
+        formatResponsesEvent('response.content_part.done', {
+          type: 'response.content_part.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.refusalPartIndex,
+          part,
+        }),
+      );
+    }
     events.push(
-      formatResponsesEvent('response.output_text.done', {
-        type: 'response.output_text.done',
-        item_id: state.itemId,
-        output_index: state.messageOutputIndex,
-        content_index: 0,
-        text: state.text,
-      }),
-      formatResponsesEvent('response.content_part.done', {
-        type: 'response.content_part.done',
-        item_id: state.itemId,
-        output_index: state.messageOutputIndex,
-        content_index: 0,
-        part: { type: 'output_text', text: state.text, annotations: [] },
-      }),
       formatResponsesEvent('response.output_item.done', {
         type: 'response.output_item.done',
         output_index: state.messageOutputIndex,
         item: {
           id: state.itemId,
           type: 'message',
-          status: 'completed',
+          status: itemStatus,
           role: 'assistant',
-          content: [{ type: 'output_text', text: state.text, annotations: [] }],
+          content: parts,
         },
       }),
     );
@@ -883,7 +986,7 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
     if (!call.name) continue;
     if (!call.callId) call.callId = randomUUID();
     events.push(...openFunctionCall(call, state));
-    const item = functionCallItem(call, state, 'completed');
+    const item = functionCallItem(call, state, itemStatus);
     toolOutput.push({ index: call.outputIndex!, item });
     events.push(
       formatResponsesEvent('response.function_call_arguments.done', {
@@ -905,7 +1008,12 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
       model: state.model,
       created: state.createdAt,
       usage: isRecord(state.usage) ? state.usage : undefined,
-      choices: [{ message: { content: state.text } }],
+      choices: [
+        {
+          finish_reason: state.finishReason,
+          message: { content: state.text, refusal: state.refusal },
+        },
+      ],
     },
     state.model,
     { textFormat: state.textFormat },
@@ -914,10 +1022,13 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
   // `created_at` is the stream-start stamp (shared across every snapshot for
   // this id), but `completed_at` must reflect when the stream actually
   // finished — fromChatCompletionResponse defaults it to `created`.
-  response.completed_at = Math.floor(Date.now() / 1000);
+  if (!reason) response.completed_at = Math.floor(Date.now() / 1000);
   if (state.itemOpened && Array.isArray(response.output)) {
     const message = response.output.find((item) => isRecord(item) && item.type === 'message');
-    if (isRecord(message)) message.id = state.itemId;
+    if (isRecord(message)) {
+      message.id = state.itemId;
+      message.content = parts;
+    }
   }
 
   const output = (response.output as JsonRecord[]).map((item) => ({
@@ -928,10 +1039,8 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
     .sort((a, b) => a.index - b.index)
     .map(({ item }) => item);
 
-  events.push(
-    formatResponsesEvent('response.completed', { type: 'response.completed', response }),
-    'data: [DONE]\n\n',
-  );
+  const terminal = reason ? 'response.incomplete' : 'response.completed';
+  events.push(formatResponsesEvent(terminal, { type: terminal, response }), 'data: [DONE]\n\n');
 
   return events.join('');
 }
