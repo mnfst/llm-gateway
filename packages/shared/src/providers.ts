@@ -473,6 +473,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPlaceholder: 'sk-or-...',
   },
   {
+    id: 'requesty',
+    displayName: 'Requesty',
+    aliases: [],
+    openRouterPrefixes: ['requesty'],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#6e56cf',
+    keyPrefix: 'sk-',
+    minKeyLength: 30,
+    keyPlaceholder: 'sk-...',
+  },
+  {
     id: 'xai',
     displayName: 'xAI',
     aliases: [],
