@@ -29,7 +29,7 @@
     "@solidjs/testing-library": "^0.8.0",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^22.20.1",
-    "@vitest/coverage-v8": "^5.0.0",
+    "@vitest/coverage-v8": "^5.0.2",
     "jsdom": "^30.0.1",
     "typescript": "^5.7.0",
     "vite": "^6.1.0",
