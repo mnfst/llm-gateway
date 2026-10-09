@@ -78,6 +78,7 @@ Open [http://localhost:2099](http://localhost:2099) and sign up — the first ac
 | [DigitalOcean](deploy/digitalocean/TUTORIAL.md)                            | App Platform and PostgreSQL; provide a private Space for recordings.                                 |
 | [AWS](deploy/aws/TUTORIAL.md)                                              | CloudFormation provisions ECS, RDS, and a private recording bucket.                                  |
 | [GCP](deploy/gcp/TUTORIAL.md)                                              | DeployStack provisions Cloud Run, Cloud SQL, and Cloud Storage.                                      |
+| [ZopDay](https://zop.dev/zopday/app/deploy?image=manifestdotbuild/manifest:6&port=2099&name=manifest&env=MANIFEST_MODE=selfhosted) | Runs the Manifest image on ZopCloud or your own AWS/GCP account; create PostgreSQL in ZopDay, then set `DATABASE_URL`, `BETTER_AUTH_SECRET` and `MANIFEST_ENCRYPTION_KEY` (two different `openssl rand -hex 32` values) and `BETTER_AUTH_URL`. |
 
 > Every deployment path now uses durable request-recording storage. Railway, AWS, GCP, and Fly.io provision it natively; Render, Coolify, Easypanel, Docker, and Apple Containers mount persistent storage. DigitalOcean, Heroku, and Koyeb collect external S3-compatible settings during setup. Volume-backed templates are single-instance; use S3-compatible storage before scaling horizontally.
 
