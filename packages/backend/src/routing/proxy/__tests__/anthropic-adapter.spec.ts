@@ -3360,6 +3360,24 @@ describe('dropUnsupportedAssistantPrefill', () => {
     expect(body.messages).toBe(messages);
   });
 
+  it('drops several trailing text-only assistant messages', () => {
+    const body: Record<string, unknown> = {
+      messages: [user, { role: 'assistant', content: 'a' }, { role: 'assistant', content: '{' }],
+    };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(true);
+    expect(body.messages).toEqual([user]);
+  });
+
+  it('keeps a conversation made only of text-only assistant messages', () => {
+    const messages = [
+      { role: 'assistant', content: 'a' },
+      { role: 'assistant', content: '{' },
+    ];
+    const body: Record<string, unknown> = { messages };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(false);
+    expect(body.messages).toBe(messages);
+  });
+
   it('leaves models that accept prefill untouched', () => {
     const messages = [user, { role: 'assistant', content: '{' }];
     const body: Record<string, unknown> = { messages };

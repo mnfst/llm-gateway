@@ -154,13 +154,14 @@ export function dropUnsupportedAssistantPrefill(
   const messages = body.messages as Array<Record<string, unknown>>;
   let end = messages.length;
   while (
-    end > 1 &&
+    end > 0 &&
     messages[end - 1].role === 'assistant' &&
     isPrefillContent(messages[end - 1].content)
   ) {
     end--;
   }
-  if (end === messages.length) return false;
+  // Nothing to drop, or dropping would leave no messages: send it untouched.
+  if (end === 0 || end === messages.length) return false;
   body.messages = messages.slice(0, end);
   return true;
 }
