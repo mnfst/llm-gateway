@@ -11,11 +11,14 @@ export type BedrockRuntimeApi = 'chat_completions' | 'responses';
 export interface BedrockRuntimeCapabilities {
   /** Exact base model ID. Lookups are case-sensitive. */
   modelId: string;
-  /**
-   * Every entry must list both APIs: Manifest keeps the agent's API on Runtime
-   * and does not convert between them there.
-   */
+  /** Every entry must list both APIs, so either one can serve the agent's call. */
   apis: readonly BedrockRuntimeApi[];
+  /**
+   * Serve Chat Completions and Messages callers through Responses. Runtime Chat
+   * Completions rejects function tools combined with reasoning on these models,
+   * and prompt caching and reasoning summaries exist only on Responses.
+   */
+  chatViaResponses?: boolean;
   /** Chat Completions output cap the model accepts; GPT models reject `max_tokens`. */
   chatTokenParameter: 'max_tokens' | 'max_completion_tokens';
   /** AWS model card listing the model's Runtime APIs. */
@@ -39,6 +42,7 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG: readonly BedrockRuntimeCapabili
   {
     modelId: 'openai.gpt-6-astra',
     apis: CHAT_AND_RESPONSES,
+    chatViaResponses: true,
     chatTokenParameter: 'max_completion_tokens',
     sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-astra.html`,
     verifiedAt: VERIFIED_AT,
@@ -46,6 +50,7 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG: readonly BedrockRuntimeCapabili
   {
     modelId: 'openai.gpt-6-sol',
     apis: CHAT_AND_RESPONSES,
+    chatViaResponses: true,
     chatTokenParameter: 'max_completion_tokens',
     sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-sol.html`,
     verifiedAt: VERIFIED_AT,
@@ -53,6 +58,7 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG: readonly BedrockRuntimeCapabili
   {
     modelId: 'openai.gpt-6-luna',
     apis: CHAT_AND_RESPONSES,
+    chatViaResponses: true,
     chatTokenParameter: 'max_completion_tokens',
     sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-luna.html`,
     verifiedAt: VERIFIED_AT,
@@ -60,6 +66,7 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG: readonly BedrockRuntimeCapabili
   {
     modelId: 'openai.gpt-5.6-luna',
     apis: CHAT_AND_RESPONSES,
+    chatViaResponses: true,
     chatTokenParameter: 'max_completion_tokens',
     sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-56-luna.html`,
     verifiedAt: VERIFIED_AT,

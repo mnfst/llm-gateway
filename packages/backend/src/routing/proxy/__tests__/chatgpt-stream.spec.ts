@@ -1,4 +1,4 @@
-import { transformResponsesStreamChunk } from '../chatgpt-adapter';
+import { collectChatGptSseResponse, transformResponsesStreamChunk } from '../chatgpt-adapter';
 
 describe('ChatGPT Adapter – transformResponsesStreamChunk', () => {
   it('converts output_text delta to chat completion chunk', () => {
@@ -265,5 +265,60 @@ describe('ChatGPT Adapter – transformResponsesStreamChunk', () => {
 
     expect(result).not.toBeNull();
     expect(result).toContain('"finish_reason":"tool_calls"');
+  });
+});
+
+describe('ChatGPT Adapter – Responses SSE without event lines', () => {
+  // Bedrock Runtime streams carry the event name only as `type` in the data.
+  it('converts a text delta identified by data.type', () => {
+    const chunk = 'data: {"type":"response.output_text.delta","delta":"Hello"}';
+    const result = transformResponsesStreamChunk(chunk, 'gpt-6-luna');
+
+    const json = JSON.parse(result!.replace('data: ', '').trim());
+    expect(json.choices[0].delta.content).toBe('Hello');
+  });
+
+  it('converts a function call item and its argument deltas identified by data.type', () => {
+    const state = { streamed: false, sawToolCall: false };
+    const added = transformResponsesStreamChunk(
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","call_id":"call_1","name":"get_weather"}}',
+      'gpt-6-luna',
+      state,
+    );
+    const delta = transformResponsesStreamChunk(
+      'data: {"type":"response.function_call_arguments.delta","output_index":0,"delta":"{\\"city\\":"}',
+      'gpt-6-luna',
+      state,
+    );
+    const done = transformResponsesStreamChunk(
+      'data: {"type":"response.completed","response":{"output":[{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{}"}],"usage":{}}}',
+      'gpt-6-luna',
+      state,
+    );
+
+    expect(JSON.parse(added!.replace('data: ', '').trim()).choices[0].delta.tool_calls[0]).toEqual(
+      expect.objectContaining({ id: 'call_1', function: { name: 'get_weather', arguments: '' } }),
+    );
+    expect(delta).toContain('tool_calls');
+    expect(done).toContain('"finish_reason":"tool_calls"');
+    expect(done).toContain('data: [DONE]');
+  });
+
+  it('ignores a data line without a recognizable type', () => {
+    expect(transformResponsesStreamChunk('data: {"foo":1}', 'gpt-6-luna')).toBeNull();
+    expect(transformResponsesStreamChunk('data: not json', 'gpt-6-luna')).toBeNull();
+  });
+
+  it('collects a non-streaming body from SSE events identified by data.type', () => {
+    const sse = [
+      'data: {"type":"response.output_text.delta","delta":"Hi"}',
+      'data: {"type":"response.completed","response":{"id":"r1","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"Hi"}]}],"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
+      '',
+    ].join('\n\n');
+    const result = collectChatGptSseResponse(sse, 'gpt-6-luna') as {
+      choices: Array<{ message: { content: string } }>;
+    };
+
+    expect(result.choices[0].message.content).toBe('Hi');
   });
 });

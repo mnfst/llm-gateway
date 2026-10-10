@@ -762,20 +762,34 @@ describe('ProviderClient', () => {
       expect(sentBody.stream).toBe(false);
     });
 
-    it('sends catalogued CRIS profiles to Bedrock Runtime Chat Completions with max_completion_tokens', async () => {
+    it('translates Chat Completions for GPT CRIS profiles to Bedrock Runtime Responses', async () => {
       mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 
       const result = await client.forward({
         provider: 'bedrock',
         apiKey: 'bedrock-api-key-test',
-        model: 'us.openai.gpt-6-sol',
-        body: { ...body, max_tokens: 1024 },
+        model: 'us.openai.gpt-6-luna',
+        body: {
+          ...body,
+          max_tokens: 1024,
+          reasoning_effort: 'high',
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'get_weather',
+                description: 'Get the weather',
+                parameters: { type: 'object', properties: {} },
+              },
+            },
+          ],
+        },
         stream: false,
         apiMode: 'chat_completions',
       });
 
       expect(mockFetch).toHaveBeenCalledWith(
-        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/chat/completions',
+        'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1/responses',
         expect.objectContaining({
           method: 'POST',
           headers: {
@@ -785,27 +799,19 @@ describe('ProviderClient', () => {
         }),
       );
       const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(sentBody.model).toBe('us.openai.gpt-6-sol');
-      expect(sentBody.max_completion_tokens).toBe(1024);
-      expect(sentBody.max_tokens).toBeUndefined();
-      expect(sentBody.prompt_cache_key).toBeUndefined();
-      expect(result.isChatGpt).toBe(false);
-    });
-
-    it('drops max_tokens when a Bedrock Runtime GPT request sends both caps', async () => {
-      mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
-
-      await client.forward({
-        provider: 'bedrock',
-        apiKey: 'bedrock-api-key-test',
-        model: 'global.openai.gpt-6-luna',
-        body: { ...body, max_tokens: 1024, max_completion_tokens: 512 },
-        stream: false,
-      });
-
-      const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(sentBody.max_completion_tokens).toBe(512);
-      expect(sentBody.max_tokens).toBeUndefined();
+      expect(sentBody.model).toBe('us.openai.gpt-6-luna');
+      expect(sentBody.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'Hello' }] },
+      ]);
+      expect(sentBody.max_output_tokens).toBe(1024);
+      expect(sentBody.reasoning).toEqual(expect.objectContaining({ effort: 'high' }));
+      expect(sentBody.tools).toEqual([
+        expect.objectContaining({ type: 'function', name: 'get_weather' }),
+      ]);
+      expect(sentBody.messages).toBeUndefined();
+      expect(sentBody.reasoning_effort).toBeUndefined();
+      expect(result.isChatGpt).toBe(true);
+      expect(result.wireApiMode).toBe('responses');
     });
 
     it('keeps max_tokens for Bedrock Runtime models that accept it', async () => {
@@ -833,7 +839,7 @@ describe('ProviderClient', () => {
       await client.forward({
         provider: 'bedrock',
         apiKey: 'bedrock-api-key-test',
-        model: 'us.openai.gpt-6-luna',
+        model: 'us.moonshotai.kimi-k3',
         body,
         providerCacheKey: 'v1:tenant-agent-session-digest',
         stream: true,

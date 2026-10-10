@@ -357,6 +357,14 @@ export function fromResponsesResponse(
 /* ── Streaming SSE conversion ── */
 
 /**
+ * Event name of a Responses SSE frame that has no `event:` line. Bedrock
+ * Runtime streams carry it only as `type` in the JSON data.
+ */
+function eventTypeFromData(data: Record<string, unknown> | null): string {
+  return typeof data?.type === 'string' ? data.type : '';
+}
+
+/**
  * Create a stateful per-stream transformer (must be created once per stream
  * and fed events in order) so the terminal event can backfill reasoning
  * summaries that never streamed as recognizable deltas.
@@ -390,16 +398,20 @@ export function transformResponsesStreamChunk(
   }
 
   if (!eventType && !dataStr) return null;
+  // Parsed at most once per frame: the type lookup and the handler share it.
+  let parsed: Record<string, unknown> | null | undefined;
+  const parseData = () => (parsed === undefined ? (parsed = safeParse(dataStr)) : parsed);
+  if (!eventType) eventType = eventTypeFromData(parseData());
 
   if (eventType === 'response.output_text.delta') {
-    const data = safeParse(dataStr);
+    const data = parseData();
     if (!data) return null;
     const delta = typeof data.delta === 'string' ? data.delta : '';
     return formatSSE({ delta: { content: delta }, finish_reason: null }, model);
   }
 
   if (isReasoningDeltaEvent(eventType)) {
-    const data = safeParse(dataStr);
+    const data = parseData();
     if (!data) return null;
     const text = reasoningDeltaText(data);
     if (text && state) state.streamed = true;
@@ -407,7 +419,7 @@ export function transformResponsesStreamChunk(
   }
 
   if (eventType === 'response.function_call_arguments.delta') {
-    const data = safeParse(dataStr);
+    const data = parseData();
     if (!data) return null;
     const delta = typeof data.delta === 'string' ? data.delta : '';
     return formatSSE(
@@ -427,7 +439,7 @@ export function transformResponsesStreamChunk(
   }
 
   if (eventType === 'response.output_item.added') {
-    const data = safeParse(dataStr);
+    const data = parseData();
     if (!data) return null;
     const item = isObjectRecord(data.item) ? data.item : undefined;
     if (item?.type !== 'function_call') return null;
@@ -581,10 +593,10 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
       if (line.startsWith('event: ')) eventType = line.slice(7).trim();
       else if (line.startsWith('data: ')) dataStr = line.slice(6);
     }
-    if (!eventType || !dataStr) continue;
-
+    if (!dataStr) continue;
     const data = safeParse(dataStr);
-    if (!data) continue;
+    if (!eventType) eventType = eventTypeFromData(data);
+    if (!eventType || !data) continue;
 
     if (eventType === 'error' || eventType === 'response.failed') {
       throw buildResponsesSseError(data);

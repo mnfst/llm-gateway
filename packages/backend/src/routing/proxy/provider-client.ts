@@ -834,10 +834,13 @@ export class ProviderClient {
                 endpointKey === 'openai-subscription' ||
                 endpointKey === 'openai-responses' ||
                 endpointKey === 'xai-responses',
-              // Only OpenAI infrastructure is known to accept
-              // reasoning.summary; other Responses backends may 400 on it.
+              // reasoning.summary is opt-in: OpenAI infrastructure and endpoints
+              // flagged acceptsReasoningSummary (Bedrock Runtime GPT models).
+              // Other Responses backends may 400 on it.
               mapReasoningEffort:
-                endpointKey === 'openai-subscription' || endpointKey === 'openai-responses',
+                endpointKey === 'openai-subscription' ||
+                endpointKey === 'openai-responses' ||
+                endpoint.acceptsReasoningSummary,
             });
       if (endpointKey === 'xai-responses' || endpoint.acceptsPromptCacheKey) {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
