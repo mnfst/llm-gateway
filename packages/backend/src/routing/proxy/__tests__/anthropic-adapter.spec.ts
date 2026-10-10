@@ -3,6 +3,8 @@ import {
   applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
   hasMessageCacheControl,
+  dropUnsupportedAssistantPrefill,
+  rejectsAssistantPrefill,
   closeAnthropicObjectSchemas,
   extractThinkingBlocksFromMessagesResponse,
   toAnthropicRequest,
@@ -3293,5 +3295,93 @@ describe('hasMessageCacheControl', () => {
     ],
   ])('ignores %s', (_label, body) => {
     expect(hasMessageCacheControl(body as Record<string, unknown>)).toBe(false);
+  });
+});
+
+describe('rejectsAssistantPrefill', () => {
+  it.each([
+    'claude-sonnet-5-5',
+    'us.anthropic.claude-sonnet-5-5',
+    'global.anthropic.claude-sonnet-5-5',
+    'anthropic/claude-sonnet-5-5',
+  ])('is true for %s', (model) => {
+    expect(rejectsAssistantPrefill(model)).toBe(true);
+  });
+
+  it.each(['claude-sonnet-5', 'claude-sonnet-4-5', 'global.anthropic.claude-opus-5', 'gpt-6-luna'])(
+    'is false for %s',
+    (model) => {
+      expect(rejectsAssistantPrefill(model)).toBe(false);
+    },
+  );
+});
+
+describe('dropUnsupportedAssistantPrefill', () => {
+  const model = 'global.anthropic.claude-sonnet-5-5';
+  const user = { role: 'user', content: 'Return JSON' };
+
+  it('drops a trailing text assistant message', () => {
+    const body: Record<string, unknown> = {
+      messages: [user, { role: 'assistant', content: '{' }],
+    };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(true);
+    expect(body.messages).toEqual([user]);
+  });
+
+  it('drops a trailing assistant message made of text blocks', () => {
+    const body: Record<string, unknown> = {
+      messages: [user, { role: 'assistant', content: [{ type: 'text', text: '{' }] }],
+    };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(true);
+    expect(body.messages).toEqual([user]);
+  });
+
+  it('keeps a trailing assistant message that carries a tool call', () => {
+    const messages = [
+      user,
+      { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'f', input: {} }] },
+    ];
+    const body: Record<string, unknown> = { messages };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(false);
+    expect(body.messages).toBe(messages);
+  });
+
+  it('keeps the conversation when it ends with a user message', () => {
+    const messages = [user];
+    const body: Record<string, unknown> = { messages };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(false);
+    expect(body.messages).toBe(messages);
+  });
+
+  it('keeps a conversation that would be left empty', () => {
+    const messages = [{ role: 'assistant', content: '{' }];
+    const body: Record<string, unknown> = { messages };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(false);
+    expect(body.messages).toBe(messages);
+  });
+
+  it('drops several trailing text-only assistant messages', () => {
+    const body: Record<string, unknown> = {
+      messages: [user, { role: 'assistant', content: 'a' }, { role: 'assistant', content: '{' }],
+    };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(true);
+    expect(body.messages).toEqual([user]);
+  });
+
+  it('keeps a conversation made only of text-only assistant messages', () => {
+    const messages = [
+      { role: 'assistant', content: 'a' },
+      { role: 'assistant', content: '{' },
+    ];
+    const body: Record<string, unknown> = { messages };
+    expect(dropUnsupportedAssistantPrefill(body, model)).toBe(false);
+    expect(body.messages).toBe(messages);
+  });
+
+  it('leaves models that accept prefill untouched', () => {
+    const messages = [user, { role: 'assistant', content: '{' }];
+    const body: Record<string, unknown> = { messages };
+    expect(dropUnsupportedAssistantPrefill(body, 'claude-sonnet-5')).toBe(false);
+    expect(body.messages).toBe(messages);
   });
 });
