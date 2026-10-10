@@ -273,14 +273,25 @@ describe('resolveBedrockEndpointKey', () => {
     'global.openai.gpt-6-astra',
     'us.openai.gpt-6-sol',
     'global.openai.gpt-6-luna',
-    'global.moonshotai.kimi-k3',
-    'bedrock/us.moonshotai.kimi-k3',
-  ])('routes the catalogued CRIS profile %s to Runtime on the API the agent called', (model) => {
-    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime');
-    expect(resolveBedrockEndpointKey(model, 'chat_completions')).toBe('bedrock-runtime');
-    expect(resolveBedrockEndpointKey(model, 'messages')).toBe('bedrock-runtime');
+    'bedrock/us.openai.gpt-6-luna',
+  ])('routes the GPT CRIS profile %s to Runtime Responses on every API mode', (model) => {
+    // Runtime Chat Completions rejects function tools together with reasoning on
+    // these models, so Chat and Messages callers are translated to Responses.
+    expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime-responses');
+    expect(resolveBedrockEndpointKey(model, 'chat_completions')).toBe('bedrock-runtime-responses');
+    expect(resolveBedrockEndpointKey(model, 'messages')).toBe('bedrock-runtime-responses');
     expect(resolveBedrockEndpointKey(model, 'responses')).toBe('bedrock-runtime-responses');
   });
+
+  it.each(['global.moonshotai.kimi-k3', 'bedrock/us.moonshotai.kimi-k3'])(
+    'routes the catalogued CRIS profile %s to Runtime on the API the agent called',
+    (model) => {
+      expect(resolveBedrockEndpointKey(model)).toBe('bedrock-runtime');
+      expect(resolveBedrockEndpointKey(model, 'chat_completions')).toBe('bedrock-runtime');
+      expect(resolveBedrockEndpointKey(model, 'messages')).toBe('bedrock-runtime');
+      expect(resolveBedrockEndpointKey(model, 'responses')).toBe('bedrock-runtime-responses');
+    },
+  );
 
   it('keeps uncatalogued CRIS profiles on their Mantle route', () => {
     expect(resolveBedrockEndpointKey('global.openai.gpt-7', 'responses')).toBe('bedrock-responses');

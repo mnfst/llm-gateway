@@ -71,6 +71,8 @@ export interface ProviderEndpoint {
   acceptsMaxOutputTokens?: boolean;
   /** Send Manifest's stable `prompt_cache_key` when the caller did not set one. */
   acceptsPromptCacheKey?: boolean;
+  /** Map `reasoning_effort` to `reasoning` with `summary: 'auto'` on a Responses endpoint. */
+  acceptsReasoningSummary?: boolean;
 }
 
 const openaiStreamUsage = { streamUsageReporting: 'openai_stream_options' as const };
@@ -114,9 +116,13 @@ export function resolveBedrockEndpointKey(
     return 'bedrock-runtime-anthropic';
   }
   // Mantle does not serve CRIS profiles. Catalogued ones go to Runtime on the
-  // API the agent called; every other model ID keeps its Mantle route.
-  if (getBedrockRuntimeCapabilities(model)) {
-    return apiMode === 'responses' ? 'bedrock-runtime-responses' : 'bedrock-runtime';
+  // API the agent called, except models that need Responses for every call;
+  // every other model ID keeps its Mantle route.
+  const runtime = getBedrockRuntimeCapabilities(model);
+  if (runtime) {
+    return apiMode === 'responses' || runtime.chatViaResponses
+      ? 'bedrock-runtime-responses'
+      : 'bedrock-runtime';
   }
   const bareModel = stripVendorPrefix(model);
   if (BEDROCK_OPENAI_MODEL_RE.test(bareModel)) return 'bedrock-responses';
@@ -256,6 +262,7 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     forwardResponsesStream: true,
     acceptsMaxOutputTokens: true,
     acceptsPromptCacheKey: true,
+    acceptsReasoningSummary: true,
   },
   'bedrock-anthropic': {
     baseUrl: getBedrockMantleBaseUrl(),

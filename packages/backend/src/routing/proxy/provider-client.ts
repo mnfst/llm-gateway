@@ -837,7 +837,9 @@ export class ProviderClient {
               // Only OpenAI infrastructure is known to accept
               // reasoning.summary; other Responses backends may 400 on it.
               mapReasoningEffort:
-                endpointKey === 'openai-subscription' || endpointKey === 'openai-responses',
+                endpointKey === 'openai-subscription' ||
+                endpointKey === 'openai-responses' ||
+                endpoint.acceptsReasoningSummary,
             });
       if (endpointKey === 'xai-responses' || endpoint.acceptsPromptCacheKey) {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
