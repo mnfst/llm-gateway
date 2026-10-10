@@ -357,6 +357,15 @@ export function fromResponsesResponse(
 /* ── Streaming SSE conversion ── */
 
 /**
+ * Event name of a Responses SSE frame that has no `event:` line. Bedrock
+ * Runtime streams carry it only as `type` in the JSON data.
+ */
+function eventTypeFromData(dataStr: string): string {
+  const type = safeParse(dataStr)?.type;
+  return typeof type === 'string' ? type : '';
+}
+
+/**
  * Create a stateful per-stream transformer (must be created once per stream
  * and fed events in order) so the terminal event can backfill reasoning
  * summaries that never streamed as recognizable deltas.
@@ -390,6 +399,7 @@ export function transformResponsesStreamChunk(
   }
 
   if (!eventType && !dataStr) return null;
+  if (!eventType) eventType = eventTypeFromData(dataStr);
 
   if (eventType === 'response.output_text.delta') {
     const data = safeParse(dataStr);
@@ -581,6 +591,7 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
       if (line.startsWith('event: ')) eventType = line.slice(7).trim();
       else if (line.startsWith('data: ')) dataStr = line.slice(6);
     }
+    if (!eventType && dataStr) eventType = eventTypeFromData(dataStr);
     if (!eventType || !dataStr) continue;
 
     const data = safeParse(dataStr);
