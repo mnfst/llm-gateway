@@ -933,6 +933,32 @@ describe('ProviderClient', () => {
       },
     );
 
+    it.each(['messages', 'chat_completions'] as const)(
+      'drops an assistant prefill before sending Sonnet 5.5 to Bedrock Runtime (%s)',
+      async (apiMode) => {
+        mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
+
+        await client.forward({
+          provider: 'bedrock',
+          apiKey: 'bedrock-api-key-test',
+          model: 'global.anthropic.claude-sonnet-5-5',
+          body: {
+            ...body,
+            messages: [
+              { role: 'user', content: 'Return JSON' },
+              { role: 'assistant', content: '{' },
+            ],
+          },
+          stream: false,
+          apiMode,
+        });
+
+        const sentBody = JSON.parse(mockFetch.mock.calls[0][1].body);
+        expect(sentBody.messages).toHaveLength(1);
+        expect(sentBody.messages[0].role).toBe('user');
+      },
+    );
+
     it('keeps the plain Claude id on Bedrock Mantle next to the CRIS profile route', async () => {
       mockFetch.mockResolvedValue(new Response('{}', { status: 200 }));
 

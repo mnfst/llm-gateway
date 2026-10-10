@@ -17,6 +17,7 @@ import {
   applyAnthropicAutomaticCacheControl,
   applyAnthropicLastMessageCacheControl,
   applyAnthropicMessagesMutations,
+  dropUnsupportedAssistantPrefill,
   hasMessageCacheControl,
   toGoogleRequest,
   toAnthropicRequest,
@@ -766,6 +767,9 @@ export class ProviderClient {
               thinkingRouteContext,
             });
       requestBody.model = bareModel;
+      if (dropUnsupportedAssistantPrefill(requestBody, bareModel)) {
+        this.logger.warn(`Dropped assistant prefill: ${bareModel} does not support it`);
+      }
       if (stream) requestBody.stream = true;
       if (shouldApplyAnthropicAutomaticCacheControl(endpointKey)) {
         applyAnthropicAutomaticCacheControl(requestBody);

@@ -122,6 +122,49 @@ function isCacheableBlock(block: unknown): block is ContentBlock {
   return block.type !== 'text' || (typeof block.text === 'string' && block.text.length > 0);
 }
 
+// Claude models that reject a conversation ending with an assistant message
+// ("This model does not support assistant message prefill"). Only models
+// confirmed to reject it belong here: dropping a prefill from a model that
+// honours it would change its output.
+const NO_PREFILL_MODEL_RE = /claude-sonnet-5-5(?![\w.])/i;
+
+export function rejectsAssistantPrefill(model: string): boolean {
+  return NO_PREFILL_MODEL_RE.test(model);
+}
+
+function isPrefillContent(content: unknown): boolean {
+  if (typeof content === 'string') return true;
+  return (
+    Array.isArray(content) &&
+    content.every((block) => isObjectRecord(block) && block.type === 'text')
+  );
+}
+
+/**
+ * Remove a trailing text-only assistant message (a prefill) from the Messages
+ * body when the model rejects it. A trailing assistant turn that carries a tool
+ * call is a real turn, not a prefill, and stays. Returns whether anything was
+ * dropped.
+ */
+export function dropUnsupportedAssistantPrefill(
+  body: Record<string, unknown>,
+  model: string,
+): boolean {
+  if (!rejectsAssistantPrefill(model) || !Array.isArray(body.messages)) return false;
+  const messages = body.messages as Array<Record<string, unknown>>;
+  let end = messages.length;
+  while (
+    end > 1 &&
+    messages[end - 1].role === 'assistant' &&
+    isPrefillContent(messages[end - 1].content)
+  ) {
+    end--;
+  }
+  if (end === messages.length) return false;
+  body.messages = messages.slice(0, end);
+  return true;
+}
+
 /**
  * Explicit counterpart of `applyAnthropicAutomaticCacheControl` for
  * Anthropic-format upstreams that cache only where a block carries
