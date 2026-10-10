@@ -708,8 +708,14 @@ function mapStopReason(reason: string | undefined): string {
   const map: Record<string, string> = {
     end_turn: 'stop',
     max_tokens: 'length',
+    // The reply hit the model's context window rather than max_tokens; it is
+    // still cut short, so chat clients should see it as truncated.
+    model_context_window_exceeded: 'length',
     tool_use: 'tool_calls',
     stop_sequence: 'stop',
+    // Claude's safety classifiers ended the reply; chat_completions reports a
+    // policy stop as content_filter, not as a finished turn.
+    refusal: 'content_filter',
   };
   return map[reason] ?? 'stop';
 }

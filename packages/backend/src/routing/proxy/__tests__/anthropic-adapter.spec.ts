@@ -1027,6 +1027,26 @@ describe('Anthropic Adapter', () => {
       expect(choices[0].finish_reason).toBe('length');
     });
 
+    it('maps refusal to content_filter', () => {
+      const resp = {
+        content: [{ type: 'text', text: 'I cannot help with that.' }],
+        stop_reason: 'refusal',
+      };
+      const result = fromAnthropicResponse(resp, 'claude-sonnet-4-20250514');
+      const choices = result.choices as Array<{ finish_reason: string }>;
+      expect(choices[0].finish_reason).toBe('content_filter');
+    });
+
+    it('maps model_context_window_exceeded to length', () => {
+      const resp = {
+        content: [{ type: 'text', text: 'truncated' }],
+        stop_reason: 'model_context_window_exceeded',
+      };
+      const result = fromAnthropicResponse(resp, 'claude-sonnet-4-20250514');
+      const choices = result.choices as Array<{ finish_reason: string }>;
+      expect(choices[0].finish_reason).toBe('length');
+    });
+
     it('maps tool_use to tool_calls', () => {
       const resp = {
         content: [
@@ -1278,6 +1298,17 @@ describe('Anthropic Adapter', () => {
       expect(usage.choices).toEqual([]);
       expect(usage.usage.completion_tokens).toBe(16);
       expect(usage.usage.prompt_tokens).toBe(0); // no message_start in stateless call
+    });
+
+    it.each([
+      ['refusal', 'content_filter'],
+      ['model_context_window_exceeded', 'length'],
+    ])('maps a streamed %s stop_reason to %s', (stopReason, finishReason) => {
+      const chunk = `event: message_delta\n{"type":"message_delta","delta":{"stop_reason":"${stopReason}"},"usage":{"output_tokens":4}}`;
+      const result = transformAnthropicStreamChunk(chunk, 'claude-sonnet-4-20250514');
+
+      const finish = JSON.parse(result!.split('\n\n')[0].replace('data: ', ''));
+      expect(finish.choices[0].finish_reason).toBe(finishReason);
     });
 
     it('returns null for ping event', () => {
