@@ -729,11 +729,15 @@ export function fromAnthropicResponse(
 ): Record<string, unknown> & { _extractedThinkingBlocks?: ExtractedThinkingBlocks } {
   const content = (resp.content as Array<Record<string, unknown>>) || [];
   let textContent = '';
+  let reasoningContent = '';
   const toolCalls: Record<string, unknown>[] = [];
   const thinkingBlocks: ThinkingBlock[] = [];
 
   for (const block of content) {
     if (block.type === 'text' && typeof block.text === 'string') textContent += block.text;
+    if (block.type === 'thinking' && typeof block.thinking === 'string') {
+      reasoningContent += block.thinking;
+    }
     if (block.type === 'thinking' || block.type === 'redacted_thinking') {
       // Pass blocks through unmodified — Anthropic signs them and the
       // signature becomes invalid if any field is altered or dropped.
@@ -749,6 +753,7 @@ export function fromAnthropicResponse(
   }
 
   const message: Record<string, unknown> = { role: 'assistant', content: textContent || null };
+  if (reasoningContent) message.reasoning_content = reasoningContent;
   if (toolCalls.length > 0) message.tool_calls = toolCalls;
 
   const usage = resp.usage as Record<string, number> | undefined;
@@ -937,7 +942,9 @@ function handleContentBlockDelta(state: StreamState, data: Record<string, unknow
     if (existing) {
       existing.thinking = ((existing.thinking as string) || '') + delta.thinking;
     }
-    return null;
+    return delta.thinking
+      ? makeChunkSse(state.model, { reasoning_content: delta.thinking }, null)
+      : null;
   }
   if (delta.type === 'signature_delta' && typeof delta.signature === 'string') {
     const existing = state.thinkingBlocksByIndex.get(blockIndex);

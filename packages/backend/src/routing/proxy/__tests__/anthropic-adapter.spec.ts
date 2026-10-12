@@ -1245,6 +1245,40 @@ describe('Anthropic Adapter', () => {
       const choices = result.choices as Array<{ finish_reason: string }>;
       expect(choices[0].finish_reason).toBe('stop');
     });
+    it('exposes thinking block text as reasoning_content', () => {
+      const resp = {
+        content: [
+          { type: 'thinking', thinking: 'First, ', signature: 'sig_1' },
+          { type: 'redacted_thinking', data: 'opaque' },
+          { type: 'thinking', thinking: 'then answer.', signature: 'sig_2' },
+          { type: 'text', text: 'Hello!' },
+        ],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      };
+
+      const result = fromAnthropicResponse(resp, 'claude-sonnet-4-20250514');
+      const choices = result.choices as Array<{ message: Record<string, unknown> }>;
+
+      expect(choices[0].message.content).toBe('Hello!');
+      expect(choices[0].message.reasoning_content).toBe('First, then answer.');
+    });
+
+    it('omits reasoning_content when there is no thinking text', () => {
+      const resp = {
+        content: [
+          { type: 'thinking', thinking: '', signature: 'sig_1' },
+          { type: 'text', text: 'Hello!' },
+        ],
+        stop_reason: 'end_turn',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      };
+
+      const result = fromAnthropicResponse(resp, 'claude-sonnet-4-20250514');
+      const choices = result.choices as Array<{ message: Record<string, unknown> }>;
+
+      expect(choices[0].message).not.toHaveProperty('reasoning_content');
+    });
   });
 
   describe('transformAnthropicStreamChunk', () => {
@@ -1640,6 +1674,37 @@ describe('Anthropic Adapter', () => {
       expect(usage.usage.cache_creation_tokens).toBe(7);
       expect(usage.usage.prompt_tokens_details.cached_tokens).toBe(20);
     });
+    it('emits thinking_delta text as a reasoning_content delta', () => {
+      const transform = createAnthropicStreamTransformer('claude-sonnet-4-20250514');
+      transform(
+        'event: message_start\n{"type":"message_start","message":{"usage":{"input_tokens":10}}}',
+      );
+      transform(
+        'event: content_block_start\n{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
+      );
+
+      const result = transform(
+        'event: content_block_delta\n{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Weighing options."}}',
+      );
+
+      expect(result).not.toBeNull();
+      const data = JSON.parse(result!.replace('data: ', '').trim());
+      expect(data.choices[0].delta).toEqual({ reasoning_content: 'Weighing options.' });
+      expect(data.choices[0].finish_reason).toBeNull();
+    });
+
+    it('emits nothing for an empty thinking_delta', () => {
+      const transform = createAnthropicStreamTransformer('claude-sonnet-4-20250514');
+      transform(
+        'event: content_block_start\n{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
+      );
+
+      expect(
+        transform(
+          'event: content_block_delta\n{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}}',
+        ),
+      ).toBeNull();
+    });
   });
 
   describe('extended-thinking round-trip (Fix 3)', () => {
@@ -1992,17 +2057,17 @@ describe('Anthropic Adapter', () => {
           ),
         ).toBeNull();
 
-        // two thinking_delta events
+        // two thinking_delta events, each surfaced to the client as reasoning_content
         expect(
           transform(
             'event: content_block_delta\n{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Let me "}}',
           ),
-        ).toBeNull();
+        ).toContain('"reasoning_content":"Let me "');
         expect(
           transform(
             'event: content_block_delta\n{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"reason."}}',
           ),
-        ).toBeNull();
+        ).toContain('"reasoning_content":"reason."');
 
         // signature_delta
         expect(
