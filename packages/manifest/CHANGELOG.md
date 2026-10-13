@@ -1,5 +1,17 @@
 # manifest
 
+## 6.28.7
+
+### Patch Changes
+
+- 52a921c: Surface Claude thinking text as `reasoning_content` when an Anthropic Messages reply is translated to a Chat Completions reply, both streaming and non-streaming.
+- f93cde5: Report Anthropic `refusal` stops as `content_filter` and `model_context_window_exceeded` stops as `length` on chat completions routes. Both were reported as `stop`, so a refused or truncated Claude reply looked like a finished turn.
+- b3f1251: Fix Chat Completions requests with function tools to Amazon Bedrock GPT cross-Region inference profiles (such as `us.openai.gpt-6-luna`). Bedrock Runtime defaults these models to reasoning and rejects that next to function tools, so a request with tools and no `reasoning_effort` now sends `none`, the OpenAI default. A `reasoning_effort` the caller sets is now forwarded instead of dropped.
+- 78780f9: Speed up harness-scoped request logs by reusing the resolved harness ID when querying unlinked legacy attempts.
+- ca55315: Send provider-required request headers from the Playground. Runs against OpenCode Go and OpenCode Zen now carry `x-opencode-session`, so the provider no longer rejects them with `MissingSessionID`. Headers set in the request editor still take precedence.
+- 352618a: Keep token-limited and refused replies visible on `/v1/responses` when the upstream speaks Chat Completions. A `length` or `content_filter` finish now yields `status: "incomplete"` (streams end with `response.incomplete`), and `message.refusal` / `delta.refusal` become `refusal` content parts instead of an empty completed response. Non-stream requests answered by a native Responses upstream over SSE now keep the `response.incomplete` and `response.failed` snapshots instead of reporting them as completed.
+- df977e5: Reuse resolved harness IDs across analytics queries and keep cached request filters isolated when harness names are reused.
+
 ## 6.28.6
 
 ### Patch Changes
