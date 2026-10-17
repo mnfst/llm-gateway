@@ -216,6 +216,18 @@ describe('SHARED_PROVIDER_BY_ID', () => {
     expect(cerebras!.keyPlaceholder).toBe('Cerebras API key');
   });
 
+  it('aicraft exposes API-key provider metadata', () => {
+    const aicraft = SHARED_PROVIDER_BY_ID.get('aicraft');
+    expect(aicraft).toBeDefined();
+    expect(aicraft!.displayName).toBe('AICraft');
+    expect(aicraft!.aliases).toEqual([]);
+    expect(aicraft!.openRouterPrefixes).toEqual([]);
+    expect(aicraft!.keyPrefix).toBe('');
+    expect(aicraft!.requiresApiKey).toBe(true);
+    expect(aicraft!.localOnly).toBe(false);
+    expect(aicraft!.keyPlaceholder).toBe('AICraft API key');
+  });
+
   it('pioneer exposes API-key provider metadata', () => {
     const pioneer = SHARED_PROVIDER_BY_ID.get('pioneer');
     expect(pioneer).toBeDefined();

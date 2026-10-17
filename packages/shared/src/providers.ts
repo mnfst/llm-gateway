@@ -67,6 +67,18 @@ export const META_MODEL_API_MODEL_BY_ID: ReadonlyMap<string, MetaModelApiModel> 
 
 export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
   {
+    id: 'aicraft',
+    displayName: 'AICraft',
+    aliases: [],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#b8860b',
+    keyPrefix: '',
+    minKeyLength: 20,
+    keyPlaceholder: 'AICraft API key',
+  },
+  {
     id: 'qwen',
     displayName: 'Alibaba Cloud',
     aliases: ['alibaba'],
