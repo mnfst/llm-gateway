@@ -25,6 +25,35 @@ function isRecord(value: unknown): value is JsonRecord {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+// Anthropic provider-defined tools — server tools (`web_search_*`, `bash_*`,
+// `computer_*`, `text_editor_*`, …), `mcp_toolset`, and any future typed tool
+// that carries no `input_schema`. They are executed by the provider, not the
+// caller, so no non-Anthropic wire format can run them. `type: 'custom'` is
+// Anthropic's ordinary client tool and may legitimately omit a schema.
+function isImplicitAnthropicTool(tool: JsonRecord): tool is JsonRecord & { type: string } {
+  return tool.input_schema === undefined && typeof tool.type === 'string' && tool.type !== 'custom';
+}
+
+/**
+ * Names of Anthropic tools that another provider protocol cannot execute.
+ *
+ * Server tools and typed tools without an `input_schema` need an Anthropic-side
+ * executor. Native Anthropic routes preserve them (the wire body bypasses this
+ * translation), but a cross-protocol target has no equivalent, so the caller
+ * drops these after routing rather than forwarding a tool nobody can fulfill.
+ */
+export function unsupportedAnthropicToolNames(body: JsonRecord): string[] {
+  if (!Array.isArray(body.tools)) return [];
+  return [
+    ...new Set(
+      body.tools
+        .filter(isRecord)
+        .filter(isImplicitAnthropicTool)
+        .map((tool) => (typeof tool.name === 'string' ? tool.name : tool.type)),
+    ),
+  ];
+}
+
 function normalizeOpenAiFunctionSchema(schema: unknown): unknown {
   if (schema === null || schema === undefined || typeof schema !== 'object') {
     return schema;
@@ -239,6 +268,45 @@ function toChatTools(tools: unknown[]): JsonRecord[] {
           : {}),
     },
   }));
+}
+
+/**
+ * Remove Anthropic provider-defined tools from a translated chat-completions
+ * body before it is forwarded to a non-Anthropic target.
+ *
+ * Native Anthropic routes never reach here — their wire body comes from
+ * `applyAnthropicMessagesMutations` and keeps the server-tool `type` tags. This
+ * runs only on the cross-protocol path, after routing/scoring already consumed
+ * `chatBody`, so the scorer still sees the full tool set. Forwarding the tool
+ * anyway would let the model emit a `tool_call` no one can execute.
+ */
+export function dropUnsupportedAnthropicTools(
+  chatBody: JsonRecord,
+  anthropicBody: JsonRecord,
+): JsonRecord {
+  const unsupported = new Set(unsupportedAnthropicToolNames(anthropicBody));
+  if (unsupported.size === 0 || !Array.isArray(chatBody.tools)) return chatBody;
+
+  const tools = chatBody.tools.filter((tool) => {
+    if (!isRecord(tool)) return true;
+    const fn = isRecord(tool.function) ? tool.function : undefined;
+    const name = typeof fn?.name === 'string' ? fn.name : undefined;
+    return name === undefined || !unsupported.has(name);
+  });
+  if (tools.length === chatBody.tools.length) return chatBody;
+
+  const next: JsonRecord = { ...chatBody, tools };
+  // An empty array is itself invalid for some providers, and `required` with no
+  // tool to call is nonsensical; drop both rather than forward the husk.
+  if (tools.length === 0) delete next.tools;
+  const choice = next.tool_choice;
+  const chosenName =
+    isRecord(choice) && isRecord(choice.function) && typeof choice.function.name === 'string'
+      ? choice.function.name
+      : undefined;
+  if (chosenName !== undefined && unsupported.has(chosenName)) next.tool_choice = 'auto';
+  if (next.tool_choice === 'required' && !Array.isArray(next.tools)) next.tool_choice = 'auto';
+  return next;
 }
 
 function toChatToolChoice(choice: unknown): unknown {
