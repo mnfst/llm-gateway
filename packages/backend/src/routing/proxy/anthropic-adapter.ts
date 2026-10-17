@@ -269,14 +269,22 @@ function convertMessage(
   if (msg.role === 'system' || msg.role === 'developer') return null;
 
   if (msg.role === 'tool') {
-    const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content ?? '');
+    // Content parts map onto tool_result content blocks. Stringifying them
+    // would hand the model the JSON wrapper instead of the tool output.
+    const blocks = Array.isArray(msg.content) ? toContentBlocks(msg.content, true) : [];
+    const content =
+      blocks.length > 0
+        ? blocks
+        : typeof msg.content === 'string'
+          ? msg.content
+          : JSON.stringify(msg.content ?? '');
     return {
       role: 'user',
       content: [
         {
           type: 'tool_result',
           tool_use_id: (msg.tool_call_id as string) || 'unknown',
-          content: text,
+          content,
         },
       ],
     };

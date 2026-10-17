@@ -245,8 +245,16 @@ function messageToContent(
     }
   }
 
-  // Handle tool response
-  if (msg.role === 'tool' && typeof msg.content === 'string') {
+  // Handle tool response. Chat completions also accepts a tool message's
+  // content as an array of text parts; it still has to become a
+  // functionResponse, or the preceding functionCall is left unanswered.
+  const toolResult =
+    typeof msg.content === 'string'
+      ? msg.content
+      : Array.isArray(msg.content)
+        ? parts.map((part) => part.text ?? '').join('')
+        : null;
+  if (msg.role === 'tool' && toolResult !== null) {
     const toolCallId = (msg.tool_call_id as string) || '';
     // Resolve the real function name from the tool_call history. Falling back
     // to the id (or 'unknown') is wrong semantically but avoids hard failures
@@ -254,7 +262,7 @@ function messageToContent(
     const functionName = toolNamesById.get(toolCallId) || 'unknown';
     const functionResponse: GeminiFunctionResponse = {
       name: functionName,
-      response: { result: msg.content },
+      response: { result: toolResult },
     };
     if (toolCallId) functionResponse.id = toolCallId;
     return { role: 'user', parts: [{ functionResponse }] };

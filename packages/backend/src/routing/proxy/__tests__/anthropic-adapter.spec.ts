@@ -774,6 +774,34 @@ describe('Anthropic Adapter', () => {
       expect(content[0].content).toBe('{"result":"data"}');
     });
 
+    it('converts tool message content parts into tool_result blocks', () => {
+      const body = {
+        messages: [
+          {
+            role: 'tool',
+            tool_call_id: 'call_1',
+            content: [
+              { type: 'text', text: 'line 1' },
+              { type: 'text', text: 'line 2' },
+              { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            ],
+          },
+        ],
+      };
+      const result = toAnthropicRequest(body, 'claude-sonnet-4-20250514');
+      const messages = result.messages as Array<{ role: string; content: unknown }>;
+      const content = messages[0].content as Array<Record<string, unknown>>;
+      expect(content[0]).toEqual({
+        type: 'tool_result',
+        tool_use_id: 'call_1',
+        content: [
+          { type: 'text', text: 'line 1' },
+          { type: 'text', text: 'line 2' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ],
+      });
+    });
+
     it('converts tool message with null content', () => {
       const body = {
         messages: [{ role: 'tool', tool_call_id: 'call_1', content: null }],

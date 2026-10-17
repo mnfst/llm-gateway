@@ -1264,6 +1264,51 @@ describe('Google Adapter', () => {
       });
     });
 
+    it('sends tool message content parts as a functionResponse', () => {
+      const body = {
+        messages: [
+          { role: 'user', content: 'Search for cats' },
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'web_search', arguments: '{"query":"cats"}' },
+              },
+            ],
+          },
+          {
+            role: 'tool',
+            tool_call_id: 'call_1',
+            content: [
+              { type: 'text', text: 'cat1, ' },
+              { type: 'text', text: 'cat2' },
+            ],
+          },
+        ],
+      };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+
+      const contents = result.contents as Array<{
+        role: string;
+        parts: Array<Record<string, unknown>>;
+      }>;
+      expect(contents[2]).toEqual({
+        role: 'user',
+        parts: [
+          {
+            functionResponse: {
+              id: 'call_1',
+              name: 'web_search',
+              response: { result: 'cat1, cat2' },
+            },
+          },
+        ],
+      });
+    });
+
     it('omits functionResponse.id when tool_call_id is missing entirely', () => {
       const body = {
         messages: [
