@@ -221,6 +221,7 @@ npm start         # node packages/backend/dist/main.js — serves frontend + API
 
 - API routes (`/api/*`, `/otlp/*`) are excluded from static file serving.
 - Dev mode: Vite on `:3000` proxies `/api` and `/otlp` to backend on `:3001`.
+- **Manifest Cloud** runs on Cloud Run (`manifest`, project `manifest-platform-457808`, `us-east4`) behind the shared Google HTTPS load balancer, with Cloud SQL Postgres on a private IP. Every push to `main` deploys through `.github/workflows/deploy.yml` (keyless Workload Identity Federation; `mnfst/*` on `main` only): it builds `docker/Dockerfile.cloud` (the self-hosted `docker/Dockerfile` minus `VITE_MANIFEST_SELFHOSTED`, keep both in step), runs the `manifest-migrate` job, then swaps the service image. Env vars, secrets (Secret Manager) and scaling live on the service; it sets `MANIFEST_MODE=cloud`, `RUN_MIGRATIONS_ON_BOOT=false`, `TRUST_PROXY=2` (load balancer + Cloud Run hops) and `SHUTDOWN_DRAIN_MS=0`. `railway.toml` is the old Railway config, kept until Railway is decommissioned.
 
 ## Commands
 
