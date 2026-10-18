@@ -14,12 +14,12 @@ const SENSITIVE_HEADERS = new Set<string>([
   'x-api-key',
 ]);
 
-// Infrastructure noise injected by the hosting edge (Railway) and the
-// transport layer. None of it is meaningful for routing or studying an LLM
+// Infrastructure noise injected by the hosting edge (Railway, or Google's load
+// balancer + Cloud Run) and the transport layer. None of it is meaningful for routing or studying an LLM
 // call, so we drop it before recording rather than persisting it on every
 // message.
 //
-// NOTE: `x-forwarded-for` and `x-real-ip` carry the end-user's IP. They are
+// NOTE: `x-forwarded-for`, `x-real-ip` and `forwarded` carry the end-user's IP. They are
 // dropped on purpose — not just as noise but because storing client IPs on
 // every message is PII we have no product use for (the telemetry policy
 // already lists "raw IPs" as never-sent). Do NOT re-add them for a "request
@@ -34,6 +34,10 @@ const NOISE_HEADERS = new Set<string>([
   'x-real-ip',
   'x-request-start',
   'x-envoy-external-address',
+  'forwarded',
+  'via',
+  'x-cloud-trace-context',
+  'traceparent',
   'host',
   'connection',
   'accept-encoding',
