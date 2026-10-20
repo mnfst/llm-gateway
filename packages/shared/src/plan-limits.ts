@@ -6,7 +6,14 @@ export interface PlanLimits {
   requestsPerMonth: number | null;
 }
 
-export const FREE_PLAN_REQUESTS_PER_MONTH = 10_000;
+/**
+ * The Cloud Free plan ended on 2026-11-02. `free` stays the plan id of a tenant
+ * without a subscription, and such a tenant routes nothing: every /v1 request
+ * is refused with M204 before any provider is contacted. Per-tenant overrides
+ * (`tenants.limit_overrides.requestsPerMonth`) and `PLAN_LIMIT_FREE_REQUESTS`
+ * can still grant a positive allowance.
+ */
+export const FREE_PLAN_REQUESTS_PER_MONTH = 0;
 
 export const PLAN_LIMITS: Readonly<Record<Plan, PlanLimits>> = {
   free: { requestsPerMonth: FREE_PLAN_REQUESTS_PER_MONTH },

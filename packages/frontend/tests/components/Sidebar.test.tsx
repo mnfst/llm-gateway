@@ -403,6 +403,19 @@ describe('Sidebar — usage card', () => {
     expect(container.querySelector('.sidebar-usage__fill--danger')).not.toBeNull();
   });
 
+  it('hides the usage meter but keeps the upgrade link when the tenant has no allowance', async () => {
+    mockGetBillingStatus.mockResolvedValue({
+      enabled: true,
+      plan: 'free',
+      requests: { used: 0, limit: 0, periodEnd: null },
+    });
+
+    const { container } = render(() => <Sidebar />);
+
+    await waitFor(() => expect(container.querySelector('a[href="/upgrade"]')).not.toBeNull());
+    expect(container.querySelector('.sidebar-usage')).toBeNull();
+  });
+
   it('hides the usage card when the billing fetch fails (fail-soft fallback)', async () => {
     mockGetBillingStatus.mockRejectedValue(new Error('boom'));
     const { container } = render(() => <Sidebar />);

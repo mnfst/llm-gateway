@@ -61,6 +61,18 @@ describe('UsageLimitBanner', () => {
     expect(screen.queryByText('Got it')).toBeNull();
   });
 
+  it('shows the permanent subscribe notice when the tenant has no allowance', async () => {
+    mockGetBillingStatus.mockResolvedValue(freeStatus(0, 0));
+    const { container } = render(() => <UsageLimitBanner />);
+
+    await screen.findByText(
+      'Manifest Cloud needs a Pro subscription to route requests. Your dashboard and settings are kept.',
+    );
+    expect(container.querySelector('.usage-limit-banner--danger')).not.toBeNull();
+    expect(screen.getByText('Subscribe')).toBeDefined();
+    expect(screen.queryByText('Got it')).toBeNull();
+  });
+
   it('stays hidden when the warning was already dismissed today', async () => {
     localStorage.setItem(
       'manifest_usage_banner_dismissed:u1',

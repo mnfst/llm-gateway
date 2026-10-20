@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@solidjs/testing-library';
 import PlanPicker from '../../src/components/PlanPicker';
-import { FREE_REQUEST_LIMIT_LABEL } from '../../src/services/billing-display';
 
 describe('PlanPicker', () => {
   it('renders the Pro plan expanded by default and submits it', () => {
@@ -11,14 +10,18 @@ describe('PlanPicker', () => {
     expect(screen.getByText('Popular')).toBeDefined();
     expect(screen.getByText('$20')).toBeDefined();
     expect(screen.getAllByText('/month').length).toBeGreaterThan(0);
-    expect(screen.getByText('Unlimited routed requests')).toBeDefined();
+    expect(screen.getByText('Manifest Cloud')).toBeDefined();
+    expect(screen.getByText('Servers, database and uptime handled by us')).toBeDefined();
+    expect(screen.queryByText('Read the self-hosting guide')).toBeNull();
 
-    fireEvent.click(container.querySelector('.plan-picker__cta')!);
+    const cta = container.querySelector('.plan-picker__cta') as HTMLButtonElement;
+    expect(cta.textContent).toBe('Subscribe');
+    fireEvent.click(cta);
 
     expect(onSelect).toHaveBeenCalledWith('pro');
   });
 
-  it('expands the Free plan with usage and submits it', () => {
+  it('expands the Self-hosted plan with usage and submits it', () => {
     const onSelect = vi.fn();
     const { container } = render(() => (
       <PlanPicker proPrice="$20" usedRequests={1234} onSelect={onSelect} />
@@ -28,10 +31,16 @@ describe('PlanPicker', () => {
     fireEvent.click(cards[0]);
 
     expect(screen.getByText('1,234 used this month')).toBeDefined();
-    expect(screen.getByText(`${FREE_REQUEST_LIMIT_LABEL} routed requests / month`)).toBeDefined();
+    expect(screen.getByText('Self-hosted')).toBeDefined();
+    expect(screen.getByText('forever')).toBeDefined();
+    expect(screen.getByText('Your data stays on your machine')).toBeDefined();
     expect(screen.getByText('Community support via Discord')).toBeDefined();
+    const guide = screen.getByText('Read the self-hosting guide') as HTMLAnchorElement;
+    expect(guide.getAttribute('href')).toBe('https://manifest.build/llm-gateway/docs/self-hosted');
 
-    fireEvent.click(container.querySelector('.plan-picker__cta')!);
+    const cta = container.querySelector('.plan-picker__cta') as HTMLButtonElement;
+    expect(cta.textContent).toBe('Continue without a subscription');
+    fireEvent.click(cta);
 
     expect(onSelect).toHaveBeenCalledWith('free');
   });

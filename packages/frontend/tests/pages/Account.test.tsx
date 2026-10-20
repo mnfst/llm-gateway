@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@solidjs/testing-library';
-import { FREE_REQUEST_LIMIT_LABEL } from '../../src/services/billing-display';
 import { FREE_PLAN_REQUESTS_PER_MONTH } from 'manifest-shared';
 
 const searchParamsState: Record<string, string | undefined> = {};
@@ -333,17 +332,17 @@ describe('Account', () => {
       expect(container.querySelector('#billing')).toBeNull();
     });
 
-    it('shows plan, usage, and comparison footer on the free plan', async () => {
+    it('shows no subscription, not-routed usage and the subscribe footer without an allowance', async () => {
       mockGetBillingStatus.mockResolvedValue(freeStatus);
       const { container } = render(() => <Account />);
       await screen.findByText('Billing');
       expect(container.querySelector('#billing')).not.toBeNull();
       expect(screen.getByText('Current plan')).toBeDefined();
-      expect(screen.getByText('Free')).toBeDefined();
-      expect(screen.getByText(`120 / ${FREE_REQUEST_LIMIT_LABEL}`)).toBeDefined();
-      expect(screen.getByText(/Resets/)).toBeDefined();
+      expect(screen.getByText('No subscription')).toBeDefined();
+      expect(screen.getByText('Not routed')).toBeDefined();
+      expect(screen.queryByText(/Resets/)).toBeNull();
       expect(
-        screen.getByText(`Free: ${FREE_REQUEST_LIMIT_LABEL} requests/mo · Pro: unlimited requests`),
+        screen.getByText('No subscription. Requests are not routed until you subscribe.'),
       ).toBeDefined();
       expect(screen.getByText('Email preferences')).toBeDefined();
       expect(
@@ -385,20 +384,31 @@ describe('Account', () => {
       );
       await waitFor(() => expect(checkbox.checked).toBe(true));
     });
-    it('falls back to the included label when a limited plan has no usage count yet', async () => {
+    it('shows used / limit and the reset date when a tenant has a positive allowance', async () => {
       mockGetBillingStatus.mockResolvedValue({
         ...freeStatus,
-        requests: { used: null, limit: FREE_PLAN_REQUESTS_PER_MONTH, periodEnd: null },
+        requests: { used: 120, limit: 500, periodEnd: '2026-08-01T00:00:00.000Z' },
       });
       render(() => <Account />);
       await screen.findByText('Billing');
-      expect(screen.getByText(FREE_REQUEST_LIMIT_LABEL)).toBeDefined();
+      expect(screen.getByText('120 / 500')).toBeDefined();
+      expect(screen.getByText(/Resets/)).toBeDefined();
+    });
+
+    it('falls back to the allowance alone when a limited plan has no usage count yet', async () => {
+      mockGetBillingStatus.mockResolvedValue({
+        ...freeStatus,
+        requests: { used: null, limit: 500, periodEnd: null },
+      });
+      render(() => <Account />);
+      await screen.findByText('Billing');
+      expect(screen.getByText('500')).toBeDefined();
     });
 
     it('calls subscription.upgrade with checkout URLs when Upgrade to Pro is clicked', async () => {
       mockGetBillingStatus.mockResolvedValue(freeStatus);
       render(() => <Account />);
-      const button = await screen.findByText(/Upgrade to Pro/);
+      const button = await screen.findByText(/Subscribe/);
       expect(button.textContent).toContain('$20/mo');
       fireEvent.click(button);
       expect(mockUpgrade).toHaveBeenCalledWith({
@@ -416,7 +426,7 @@ describe('Account', () => {
         () => new Promise<void>((resolve) => (resolveUpgrade = resolve)),
       );
       render(() => <Account />);
-      const button = (await screen.findByText(/Upgrade to Pro/)) as HTMLButtonElement;
+      const button = (await screen.findByText(/Subscribe/)) as HTMLButtonElement;
       fireEvent.click(button);
       await waitFor(() => expect(button.disabled).toBe(true));
       resolveUpgrade();
@@ -427,7 +437,7 @@ describe('Account', () => {
       mockGetBillingStatus.mockResolvedValue(freeStatus);
       mockUpgrade.mockRejectedValue(new Error('network'));
       render(() => <Account />);
-      const button = (await screen.findByText(/Upgrade to Pro/)) as HTMLButtonElement;
+      const button = (await screen.findByText(/Subscribe/)) as HTMLButtonElement;
       fireEvent.click(button);
       await waitFor(() =>
         expect(mockToastError).toHaveBeenCalledWith(
@@ -441,7 +451,7 @@ describe('Account', () => {
       mockGetBillingStatus.mockResolvedValue(freeStatus);
       mockUpgrade.mockResolvedValue({ error: { message: 'network' } });
       render(() => <Account />);
-      const button = (await screen.findByText(/Upgrade to Pro/)) as HTMLButtonElement;
+      const button = (await screen.findByText(/Subscribe/)) as HTMLButtonElement;
       fireEvent.click(button);
       await waitFor(() =>
         expect(mockToastError).toHaveBeenCalledWith(
@@ -503,7 +513,7 @@ describe('Account', () => {
         priceMonthly: { amount: null, currency: null, interval: null },
       });
       render(() => <Account />);
-      const button = await screen.findByText(/Upgrade to Pro/);
+      const button = await screen.findByText(/Subscribe/);
       expect(button.textContent).not.toContain('$');
     });
 
@@ -513,9 +523,7 @@ describe('Account', () => {
       const button = await screen.findByText('Manage subscription');
       expect(screen.getByText('Pro · $20/mo')).toBeDefined();
       expect(screen.getByText('Unlimited')).toBeDefined();
-      expect(
-        screen.queryByText(new RegExp(`Free: ${FREE_REQUEST_LIMIT_LABEL} requests`)),
-      ).toBeNull();
+      expect(screen.queryByText(/No subscription\./)).toBeNull();
       fireEvent.click(button);
       expect(mockBillingPortal).toHaveBeenCalledWith({
         returnUrl: `${window.location.origin}/account`,
