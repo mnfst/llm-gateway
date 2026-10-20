@@ -22,4 +22,13 @@ describe('resolveToolCallIndex', () => {
   it('continues the latest call when that call has no id yet', () => {
     expect(resolveToolCallIndex({ id: 'call_a' }, { index: 0 })).toBe(0);
   });
+
+  it('starts the next call when an index-less delta brings a name without an id after a named call', () => {
+    const latest = { index: 0, id: 'call_a', name: 'get_weather' };
+    expect(resolveToolCallIndex({ function: { name: 'get_time' } }, latest)).toBe(1);
+    expect(resolveToolCallIndex({ function: { arguments: '{}' } }, latest)).toBe(0);
+    expect(
+      resolveToolCallIndex({ function: { name: 'get_time' } }, { index: 0, id: 'call_a' }),
+    ).toBe(0);
+  });
 });

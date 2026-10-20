@@ -446,8 +446,8 @@ interface StreamState {
   textIndex: number | null;
   textOpened: boolean;
   toolCalls: Map<number, { id: string; index: number; argBuffer: string; opened: boolean }>;
-  // Upstream index and id of the latest tool call delta, used to place deltas that carry no index.
-  latestToolCall?: { index: number; id?: string };
+  // Upstream index, id and name of the latest tool call delta, used to place deltas that carry no index.
+  latestToolCall?: { index: number; id?: string; name?: string };
   // Monotonic counter — block indices must keep increasing across the whole
   // stream, including across reopens of the same kind.
   nextBlockIndexCounter: number;
@@ -586,13 +586,21 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
       for (const call of delta.tool_calls) {
         if (!isRecord(call)) continue;
         const callIndex = resolveToolCallIndex(call, state.latestToolCall);
+        const sameCall = state.latestToolCall?.index === callIndex;
+        const callName = isRecord(call.function) ? call.function.name : undefined;
         state.latestToolCall = {
           index: callIndex,
           id:
             typeof call.id === 'string' && call.id !== ''
               ? call.id
-              : state.latestToolCall?.index === callIndex
-                ? state.latestToolCall.id
+              : sameCall
+                ? state.latestToolCall?.id
+                : undefined,
+          name:
+            typeof callName === 'string' && callName !== ''
+              ? `${sameCall ? (state.latestToolCall?.name ?? '') : ''}${callName}`
+              : sameCall
+                ? state.latestToolCall?.name
                 : undefined,
         };
         let entry = state.toolCalls.get(callIndex);
