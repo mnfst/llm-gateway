@@ -105,6 +105,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
     subscriptionLabel: 'MiniMax Coding Plan',
     subscriptionAuthMode: 'device_code' as const,
     knownModels: Object.freeze([
+      'MiniMax-M3.1-Flash',
       'MiniMax-M3',
       'MiniMax-M2.7',
       'MiniMax-M2.7-highspeed',
@@ -118,6 +119,7 @@ export const SUBSCRIPTION_PROVIDER_CONFIGS: Readonly<
       // MiniMax-M3's 1M window (MSA); M2.x models keep their own lower
       // per-model contexts from the pricing cache — this is only the cap.
       maxContextWindow: 1000000,
+      modelContextWindows: Object.freeze({ 'MiniMax-M3.1-Flash': 1000000 }),
       supportsPromptCaching: true,
       supportsBatching: false,
     }),

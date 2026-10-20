@@ -106,6 +106,22 @@ describe('ModelController', () => {
     else process.env['MANIFEST_MODE'] = previousMode;
   });
 
+  it('advertises current MiniMax choices without mutating the routing catalog', async () => {
+    const models = ['MiniMax-M2.7', 'MiniMax-M3', 'MiniMax-M3.1-Flash'].map((id) =>
+      makeDiscovered({ id, provider: 'minimax', displayName: id }),
+    );
+    models.push(makeDiscovered({ id: 'custom:test/MiniMax-M2.7', provider: 'custom:test' }));
+    mockDiscoveryService.getModelsForAgent.mockResolvedValue(models);
+    const rows = await controller.getAvailableModels(mockCtx, mockAgentName);
+    expect(rows.map((row) => row.model_name)).toEqual([
+      'MiniMax-M3.1-Flash',
+      'MiniMax-M3',
+      'custom:test/MiniMax-M2.7',
+    ]);
+    expect(models[0].id).toBe('MiniMax-M2.7');
+    expect(models).toHaveLength(4);
+  });
+
   /* ── pricingHealth ── */
 
   describe('pricingHealth', () => {

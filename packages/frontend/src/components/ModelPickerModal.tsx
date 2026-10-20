@@ -8,6 +8,7 @@ import {
   startTransition,
   type Component,
 } from 'solid-js';
+import { minimaxTextModelRank } from 'manifest-shared';
 import {
   refreshModels,
   refreshProviderModels,
@@ -318,7 +319,10 @@ const ModelPickerModal: Component<Props> = (props) => {
       group.models.sort((a, b) => {
         if (a.value === 'openrouter/free') return -1;
         if (b.value === 'openrouter/free') return 1;
-        return a.label.localeCompare(b.label);
+        const minimaxOrder =
+          (minimaxTextModelRank(a.pricing.provider, a.value) ?? 2) -
+          (minimaxTextModelRank(b.pricing.provider, b.value) ?? 2);
+        return minimaxOrder || a.label.localeCompare(b.label);
       });
       if (q) {
         const nameMatch = group.name.toLowerCase().includes(q);

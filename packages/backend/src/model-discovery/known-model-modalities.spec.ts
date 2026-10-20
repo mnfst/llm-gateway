@@ -1,6 +1,13 @@
 import { lookupKnownModalities } from './known-model-modalities';
 
 describe('lookupKnownModalities', () => {
+  it('keeps Flash image input available when catalogs lag', () => {
+    expect(lookupKnownModalities('minimax', 'MiniMax-M3.1-Flash')).toEqual({
+      input: ['text', 'image'],
+      output: ['text'],
+      capabilities: ['text', 'image', 'tools', 'stream'],
+    });
+  });
   it('identifies gpt-5.3-codex-spark as text-only, case-insensitively', () => {
     expect(lookupKnownModalities('OpenAI', 'GPT-5.3-Codex-Spark')).toEqual({
       input: ['text'],

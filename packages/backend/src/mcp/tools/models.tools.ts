@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { SHARED_PROVIDERS } from 'manifest-shared';
+import { SHARED_PROVIDERS, currentMinimaxModelChoices } from 'manifest-shared';
 import { McpOperator } from '../mcp-auth';
 import { McpToolDeps } from '../tool-deps';
 import { result } from '../tool-result';
@@ -27,7 +27,7 @@ export function registerModelTools(
           });
           const models = await deps.modelDiscovery.getModelsForAgent(agent.tenant_id, agent.id);
           return {
-            models: models.map((m) => ({
+            models: currentMinimaxModelChoices(models).map((m) => ({
               id: m.id,
               provider: m.provider,
               display_name: m.displayName ?? null,
