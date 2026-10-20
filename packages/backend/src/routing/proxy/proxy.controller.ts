@@ -925,7 +925,7 @@ export class ProxyController {
           if (typeof nested === 'string') return nested;
         }
         const code = record.code;
-        if (code === 'PLAN_LIMIT_REQUESTS') return 'Free plan monthly request limit reached';
+        if (code === 'PLAN_LIMIT_REQUESTS') return 'Manifest Cloud subscription required';
         if (typeof code === 'string') return code;
       }
     }

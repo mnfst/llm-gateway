@@ -677,7 +677,7 @@
   margin-bottom: 6px;
 }
 
-/* ── Top banners (Free plan notice + usage limit) ── */
+/* ── Top banners (usage limit) ── */
 .plan-banners {
   display: flex;
   flex-wrap: wrap;
@@ -691,49 +691,6 @@
 
 .plan-banners > * {
   flex: 1 1 320px;
-}
-
-.free-plan-ends-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gap-md);
-  padding: var(--gap-md) var(--gap-lg);
-  background: hsl(var(--primary) / 0.1);
-  border: 1px solid hsl(var(--primary) / 0.4);
-  border-radius: var(--radius);
-  font-size: var(--font-size-sm);
-  color: hsl(var(--foreground));
-}
-
-.free-plan-ends-banner__text {
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.free-plan-ends-banner__text strong {
-  font-weight: 700;
-  color: hsl(var(--primary));
-}
-
-.free-plan-ends-banner__link {
-  color: hsl(var(--primary));
-  text-decoration: underline;
-}
-
-.free-plan-ends-banner__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-sm);
-  flex-shrink: 0;
-}
-
-.free-plan-ends-banner__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  text-decoration: none;
-  white-space: nowrap;
 }
 
 /* ── Global Usage Limit Banner ────────────────────── */

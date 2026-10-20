@@ -540,15 +540,6 @@
   line-height: 1.5;
 }
 
-.upgrade-plan-card__notice {
-  display: block;
-  margin-top: var(--gap-sm);
-  color: hsl(var(--primary));
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  line-height: 1.5;
-}
-
 .upgrade-plan-card__usage {
   margin: var(--gap-sm) 0 0;
   color: hsl(var(--foreground));

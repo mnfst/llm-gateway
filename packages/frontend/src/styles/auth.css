@@ -474,13 +474,6 @@
   }
 }
 
-.plan-picker__notice {
-  margin: 0 0 var(--gap-sm);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: hsl(var(--primary));
-}
-
 .plan-picker__usage {
   margin: 0 0 var(--gap-sm);
   font-size: var(--font-size-xs);
