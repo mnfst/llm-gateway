@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from '@solidjs/router';
 import { For, Show, createEffect, createResource, createSignal, type Component } from 'solid-js';
 import {
   type PlanId,
+  SELF_HOSTING_GUIDE_URL,
   freeFeatures,
   proFeatures,
   enterpriseFeatures,
@@ -10,7 +11,7 @@ import {
 import { authClient } from '../services/auth-client.js';
 import { getBillingStatus } from '../services/api/billing.js';
 import { toast } from '../services/toast-store.js';
-import { FREE_REQUEST_LIMIT_LABEL, formatBillingPrice } from '../services/billing-display.js';
+import { formatBillingPrice } from '../services/billing-display.js';
 import { markPlanChosen } from '../services/plan-selection.js';
 
 const Upgrade: Component = () => {
@@ -100,15 +101,15 @@ const Upgrade: Component = () => {
         <div class="page-header upgrade-page-header upgrade-page-header--centered">
           <div class="upgrade-page-header__copy">
             <h1>Full control over your AI routing</h1>
-            <p>Free to start. Pick the plan that fits how your team ships AI.</p>
+            <p>Self-host for free, or let us run it for $19/month.</p>
           </div>
         </div>
 
         <Show when={isRequestLimitEntry()}>
           <p class="upgrade-limit-notice">
-            You've used all{' '}
-            {status()?.requests.limit?.toLocaleString('en-US') ?? FREE_REQUEST_LIMIT_LABEL} requests
-            this month. Upgrade for unlimited routed requests.
+            {(status()?.requests.limit ?? 0) > 0
+              ? `You've used all ${status()!.requests.limit!.toLocaleString('en-US')} requests this month. Upgrade for unlimited routed requests.`
+              : 'Manifest Cloud needs a Pro subscription to route requests.'}
           </p>
         </Show>
 
@@ -142,13 +143,15 @@ const Upgrade: Component = () => {
                 <div class="upgrade-plan-grid">
                   <section class="settings-card upgrade-plan-card">
                     <div class="upgrade-plan-card__header">
-                      <h2>Free</h2>
+                      <h2>Self-hosted</h2>
                     </div>
                     <div class="upgrade-plan-card__price">
                       <span class="upgrade-plan-card__amount">$0</span>
-                      <span class="upgrade-plan-card__period">/month</span>
+                      <span class="upgrade-plan-card__period">forever</span>
                     </div>
-                    <p class="upgrade-plan-card__desc">For prototypes and small projects.</p>
+                    <p class="upgrade-plan-card__desc">
+                      The same gateway on your own server. You install, update and run it.
+                    </p>
                     <div class="upgrade-plan-card__cta">
                       <button
                         class="btn btn--outline"
@@ -158,8 +161,16 @@ const Upgrade: Component = () => {
                           navigate('/');
                         }}
                       >
-                        Use Manifest for free
+                        Continue without a subscription
                       </button>
+                      <a
+                        class="upgrade-plan-card__no-commitment"
+                        href={SELF_HOSTING_GUIDE_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Read the self-hosting guide
+                      </a>
                     </div>
                     <div class="upgrade-plan-card__bottom">
                       <div class="upgrade-plan-card__divider" />
@@ -188,7 +199,7 @@ const Upgrade: Component = () => {
                   <section class="settings-card upgrade-plan-card upgrade-plan-card--pro">
                     <span class="upgrade-plan-card__badge">Popular</span>
                     <div class="upgrade-plan-card__header">
-                      <h2>Pro</h2>
+                      <h2>Manifest Cloud</h2>
                     </div>
                     <div class="upgrade-plan-card__price">
                       <span class="upgrade-plan-card__amount">{proPrice() ?? 'Pro'}</span>
@@ -197,8 +208,7 @@ const Upgrade: Component = () => {
                       </Show>
                     </div>
                     <p class="upgrade-plan-card__desc">
-                      For production projects. Longer data access and unlimited agents. Not suited
-                      for teams.
+                      The gateway hosted and run by us. No server to install, update or watch.
                     </p>
                     <div class="upgrade-plan-card__cta">
                       <button
@@ -206,7 +216,7 @@ const Upgrade: Component = () => {
                         disabled={billingBusy()}
                         onClick={() => handlePlanSelect('pro')}
                       >
-                        {billingBusy() ? <span class="spinner" /> : 'Upgrade to Pro'}
+                        {billingBusy() ? <span class="spinner" /> : 'Subscribe'}
                       </button>
                       <span class="upgrade-plan-card__no-commitment">
                         No commitment, cancel anytime
@@ -214,9 +224,6 @@ const Upgrade: Component = () => {
                     </div>
                     <div class="upgrade-plan-card__bottom">
                       <div class="upgrade-plan-card__divider" />
-                      <p class="upgrade-plan-card__features-intro">
-                        Everything in the Free plan, plus:
-                      </p>
                       <ul class="upgrade-plan-card__features">
                         <For each={proFeatures}>
                           {(feature) => (

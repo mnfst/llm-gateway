@@ -1,23 +1,27 @@
 import { For, Show, createSignal, type Component } from 'solid-js';
-import { FREE_REQUEST_LIMIT_LABEL } from '../services/billing-display.js';
+
+export const SELF_HOSTING_GUIDE_URL = 'https://manifest.build/llm-gateway/docs/self-hosted';
 
 /* ── Plan data ───────────────────────────────────────── */
 
+// `free` is the plan id of a tenant without a subscription. Since the Cloud Free
+// plan ended on 2026-11-02 the card sells self-hosting, which is where the free
+// gateway lives; picking it still enters the dashboard.
 const freeFeatures = [
-  'Unlimited agents',
-  `${FREE_REQUEST_LIMIT_LABEL} routed requests / month`,
-  'All providers, no restrictions',
-  'Subscription providers (Claude, ChatGPT, Gemini...)',
-  '7-day dashboard retention',
-  'Autofix',
-  'Budget alerts and notifications',
+  'Unlimited routed requests',
+  'All providers, including local models',
+  'Autofix, routing rules and fallbacks',
+  'Your data stays on your machine',
   'Community support via Discord',
 ];
 
 const proFeatures = [
+  'Hosted at app.manifest.build, ready in a minute',
+  'Updates land the same day we ship them',
+  'Servers, database and uptime handled by us',
   'Unlimited routed requests',
-  '365 days dashboard retention',
-  'Basic support (platform issues, billing, licence activation)',
+  '365 days of dashboard history',
+  'Support from the team (platform issues, billing)',
 ];
 
 const enterpriseFeatures = [
@@ -63,18 +67,18 @@ const PlanPicker: Component<PlanPickerProps> = (props) => {
   const plans = (): PlanDef[] => [
     {
       id: 'free',
-      name: 'Free',
+      name: 'Self-hosted',
       price: '$0',
-      period: '/month',
-      desc: 'For prototypes and small projects.',
+      period: 'forever',
+      desc: 'The same gateway on your own server. You install, update and run it.',
       features: freeFeatures,
     },
     {
       id: 'pro',
-      name: 'Pro',
+      name: 'Manifest Cloud',
       price: props.proPrice ?? 'Pro',
       period: props.proPrice ? '/month' : undefined,
-      desc: 'For production projects. Longer data access and unlimited agents. Not suited for teams.',
+      desc: 'The gateway hosted and run by us. No server to install, update or watch.',
       features: proFeatures,
       popular: true,
     },
@@ -174,8 +178,24 @@ const PlanPicker: Component<PlanPickerProps> = (props) => {
             disabled={props.busy}
             onClick={() => props.onSelect(expanded()!)}
           >
-            {props.busy ? <span class="spinner" /> : 'Choose this plan'}
+            {props.busy ? (
+              <span class="spinner" />
+            ) : expanded() === 'free' ? (
+              'Continue without a subscription'
+            ) : (
+              'Subscribe'
+            )}
           </button>
+        </Show>
+        <Show when={expanded() === 'free'}>
+          <a
+            class="auth-footer__link plan-picker__guide-link"
+            href={SELF_HOSTING_GUIDE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Read the self-hosting guide
+          </a>
         </Show>
       </Show>
     </div>

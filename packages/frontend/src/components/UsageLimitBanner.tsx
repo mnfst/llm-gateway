@@ -44,9 +44,17 @@ const UsageLimitBanner: Component = () => {
 
   createEffect(() => setDismissed(isDismissedToday(dismissKey())));
 
+  // A tenant without a subscription has a limit of 0 since the Cloud Free plan
+  // ended: nothing routes, so the banner is the permanent "subscribe" notice.
+  const noSubscription = () => {
+    const b = billing();
+    return b?.enabled === true && b.plan === 'free' && b.requests.limit === 0;
+  };
+
   const ratio = () => {
     const b = billing();
     if (!b?.enabled || b.plan !== 'free' || b.requests.limit == null) return 0;
+    if (b.requests.limit === 0) return 1;
     return (b.requests.used ?? 0) / b.requests.limit;
   };
 
@@ -63,9 +71,11 @@ const UsageLimitBanner: Component = () => {
     <Show when={(nearLimit() && !dismissed()) || atLimit()}>
       <div class="usage-limit-banner" classList={{ 'usage-limit-banner--danger': atLimit() }}>
         <span class="usage-limit-banner__text">
-          {atLimit()
-            ? "You've reached your monthly limit. Requests are being blocked."
-            : `You're limited to ${billing()!.requests.limit!.toLocaleString('en-US')} requests this month. Upgrade for unlimited.`}
+          {noSubscription()
+            ? 'Manifest Cloud needs a Pro subscription to route requests. Your dashboard and settings are kept.'
+            : atLimit()
+              ? "You've reached your monthly limit. Requests are being blocked."
+              : `You're limited to ${billing()!.requests.limit!.toLocaleString('en-US')} requests this month. Upgrade for unlimited.`}
         </span>
         <div class="usage-limit-banner__actions">
           <A
@@ -83,7 +93,7 @@ const UsageLimitBanner: Component = () => {
               <path d="M12 2C6.486 2 2 6.486 2 12s4.486 10 10 10 10-4.486 10-10S17.514 2 12 2m0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8" />
               <path d="m8 12 1.41 1.41L11 11.83V17h2v-5.17l1.59 1.59L16 12l-4-4z" />
             </svg>
-            Upgrade plan
+            {noSubscription() ? 'Subscribe' : 'Upgrade plan'}
           </A>
           <Show when={canDismiss()}>
             <button
