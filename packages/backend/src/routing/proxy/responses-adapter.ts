@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { resolveToolCallIndex } from 'manifest-shared';
 
 import { DEFAULT_INSTRUCTIONS } from './chatgpt-helpers';
 import { OpenAIMessage } from './proxy-types';
@@ -653,6 +654,8 @@ interface StreamFunctionCall {
 interface ResponsesStreamState {
   toolNames?: ResponsesToolNames;
   toolCalls: Map<number, StreamFunctionCall>;
+  // Upstream index of the latest tool call delta, used to place deltas that carry no index.
+  latestToolCallIndex?: number;
   nextOutputIndex: number;
   messageOutputIndex: number;
 
@@ -855,7 +858,15 @@ function toolCallDeltas(toolCalls: unknown, state: ResponsesStreamState): string
   const events: string[] = [];
   for (const delta of toolCalls) {
     if (!isRecord(delta) || !isRecord(delta.function)) continue;
-    const index = typeof delta.index === 'number' ? delta.index : 0;
+    const latest =
+      state.latestToolCallIndex === undefined
+        ? undefined
+        : {
+            index: state.latestToolCallIndex,
+            id: state.toolCalls.get(state.latestToolCallIndex)?.callId,
+          };
+    const index = resolveToolCallIndex(delta, latest);
+    state.latestToolCallIndex = index;
     let call = state.toolCalls.get(index);
     if (!call) {
       call = { id: `fc_${randomUUID().replace(/-/g, '')}`, callId: '', name: '', arguments: '' };

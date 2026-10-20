@@ -889,6 +889,35 @@ describe('Anthropic Messages adapter', () => {
       return out + tail;
     }
 
+    it('opens one tool_use block per call when the provider omits tool call indexes', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\\"Paris\\"}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{\\"tz\\":\\"CET\\"}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]);
+
+      const events = sse
+        .split('\n\n')
+        .filter(Boolean)
+        .map((block) => JSON.parse(block.split('\n')[1]!.replace('data: ', '')));
+      const starts = events.filter((e) => e.type === 'content_block_start');
+      const partials = events
+        .filter((e) => e.type === 'content_block_delta')
+        .map((e) => [e.index, e.delta.partial_json]);
+
+      expect(starts.map((e) => [e.index, e.content_block.name])).toEqual([
+        [0, 'get_weather'],
+        [1, 'get_time'],
+      ]);
+      expect(partials).toEqual([
+        [0, '{"city":'],
+        [0, '"Paris"}'],
+        [1, '{"tz":"CET"}'],
+      ]);
+    });
+
     it('emits message_start, content_block events, message_delta, and message_stop for plain text', () => {
       const t = createMessagesStreamTransformer('claude-sonnet-4');
       const chunks = [
