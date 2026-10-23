@@ -1,0 +1,19 @@
+.changeset/overview-panels-live.md
+  s_a4020250d749e0::t_56f05eeba2976a 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5e38f600b3d93016dc12c7a447f22130e0bca3bb",
+  "prompts": {},
+  "sessions": {
+    "s_a4020250d749e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5eae4a7b-e032-4e0e-a766-8d5556ad2366",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
