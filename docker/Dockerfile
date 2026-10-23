@@ -72,7 +72,7 @@ LABEL org.opencontainers.image.title="Manifest" \
       org.opencontainers.image.vendor="MNFST Inc." \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="gcr.io/distroless/nodejs24-debian13:nonroot" \
-      org.opencontainers.image.base.digest="sha256:b087b405441cd3e8eab9bd53ae3dd1c2b824e7ce13f25c5e9bb353fbdb3f4544"
+      org.opencontainers.image.base.digest="sha256:78f07ef1b5ea71ad7c055df15d0dd8997f2d288f9158623c4d4ae3d765b7d50d"
 
 ENV NODE_ENV=production
 ENV BIND_ADDRESS=0.0.0.0
