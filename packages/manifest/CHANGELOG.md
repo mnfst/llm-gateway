@@ -1,5 +1,15 @@
 # manifest
 
+## 6.28.10
+
+### Patch Changes
+
+- 3243da5: Tell Cloud workspaces on the Free plan that it ends on November 2, 2026: a dismissable banner at the top of the dashboard with a link to the announcement, and a note on the Free card of the plan picker and on the Account page. Pro workspaces and self-hosted installs see nothing.
+- 2a6d84b: Bump the Docker base images to Node.js 24.22.1 to pick up the October 2026 Node.js security releases (including CVE-2026-111497, CVE-2026-106069 and CVE-2026-105483). All installs should update.
+- 01e0e2a: The dashboard's Recent Requests and Model usage panels now start loading with the rest of the page instead of after it. Recent Requests updates live as new requests arrive, and Model usage refreshes every 30 seconds like the other usage figures. Before, both stayed stale until the range changed or the page was reloaded.
+- 1c75318: Stop storing Google load-balancer headers (`Forwarded`, `Via`, trace context) in recorded request headers. `Forwarded` carries the caller's IP.
+- c19d7b6: Read tool messages whose `content` is an array of text parts on Gemini and Anthropic routes. Gemini received them as plain user text with no `functionResponse`, so the model's function call went unanswered, and Anthropic received the JSON of the parts array as the tool result instead of its text.
+
 ## 6.28.9
 
 ### Patch Changes
