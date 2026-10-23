@@ -262,4 +262,29 @@ describe('Playground exclusion (behavioural, not SQL-shape)', () => {
     expect(rows[0].excluded).toBeGreaterThan(0);
     expect(charted).toBe(rows[0].expected);
   });
+
+  it('drops Playground rows from the Requests list only when asked', async () => {
+    const names = async (query: string) =>
+      (
+        (await auth(api().get(`/api/v1/messages?range=24h${query}`)).expect(200)).body
+          .items as Array<{ agent_name: string | null }>
+      ).map((r) => r.agent_name);
+
+    // The Requests log hides no origin by default.
+    expect(await names('')).toEqual(expect.arrayContaining(['pg-renamed', 'Playground']));
+
+    // The dashboard's Recent Requests panel opts out of Playground traffic.
+    const filtered = await names('&limit=5&include_total=false&exclude_playground=true');
+    expect(filtered).toContain('excl-normal-agent');
+    expect(filtered).not.toContain('pg-renamed');
+    expect(filtered).not.toContain('Playground');
+  });
+
+  it('leaves Playground attempts out of model usage', async () => {
+    const res = await auth(api().get('/api/v1/overview/model-usage?range=24h')).expect(200);
+    const rows = res.body as Array<{ model: string; tokens: number }>;
+
+    // Only excl-normal-agent's attempt (100 + 50) counts for this tenant.
+    expect(rows).toEqual([expect.objectContaining({ model: 'gpt-4o', tokens: 150 })]);
+  });
 });

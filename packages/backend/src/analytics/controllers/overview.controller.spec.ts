@@ -232,6 +232,27 @@ describe('OverviewController', () => {
     expect(ts.getActiveSkills).toHaveBeenCalledWith('365d', 'tenant-123', undefined, true, false);
   });
 
+  it('serves model usage on its own endpoint', async () => {
+    ts.getCostByModel.mockResolvedValueOnce([{ model: 'gpt-5', tokens: 10 }]);
+
+    await expect(controller.getModelUsage({ range: '30d' }, ctx as never)).resolves.toEqual([
+      { model: 'gpt-5', tokens: 10 },
+    ]);
+    expect(ts.getCostByModel).toHaveBeenCalledWith('30d', 'tenant-123', undefined, true, false);
+  });
+
+  it('defaults model usage to 24h and drops direct attempts when scoped to a harness', async () => {
+    await controller.getModelUsage({ agent_name: 'bot-1' }, ctx as never);
+
+    expect(ts.getCostByModel).toHaveBeenCalledWith(
+      '24h',
+      'tenant-123',
+      selectedAgent(ctx.tenantId, 'bot-1'),
+      true,
+      true,
+    );
+  });
+
   it('uses request rows for recent activity when the request query service is available', async () => {
     const requestItems = [{ id: 'request-1', status: 'ok' }];
     const messagesQuery = { getMessages: jest.fn().mockResolvedValue({ items: requestItems }) };

@@ -127,6 +127,7 @@ describe('MessagesController', () => {
       include_total: false,
       cache_total: true,
       include_filter_options: false,
+      exclude_playground: true,
     };
     await controller.getMessages(query as never, ctx as never);
 
@@ -150,6 +151,7 @@ describe('MessagesController', () => {
       include_total: false,
       cache_total: true,
       include_filter_options: false,
+      exclude_playground: true,
     });
   });
 

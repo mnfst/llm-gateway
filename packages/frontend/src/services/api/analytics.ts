@@ -247,6 +247,13 @@ export function getOverview(range = '24h', agentName?: string, fast = false) {
   });
 }
 
+export function getModelUsage(range = '24h', agentName?: string) {
+  return fetchJson('/overview/model-usage', {
+    range,
+    ...(agentName ? { agent_name: agentName } : {}),
+  });
+}
+
 export function getOverviewDetails(range = '24h', agentName?: string) {
   return fetchJson('/overview/details', {
     range,

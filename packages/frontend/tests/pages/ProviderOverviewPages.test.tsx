@@ -18,7 +18,8 @@ const apiMocks = vi.hoisted(() => ({
   refreshConnectionModels: vi.fn(),
   fetchMutate: vi.fn(),
   getOverview: vi.fn(),
-  getOverviewDetails: vi.fn(),
+  getModelUsage: vi.fn(),
+  getRecentRequests: vi.fn(),
   getOverviewAgentUsage: vi.fn(),
   getOverviewProviderUsage: vi.fn(),
   getBillingStatus: vi.fn(),
@@ -63,6 +64,7 @@ vi.mock('../../src/services/api.js', async () => {
     getCustomProviders: (...args: unknown[]) => apiMocks.getCustomProviders(...args),
     getGlobalProviders: (...args: unknown[]) => apiMocks.getGlobalProviders(...args),
     getGlobalProviderUsage: (...args: unknown[]) => apiMocks.getGlobalProviderUsage(...args),
+    getRecentRequests: (...args: unknown[]) => apiMocks.getRecentRequests(...args),
     // Real merge so the page's config+usage join stays under test.
     mergeUsage: providers.mergeUsage,
   };
@@ -96,7 +98,7 @@ vi.mock('../../src/services/api/analytics.js', () => ({
   attemptSuccessRate: (row: { attempts: number; succeeded?: number }) =>
     !row.attempts || row.succeeded == null ? null : row.succeeded / row.attempts,
   getOverview: (...args: unknown[]) => apiMocks.getOverview(...args),
-  getOverviewDetails: (...args: unknown[]) => apiMocks.getOverviewDetails(...args),
+  getModelUsage: (...args: unknown[]) => apiMocks.getModelUsage(...args),
   getOverviewAgentUsage: (...args: unknown[]) => apiMocks.getOverviewAgentUsage(...args),
   getOverviewProviderUsage: (...args: unknown[]) => apiMocks.getOverviewProviderUsage(...args),
   getConnectionDetail: (...args: unknown[]) => apiMocks.getConnectionDetail(...args),
@@ -746,7 +748,8 @@ beforeEach(() => {
   apiMocks.refreshConnectionModels.mockResolvedValue({ ok: true });
   apiMocks.fetchMutate.mockResolvedValue({});
   apiMocks.getOverview.mockResolvedValue(overviewResponse);
-  apiMocks.getOverviewDetails.mockResolvedValue({});
+  apiMocks.getModelUsage.mockResolvedValue(overviewResponse.cost_by_model);
+  apiMocks.getRecentRequests.mockResolvedValue({ items: overviewResponse.recent_activity });
   apiMocks.getOverviewAgentUsage.mockResolvedValue(agentUsageTimeseries);
   apiMocks.getOverviewProviderUsage.mockResolvedValue(providerUsageTimeseries);
   apiMocks.getBillingStatus.mockResolvedValue({
@@ -833,6 +836,15 @@ describe('GlobalOverview (analytics)', () => {
     }
   });
 
+  it('opens the request in the Requests log from a Recent Requests row', async () => {
+    render(() => <GlobalOverview />);
+    const successCell = await screen.findByText('Success');
+
+    fireEvent.click(successCell.closest('tr')!);
+
+    expect(routerState.navigate).toHaveBeenCalledWith('/messages?request=msg-recent-1');
+  });
+
   it('navigates to harness and connection detail on row click', async () => {
     render(() => <GlobalOverview />);
     await waitFor(() => expect(screen.getByTestId('provider-chart-card')).toBeDefined());
@@ -888,20 +900,17 @@ describe('GlobalOverview (analytics)', () => {
     });
     // A custom model with no display_name must render its stripped name, not
     // the raw custom:<uuid>/ slug.
-    apiMocks.getOverview.mockResolvedValue({
-      ...overviewResponse,
-      cost_by_model: [
-        {
-          model: 'custom:cp-1/qwen-2.5',
-          display_name: null,
-          tokens: 300,
-          share_pct: 25,
-          estimated_cost: 0.1,
-          auth_type: 'api_key',
-          provider: 'custom:cp-1',
-        },
-      ],
-    });
+    apiMocks.getModelUsage.mockResolvedValue([
+      {
+        model: 'custom:cp-1/qwen-2.5',
+        display_name: null,
+        tokens: 300,
+        share_pct: 25,
+        estimated_cost: 0.1,
+        auth_type: 'api_key',
+        provider: 'custom:cp-1',
+      },
+    ]);
 
     render(() => <GlobalOverview />);
     await waitFor(() => expect(screen.getByTestId('provider-chart-card')).toBeDefined());

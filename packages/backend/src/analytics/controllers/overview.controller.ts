@@ -161,6 +161,14 @@ export class OverviewController {
     };
   }
 
+  /** Model usage panel on its own, so it neither waits on nor blocks the other panels. */
+  @Get('overview/model-usage')
+  async getModelUsage(@Query() query: RangeQueryDto, @TenantCtx() ctx: TenantContext) {
+    const range = query.range ?? '24h';
+    const agentScope = await this.analyticsScope.resolve(ctx.tenantId, query.agent_name);
+    return this.timeseries.getCostByModel(range, ctx.tenantId, agentScope, true, !!agentScope);
+  }
+
   @Get('overview/per-agent-timeseries')
   async getPerAgentTimeseries(@Query() query: RangeQueryDto, @TenantCtx() ctx: TenantContext) {
     const { range, hourly } = this.deriveTimeseriesArgs(query);

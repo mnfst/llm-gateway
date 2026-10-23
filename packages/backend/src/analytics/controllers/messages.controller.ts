@@ -65,6 +65,7 @@ export class MessagesController {
       include_total: query.include_total,
       cache_total: query.cache_total,
       include_filter_options: query.include_filter_options,
+      exclude_playground: query.exclude_playground,
     });
   }
 

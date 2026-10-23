@@ -150,10 +150,22 @@ export interface MessageListParams extends Record<string, string | undefined> {
   include_total?: string;
   cache_total?: string;
   include_filter_options?: string;
+  exclude_playground?: string;
 }
 
 export function getMessages(params: MessageListParams = {}, options?: FetchJsonOptions) {
   return fetchJson('/messages', params, options);
+}
+
+/** The five latest requests for the dashboard panel, without the log's count and filter facets. */
+export function getRecentRequests(range = '24h') {
+  return fetchJson('/messages', {
+    range,
+    limit: '5',
+    include_total: 'false',
+    include_filter_options: 'false',
+    exclude_playground: 'true',
+  });
 }
 
 export function getMessageCount(

@@ -57,6 +57,21 @@ describe('analytics API client', () => {
     expect(url).toContain('agent_name=demo');
   });
 
+  it('getModelUsage uses its own route with an optional agent scope', async () => {
+    const fetchMock = setupFetch([]);
+    await analytics.getModelUsage();
+    let url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview/model-usage');
+    expect(url).toContain('range=24h');
+    expect(url).not.toContain('agent_name');
+
+    fetchMock.mockClear();
+    await analytics.getModelUsage('30d', 'demo');
+    url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('range=30d');
+    expect(url).toContain('agent_name=demo');
+  });
+
   it('getAttemptStats uses the stats route and optional agent scope', async () => {
     const fetchMock = setupFetch({});
     await analytics.getAttemptStats('30d', 'demo');

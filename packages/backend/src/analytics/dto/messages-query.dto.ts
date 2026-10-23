@@ -177,4 +177,10 @@ export class MessagesQueryDto {
   @IsBoolean()
   @Transform(({ value }) => value === true || value === 'true' || value === '1')
   include_filter_options?: boolean;
+
+  /** Hide Playground harnesses (the dashboard's Recent Requests panel). */
+  @IsOptional()
+  @IsBoolean()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  exclude_playground?: boolean;
 }

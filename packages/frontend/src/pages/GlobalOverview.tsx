@@ -19,6 +19,7 @@ import {
   getAgents,
   getGlobalProviders,
   getGlobalProviderUsage,
+  getRecentRequests,
   mergeUsage,
 } from '../services/api.js';
 import { customProviderColor } from '../services/formatters.js';
@@ -26,7 +27,7 @@ import { customProviderLogo } from '../components/ProviderIcon.jsx';
 import { stripCustomPrefix } from '../services/routing-utils.js';
 import {
   getOverview,
-  getOverviewDetails,
+  getModelUsage,
   getOverviewAgentUsage,
   getOverviewProviderUsage,
 } from '../services/api/analytics.js';
@@ -51,7 +52,7 @@ import {
   type MessageColumnKey,
   type MessageRow,
 } from '../components/message-table-types.js';
-import { agentPing, analyticsPing, routingPing } from '../services/sse.js';
+import { agentPing, analyticsPing, messagePing, routingPing } from '../services/sse.js';
 import '../styles/overview.css';
 import '../styles/charts.css';
 import '../styles/analytics-overview.css';
@@ -115,13 +116,9 @@ interface OverviewResponse {
   } | null;
   token_usage: Array<{ hour?: string; date?: string; input_tokens: number; output_tokens: number }>;
   message_usage: Array<{ hour?: string; date?: string; count: number }>;
-  cost_by_model: CostByModelRow[];
-  recent_activity: MessageRow[];
   has_data: boolean;
   has_providers: boolean;
 }
-
-type OverviewDetails = Pick<OverviewResponse, 'cost_by_model' | 'recent_activity'>;
 
 interface AgentRow {
   agent_name: string;
@@ -154,6 +151,21 @@ function loadRange(): string {
   }
   return '7d';
 }
+
+/** Placeholder rows for a panel whose own data is still loading. */
+const PanelRowsSkeleton = () => (
+  <div data-testid="panel-rows-skeleton">
+    <For each={[1, 2, 3]}>
+      {() => (
+        <div style="display: flex; align-items: center; gap: 12px; padding: 8px 0;">
+          <div class="skeleton skeleton--text" style="width: 140px;" />
+          <div class="skeleton skeleton--text" style="width: 100px;" />
+          <div class="skeleton skeleton--text" style="width: 50px;" />
+        </div>
+      )}
+    </For>
+  </div>
+);
 
 const GlobalOverview: Component = () => {
   const navigate = useNavigate();
@@ -251,12 +263,31 @@ const GlobalOverview: Component = () => {
     const result = overviewResult();
     if (!overviewResult.loading && result !== undefined) setLoadedRange(result.range);
   });
-  const [overviewDetailsResult] = createResource(loadedRange, async (range) => ({
-    range,
-    data: (await getOverviewDetails(range)) as OverviewDetails,
-  }));
-  const overviewDetails = () => {
-    const result = overviewDetailsResult();
+  // Recent Requests and Model usage load on their own, in parallel with the
+  // overview, so neither waits on it. Recent Requests follows the live message
+  // feed; Model usage is an aggregate and refreshes at the analytics cadence.
+  // Each keeps the range it was loaded for, so a range change shows the
+  // panel's skeleton instead of the previous range's rows.
+  const [recentRequestsResult] = createResource(
+    () => ({ range: effectiveChartRange(), _ping: messagePing() }),
+    async (p) => ({
+      range: p.range,
+      data: ((await getRecentRequests(p.range)) as { items: MessageRow[] }).items,
+    }),
+  );
+  const recentRequests = () => {
+    const result = recentRequestsResult();
+    return result?.range === effectiveChartRange() ? result.data : undefined;
+  };
+  const [modelUsageResult] = createResource(
+    () => ({ range: effectiveChartRange(), _ping: analyticsPing() }),
+    async (p) => ({
+      range: p.range,
+      data: (await getModelUsage(p.range)) as CostByModelRow[],
+    }),
+  );
+  const modelUsage = () => {
+    const result = modelUsageResult();
     return result?.range === effectiveChartRange() ? result.data : undefined;
   };
   const rangeChanging = () => overviewResult.loading && loadedRange() !== effectiveChartRange();
@@ -809,13 +840,17 @@ const GlobalOverview: Component = () => {
                 ];
               };
               return (
-                <MessageTable
-                  items={overviewDetails()?.recent_activity ?? overview()?.recent_activity ?? []}
-                  columns={cols()}
-                  customProviderName={() => undefined}
-                  expandable
-                  onRowSelect={(id) => navigate(`/messages?request=${id}`)}
-                />
+                <Show when={recentRequests()} fallback={<PanelRowsSkeleton />}>
+                  {(items) => (
+                    <MessageTable
+                      items={items()}
+                      columns={cols()}
+                      customProviderName={() => undefined}
+                      expandable
+                      onRowSelect={(id) => navigate(`/messages?request=${id}`)}
+                    />
+                  )}
+                </Show>
               );
             })()}
           </div>
@@ -843,12 +878,14 @@ const GlobalOverview: Component = () => {
                 </tr>
               </thead>
               <tbody>
-                <For
-                  each={(overviewDetails()?.cost_by_model ?? overview()?.cost_by_model ?? []).slice(
-                    0,
-                    10,
-                  )}
-                >
+                <Show when={modelUsage() === undefined}>
+                  <tr>
+                    <td colspan="6">
+                      <PanelRowsSkeleton />
+                    </td>
+                  </tr>
+                </Show>
+                <For each={(modelUsage() ?? []).slice(0, 10)}>
                   {(row) => (
                     <tr>
                       <td>
@@ -934,12 +971,7 @@ const GlobalOverview: Component = () => {
                     </tr>
                   )}
                 </For>
-                <Show
-                  when={
-                    (overviewDetails()?.cost_by_model ?? overview()?.cost_by_model ?? []).length ===
-                    0
-                  }
-                >
+                <Show when={modelUsage()?.length === 0}>
                   <tr>
                     <td
                       colspan="3"

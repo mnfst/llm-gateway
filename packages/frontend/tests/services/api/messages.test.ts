@@ -86,6 +86,26 @@ describe('messages API client', () => {
     expect(url).toContain('include_filter_options=false');
   });
 
+  it('getRecentRequests asks for five rows without count, facets, or Playground', async () => {
+    const fetchMock = setupFetch({ items: [] });
+
+    await messages.getRecentRequests('30d');
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/messages');
+    expect(url).toContain('range=30d');
+    expect(url).toContain('limit=5');
+    expect(url).toContain('include_total=false');
+    expect(url).toContain('include_filter_options=false');
+    expect(url).toContain('exclude_playground=true');
+  });
+
+  it('getRecentRequests defaults to 24h', async () => {
+    const fetchMock = setupFetch({ items: [] });
+    await messages.getRecentRequests();
+    expect(fetchMock.mock.calls[0][0] as string).toContain('range=24h');
+  });
+
   it('getMessageFilterOptions GETs filter metadata with agent scope', async () => {
     const fetchMock = setupFetch({ providers: [] });
     await messages.getMessageFilterOptions({ range: '30d', agent_name: 'demo' });

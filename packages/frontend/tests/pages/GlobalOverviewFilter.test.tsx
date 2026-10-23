@@ -14,7 +14,8 @@ const apiMocks = vi.hoisted(() => ({
   getGlobalProviders: vi.fn(),
   getGlobalProviderUsage: vi.fn(),
   getOverview: vi.fn(),
-  getOverviewDetails: vi.fn(),
+  getModelUsage: vi.fn(),
+  getRecentRequests: vi.fn(),
   getOverviewAgentUsage: vi.fn(),
   getOverviewProviderUsage: vi.fn(),
   getBillingStatus: vi.fn(),
@@ -24,6 +25,7 @@ const apiMocks = vi.hoisted(() => ({
 const sseMocks = vi.hoisted(() => ({
   bumpAgent: undefined as undefined | (() => void),
   bumpAnalytics: undefined as undefined | (() => void),
+  bumpMessage: undefined as undefined | (() => void),
   bumpRouting: undefined as undefined | (() => void),
   reset: undefined as undefined | (() => void),
 }));
@@ -58,6 +60,7 @@ vi.mock('../../src/services/api.js', async () => {
     getAgents: (...args: unknown[]) => apiMocks.getAgents(...args),
     getGlobalProviders: (...args: unknown[]) => apiMocks.getGlobalProviders(...args),
     getGlobalProviderUsage: (...args: unknown[]) => apiMocks.getGlobalProviderUsage(...args),
+    getRecentRequests: (...args: unknown[]) => apiMocks.getRecentRequests(...args),
     mergeUsage: providers.mergeUsage,
   };
 });
@@ -99,7 +102,7 @@ vi.mock('../../src/services/api/analytics.js', () => ({
       },
     ]),
   getOverview: (...args: unknown[]) => apiMocks.getOverview(...args),
-  getOverviewDetails: (...args: unknown[]) => apiMocks.getOverviewDetails(...args),
+  getModelUsage: (...args: unknown[]) => apiMocks.getModelUsage(...args),
   getOverviewAgentUsage: (...args: unknown[]) => apiMocks.getOverviewAgentUsage(...args),
   getOverviewProviderUsage: (...args: unknown[]) => apiMocks.getOverviewProviderUsage(...args),
   getAttemptStats: () =>
@@ -225,16 +228,19 @@ vi.mock('../../src/services/sse.js', async () => {
   const { createSignal } = await vi.importActual<typeof import('solid-js')>('solid-js');
   const [agentPing, setAgentPing] = createSignal(0);
   const [analyticsPing, setAnalyticsPing] = createSignal(0);
+  const [messagePing, setMessagePing] = createSignal(0);
   const [routingPing, setRoutingPing] = createSignal(0);
   sseMocks.bumpAgent = () => setAgentPing((n) => n + 1);
   sseMocks.bumpAnalytics = () => setAnalyticsPing((n) => n + 1);
+  sseMocks.bumpMessage = () => setMessagePing((n) => n + 1);
   sseMocks.bumpRouting = () => setRoutingPing((n) => n + 1);
   sseMocks.reset = () => {
     setAgentPing(0);
     setAnalyticsPing(0);
+    setMessagePing(0);
     setRoutingPing(0);
   };
-  return { agentPing, analyticsPing, routingPing };
+  return { agentPing, analyticsPing, messagePing, routingPing };
 });
 
 vi.mock('../../src/services/scroll-fade.js', () => ({
@@ -348,7 +354,8 @@ beforeEach(() => {
   apiMocks.getGlobalProviders.mockResolvedValue(providersResponse);
   apiMocks.getGlobalProviderUsage.mockResolvedValue({ providers: [] });
   apiMocks.getOverview.mockResolvedValue(overviewResponse);
-  apiMocks.getOverviewDetails.mockResolvedValue({});
+  apiMocks.getModelUsage.mockResolvedValue([]);
+  apiMocks.getRecentRequests.mockResolvedValue({ items: [] });
   apiMocks.getOverviewAgentUsage.mockResolvedValue(providerUsageTimeseries);
   apiMocks.getOverviewProviderUsage.mockResolvedValue(providerUsageTimeseries);
   apiMocks.getBillingStatus.mockResolvedValue({
@@ -374,7 +381,8 @@ describe('GlobalOverview filter onUnselectAll', () => {
     expect(apiMocks.getGlobalProviders).toHaveBeenCalledTimes(1);
     expect(apiMocks.getGlobalProviderUsage).toHaveBeenCalledTimes(1);
     expect(apiMocks.getOverviewProviderUsage).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(apiMocks.getOverviewDetails).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(1));
+    expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(1);
 
     sseMocks.bumpAnalytics?.();
 
@@ -383,7 +391,9 @@ describe('GlobalOverview filter onUnselectAll', () => {
     expect(apiMocks.getGlobalProviders).toHaveBeenCalledTimes(1);
     expect(apiMocks.getGlobalProviderUsage).toHaveBeenCalledTimes(2);
     expect(apiMocks.getOverviewProviderUsage).toHaveBeenCalledTimes(2);
-    expect(apiMocks.getOverviewDetails).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(2));
+    // Recent Requests follows the faster message feed, not the analytics ping.
+    expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(1);
   });
 
   it('shows the skeleton on a range change but not on a background ping refetch', async () => {
@@ -407,6 +417,44 @@ describe('GlobalOverview filter onUnselectAll', () => {
     rangeSelect.value = '24h';
     fireEvent.change(rangeSelect);
     await waitFor(() => expect(queryByTestId('global-overview-skeleton')).not.toBeNull());
+  });
+
+  it('loads Recent Requests and Model usage without waiting on the overview', async () => {
+    apiMocks.getOverview.mockReturnValue(new Promise(() => {}));
+    render(() => <GlobalOverview />);
+
+    await waitFor(() => expect(apiMocks.getRecentRequests).toHaveBeenCalledWith('7d'));
+    expect(apiMocks.getModelUsage).toHaveBeenCalledWith('7d');
+  });
+
+  it('refetches Recent Requests on a message ping only', async () => {
+    render(() => <GlobalOverview />);
+    await waitFor(() => expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(1));
+    expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(1);
+
+    sseMocks.bumpMessage?.();
+
+    await waitFor(() => expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(2));
+    expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(1);
+    expect(apiMocks.getOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a panel skeleton until each panel has its own data', async () => {
+    let resolveModels: (rows: unknown[]) => void = () => {};
+    apiMocks.getModelUsage.mockReturnValue(
+      new Promise((resolve) => {
+        resolveModels = resolve;
+      }),
+    );
+    const { container, queryAllByTestId, findByText } = render(() => <GlobalOverview />);
+
+    // Recent Requests resolves; Model usage is still loading.
+    await waitFor(() => expect(container.querySelector('.chart-card')).not.toBeNull());
+    await waitFor(() => expect(queryAllByTestId('panel-rows-skeleton')).toHaveLength(1));
+
+    resolveModels([]);
+    await findByText('No model data yet');
+    expect(queryAllByTestId('panel-rows-skeleton')).toHaveLength(0);
   });
 
   it('links the harness total-requests count to the agent-scoped Requests log', async () => {
