@@ -186,6 +186,12 @@ describe('resolveEndpointKey', () => {
     expect(known).toContain('opencode-go-responses');
     expect(known).toContain('opencode-zen');
     expect(known).toContain('opencode-zen-google');
+    expect(known).toContain('aicraft');
+  });
+
+  it('resolves aicraft to its canonical id and is case-insensitive', () => {
+    expect(resolveEndpointKey('aicraft')).toBe('aicraft');
+    expect(resolveEndpointKey('AICraft')).toBe('aicraft');
   });
 
   it('resolves ollama-cloud to ollama-cloud', () => {

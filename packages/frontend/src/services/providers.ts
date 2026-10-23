@@ -120,6 +120,11 @@ interface ProviderUIOverlay {
 }
 
 const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
+  aicraft: {
+    initial: 'Ai',
+    subtitle: 'OpenAI-compatible multi-model API gateway',
+    models: [],
+  },
   qwen: {
     initial: 'Al',
     subtitle: 'Qwen 3.7, DeepSeek, Kimi, GLM via Alibaba Cloud',
@@ -518,6 +523,7 @@ export function buildProviderDef(shared: SharedProviderEntry): ProviderDef {
 // Preserve previous ordering (alphabetical-ish by display name) so UI tests
 // that index into PROVIDERS don't shift.
 const PROVIDER_ORDER = [
+  'aicraft',
   'qwen',
   'anthropic',
   'bedrock',

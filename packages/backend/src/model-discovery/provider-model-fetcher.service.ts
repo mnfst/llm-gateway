@@ -907,6 +907,11 @@ const MANAGED_FREE_FETCHER_CONFIGS: Record<string, FetcherConfig> = Object.fromE
 );
 
 export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
+  aicraft: {
+    endpoint: 'https://aicraftapi.net/v1/models',
+    buildHeaders: bearerHeaders,
+    parse: parseOpenAI,
+  },
   openai: {
     endpoint: 'https://api.openai.com/v1/models',
     buildHeaders: bearerHeaders,

@@ -198,6 +198,13 @@ const MANAGED_FREE_ENDPOINTS: Record<string, ProviderEndpoint> = Object.fromEntr
 );
 
 export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
+  aicraft: {
+    baseUrl: 'https://aicraftapi.net',
+    buildHeaders: openaiHeaders,
+    buildPath: openaiPath,
+    format: 'openai',
+    ...openaiStreamUsage,
+  },
   openai: {
     baseUrl: 'https://api.openai.com',
     buildHeaders: openaiHeaders,
