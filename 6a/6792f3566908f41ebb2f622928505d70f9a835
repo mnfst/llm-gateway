@@ -1,0 +1,58 @@
+packages/backend/test/playground-exclusion.e2e-spec.ts
+  s_a4020250d749e0::t_86f3a20e87e62c 265-289
+packages/frontend/tests/pages/ProviderOverviewPages.test.tsx
+  s_a4020250d749e0::t_4034ff05016617 21-22,67,101,751-752,903-913
+  s_a4020250d749e0::t_ec7510b3716ba0 839-847
+packages/backend/src/analytics/controllers/overview.controller.spec.ts
+  s_a4020250d749e0::t_9fe12e33a54c80 235-255
+packages/frontend/src/services/api/messages.ts
+  s_a4020250d749e0::t_bcaab760a2a844 153,160-168
+  s_75023a3665dfd2::t_eb97afc2b8074a 169-170
+packages/frontend/tests/services/api/messages.test.ts
+  s_a4020250d749e0::t_cfd6f7d0a2732e 89-108
+packages/frontend/src/pages/GlobalOverview.tsx
+  s_a4020250d749e0::t_2aafbfa23190d9 155-169
+  s_a4020250d749e0::t_7777c8f1535868 22,30,55,266-290,843-853,881-888,974
+packages/frontend/tests/pages/GlobalOverviewFilter.test.tsx
+  s_a4020250d749e0::t_77b089ed7cc6d2 422-459
+  s_a4020250d749e0::t_d15087652beff0 17-18,28,63,105,231,235,240,243,357-358,384-385,394-396
+packages/frontend/tests/services/api/analytics.test.ts
+  s_a4020250d749e0::t_27537b38690d3c 60-74
+packages/backend/src/analytics/controllers/messages.controller.ts
+  s_a4020250d749e0::t_87820ac365cf60 68
+packages/backend/src/analytics/controllers/overview.controller.ts
+  s_a4020250d749e0::t_4f4c731a1fd65f 164-171
+packages/backend/src/analytics/controllers/messages.controller.spec.ts
+  s_a4020250d749e0::t_d32bbdec1aa9a7 130,154
+packages/frontend/src/services/api/analytics.ts
+  s_a4020250d749e0::t_996a7ca5d7e0b1 250-256
+.changeset/overview-panels-live.md
+  s_a4020250d749e0::t_859d23d754057f 2
+  s_a4020250d749e0::t_5cdea3d3390573 1,3-5
+packages/backend/src/analytics/dto/messages-query.dto.ts
+  s_a4020250d749e0::t_32912a04946930 180-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6a6792f3566908f41ebb2f622928505d70f9a835",
+  "prompts": {},
+  "sessions": {
+    "s_75023a3665dfd2": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bf891f97-db60-42dd-b8ef-f179d6188105",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    },
+    "s_a4020250d749e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5eae4a7b-e032-4e0e-a766-8d5556ad2366",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
