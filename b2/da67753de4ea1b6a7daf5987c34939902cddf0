@@ -1,0 +1,21 @@
+docker/Dockerfile
+  s_550f1a0e639145::t_aaf96de63fd0bf 75
+docker/Dockerfile.cloud
+  s_550f1a0e639145::t_aaf96de63fd0bf 79
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2da67753de4ea1b6a7daf5987c34939902cddf0",
+  "prompts": {},
+  "sessions": {
+    "s_550f1a0e639145": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d926d217-fd8a-498b-b88c-ff7f75f6fc85",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
