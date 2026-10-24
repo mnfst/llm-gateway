@@ -1,3 +1,5 @@
+import { resolveToolCallIndex } from './tool-call-index';
+
 export type Role = 'system' | 'user' | 'assistant' | 'tool' | 'unknown';
 
 export interface ToolCall {
@@ -346,6 +348,7 @@ function extractStreamResponse(rawSse: string): ChatMessage[] {
     function: { name?: string; arguments?: unknown };
   };
   const callsByKey = new Map<string, MutableToolCall>();
+  let latestChatCall: { index: number; id?: string; name?: string } | undefined;
 
   const callFor = (key: string): MutableToolCall => {
     const existing = callsByKey.get(key);
@@ -379,7 +382,7 @@ function extractStreamResponse(rawSse: string): ChatMessage[] {
     if (Array.isArray(delta?.tool_calls)) {
       for (const rawCall of delta.tool_calls) {
         if (!isRecord(rawCall)) continue;
-        const index = typeof rawCall.index === 'number' ? rawCall.index : 0;
+        const index = resolveToolCallIndex(rawCall, latestChatCall);
         const call = callFor(`chat:${index}`);
         if (typeof rawCall.id === 'string') call.id = rawCall.id;
         if (typeof rawCall.type === 'string') call.type = rawCall.type;
@@ -391,6 +394,7 @@ function extractStreamResponse(rawSse: string): ChatMessage[] {
             appendArguments(call, rawCall.function.arguments);
           }
         }
+        latestChatCall = { index, id: call.id, name: call.function.name };
       }
     }
     if (payload.type === 'response.output_text.delta' && typeof payload.delta === 'string') {

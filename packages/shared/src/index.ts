@@ -198,6 +198,7 @@ export {
   normalizeRole,
 } from './chat-message';
 export type { ChatMessage, ChatTool, RecordedResponseBody, Role, ToolCall } from './chat-message';
+export { resolveToolCallIndex } from './tool-call-index';
 export {
   CUSTOM_PROVIDER_ALIAS_MAX_LENGTH,
   CUSTOM_PROVIDER_ALIAS_MESSAGE,

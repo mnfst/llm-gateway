@@ -365,6 +365,34 @@ describe('recorded chat message helpers', () => {
     ]);
   });
 
+  it('keeps streamed tool calls apart when the provider omits their index', () => {
+    const messages = extractRecordedConversationMessages(
+      { messages: [{ role: 'user', content: 'Weather and time?' }] },
+      {
+        type: 'stream',
+        raw_sse: [
+          'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]}}]}',
+          'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\\"Paris\\"}"}}]}}]}',
+          'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{\\"tz\\":\\"CET\\"}"}}]}}]}',
+          'data: [DONE]',
+        ].join('\n\n'),
+      },
+    );
+
+    expect(messages[1]!.tool_calls).toEqual([
+      {
+        id: 'call_a',
+        type: 'function',
+        function: { name: 'get_weather', arguments: '{"city":"Paris"}' },
+      },
+      {
+        id: 'call_b',
+        type: 'function',
+        function: { name: 'get_time', arguments: '{"tz":"CET"}' },
+      },
+    ]);
+  });
+
   it('reconstructs Gemini streaming text from candidate parts', () => {
     expect(
       extractResponseMessages({
