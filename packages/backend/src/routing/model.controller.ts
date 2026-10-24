@@ -9,7 +9,7 @@ import { OllamaSyncService } from '../database/ollama-sync.service';
 import { PricingSyncService } from '../database/pricing-sync.service';
 import { ModelsDevSyncService } from '../database/models-dev-sync.service';
 import { RoutingCacheService } from './routing-core/routing-cache.service';
-import { resolveProviderMetadataIdentity } from 'manifest-shared';
+import { currentMinimaxModelChoices, resolveProviderMetadataIdentity } from 'manifest-shared';
 import {
   inputModalitiesFromCapabilities,
   resolveModelCapabilityMetadata,
@@ -131,7 +131,9 @@ export class ModelController {
     const agent = await this.resolveAgentService.resolve(ctx.tenantId, params.agentName, {
       allowPlayground: true,
     });
-    const models = await this.discoveryService.getModelsForAgent(agent.tenant_id, agent.id);
+    const models = currentMinimaxModelChoices(
+      await this.discoveryService.getModelsForAgent(agent.tenant_id, agent.id),
+    );
     // Resolved after the rows are built: whether two OpenCode Go ids are the
     // same model is a question about the names the picker prints, not the ids.
     const publishedGatewayIds = await publishedOpencodeGoIds(

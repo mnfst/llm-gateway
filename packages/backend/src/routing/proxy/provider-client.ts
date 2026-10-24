@@ -765,6 +765,13 @@ export class ProviderClient {
               thinkingLookup: ctx.thinkingLookup,
               thinkingRouteContext,
             });
+      if (endpointKey === 'minimax-subscription' && requestSource.reasoning_effort !== undefined) {
+        const outputConfig = (requestBody.output_config ?? {}) as Record<string, unknown>;
+        requestBody.output_config = {
+          effort: requestSource.reasoning_effort,
+          ...outputConfig,
+        };
+      }
       requestBody.model = bareModel;
       if (stream) requestBody.stream = true;
       if (shouldApplyAnthropicAutomaticCacheControl(endpointKey)) {

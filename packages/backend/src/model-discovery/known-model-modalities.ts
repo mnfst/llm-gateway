@@ -34,6 +34,7 @@ const TEXT_TOOLS: KnownCapabilities = {
 
 /** Keyed by `<provider-id>/<model-id>`, lowercase. */
 const KNOWN_MODEL_MODALITIES: Readonly<Record<string, KnownCapabilities>> = {
+  'minimax/minimax-m3.1-flash': TEXT_IMAGE_TOOLS,
   // ChatGPT subscription (Codex models API) publishes no modality metadata,
   // and models.dev lags behind new launches. These facts bootstrap the
   // subscription catalog until an upstream source carries them (#2537).

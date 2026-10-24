@@ -125,6 +125,7 @@ export {
   modelParamsScopeForTier,
 } from './model-params-scope';
 export type { ModelParamsRoutingScopeInput } from './model-params-scope';
+export { minimaxTextModelRank, currentMinimaxModelChoices } from './minimax-model-choices';
 export { API_KEY_PREFIX } from './api-key';
 export { MAX_KEYS_PER_PROVIDER } from './provider-limits';
 export {

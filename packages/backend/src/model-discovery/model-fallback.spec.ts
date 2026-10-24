@@ -21,6 +21,33 @@ function makePricingSync(
 }
 
 describe('buildFallbackModels', () => {
+  it('uses native MiniMax IDs without importing gateway free pricing', () => {
+    const pricing = makePricingSync(
+      new Map([
+        ['minimax/minimax-m3.1-flash:free', { input: 0, output: 0, contextWindow: 512000 }],
+        ['minimax/minimax-m3', { input: 0.000001, output: 0.000004 }],
+        ['minimax/minimax-m2.7', { input: 0.000001, output: 0.000002 }],
+      ]),
+    );
+    const models = buildFallbackModels(pricing, 'minimax');
+    expect(models.map((model) => model.id)).toEqual([
+      'MiniMax-M3.1-Flash',
+      'MiniMax-M3',
+      'minimax-m2.7',
+    ]);
+    expect(models[0]).toMatchObject({ inputPricePerToken: null, outputPricePerToken: null });
+    expect(lookupWithVariants(pricing, 'minimax', 'minimax-m3.1-flash')).toBeNull();
+    expect(buildSubscriptionFallbackModels('minimax')[0]).toMatchObject({
+      id: 'MiniMax-M3.1-Flash',
+      contextWindow: 1000000,
+    });
+    expect(buildSubscriptionFallbackModels('minimax', 'cn').map((m) => m.id)).not.toContain(
+      'MiniMax-M3.1-Flash',
+    );
+    expect(supplementWithKnownModels([], 'minimax', 'cn').map((m) => m.id)).not.toContain(
+      'MiniMax-M3.1-Flash',
+    );
+  });
   it('should return models from OpenRouter cache for the given provider', () => {
     const cache = new Map([
       ['openai/gpt-4o', { input: 0.01, output: 0.02, displayName: 'GPT-4o' }],
@@ -363,6 +390,7 @@ describe('buildSubscriptionFallbackModels', () => {
 
   it('preserves curated model casing', () => {
     expect(buildSubscriptionFallbackModels('minimax').map((model) => model.id)).toEqual([
+      'MiniMax-M3.1-Flash',
       'MiniMax-M3',
       'MiniMax-M2.7',
       'MiniMax-M2.7-highspeed',
