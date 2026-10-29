@@ -1,0 +1,32 @@
+packages/shared/__tests__/tool-call-index.spec.ts
+  s_39fc49f3722d35::t_e1be64062feef2 28
+  s_39fc49f3722d35::t_a31c60601624b6 27
+  s_39fc49f3722d35::t_2fab49b63e2f5b 26
+packages/shared/src/chat-message.ts
+  s_39fc49f3722d35::t_73c5dde1bf605f 351,397
+packages/backend/src/routing/proxy/anthropic-messages-adapter.ts
+  s_39fc49f3722d35::t_2fab49b63e2f5b 604-606
+  s_39fc49f3722d35::t_73c5dde1bf605f 448-453,591-600,607
+.changeset/keep-unindexed-tool-calls-apart.md
+  s_39fc49f3722d35::t_73c5dde1bf605f 5
+packages/shared/src/tool-call-index.ts
+  s_39fc49f3722d35::t_73c5dde1bf605f 5-7,10-11,16
+packages/shared/__tests__/chat-message.spec.ts
+  s_39fc49f3722d35::t_2fab49b63e2f5b 396-413
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "81b82a1582f0198814733f913048aca46760bb78",
+  "prompts": {},
+  "sessions": {
+    "s_39fc49f3722d35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ccd1c93-37fb-4fbd-a350-3fc431fb5662",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
