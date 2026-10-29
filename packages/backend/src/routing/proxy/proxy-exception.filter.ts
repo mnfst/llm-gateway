@@ -111,7 +111,7 @@ export class ProxyExceptionFilter implements ExceptionFilter {
     ) {
       const { limit, used } = billingResponse as { limit?: number; used?: number };
       const upgradeUrl = `${getDashboardUrl(this.config)}/upgrade?reason=requests`;
-      const content = formatManifestError('M204', { threshold: limit ?? 0, upgradeUrl });
+      const content = formatManifestError('M204', { upgradeUrl });
       const isStream = (req.body as Record<string, unknown>)?.stream === true;
       if (isChatRenderingClient(req)) {
         sendFriendlyResponse(res, content, isStream);

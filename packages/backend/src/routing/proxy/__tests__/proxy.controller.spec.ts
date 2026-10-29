@@ -1087,7 +1087,7 @@ describe('ProxyController', () => {
       req.ingestionContext,
       expect.objectContaining({
         httpStatus: 402,
-        errorMessage: 'Free plan monthly request limit reached',
+        errorMessage: 'Manifest Cloud subscription required',
         reason: 'plan_request_limit_exceeded',
         model: 'auto',
       }),

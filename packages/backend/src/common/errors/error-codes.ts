@@ -59,10 +59,9 @@ export const MANIFEST_ERRORS = {
     template: 'Too many concurrent requests. Give it a moment.',
   },
   M204: {
-    title: 'Monthly request limit reached',
+    title: 'Subscription required',
     template:
-      "You've used all {threshold} requests included this month on the Free plan. " +
-      'Upgrade to Pro for unlimited requests: {upgradeUrl}',
+      'Manifest Cloud needs a Pro subscription to route requests. Subscribe here: {upgradeUrl}',
   },
   M300: {
     title: 'Missing messages array',
