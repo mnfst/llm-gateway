@@ -34,8 +34,3 @@ export function currentMinimaxModelChoices<T extends { provider: string; id: str
       (minimaxTextModelRank(a.provider, a.id) ?? 2) - (minimaxTextModelRank(b.provider, b.id) ?? 2),
   );
 }
-
-/** MiniMax documents `reasoning_effort` for M3 and M3.1 Flash only. */
-export function minimaxSupportsReasoningEffort(model: string): boolean {
-  return minimaxTextModelRank('minimax', model) !== null;
-}

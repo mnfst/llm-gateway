@@ -1,8 +1,4 @@
-import {
-  currentMinimaxModelChoices,
-  minimaxSupportsReasoningEffort,
-  minimaxTextModelRank,
-} from '../src/minimax-model-choices';
+import { currentMinimaxModelChoices, minimaxTextModelRank } from '../src/minimax-model-choices';
 
 describe('MiniMax advertised text choices', () => {
   it.each([
@@ -45,14 +41,5 @@ describe('MiniMax advertised text choices', () => {
     ]);
     expect(models).toEqual(snapshot);
     expect(currentMinimaxModelChoices([])).toEqual([]);
-  });
-
-  it.each([
-    ['MiniMax-M3.1-Flash', true],
-    ['minimax/MiniMax-M3', true],
-    ['MiniMax-M2.7', false],
-    ['MiniMax-M2.7-highspeed', false],
-  ])('%s supports reasoning_effort: %s', (model, expected) => {
-    expect(minimaxSupportsReasoningEffort(model)).toBe(expected);
   });
 });

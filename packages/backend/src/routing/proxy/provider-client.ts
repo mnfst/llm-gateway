@@ -1,5 +1,4 @@
 import { createHash } from 'crypto';
-import { minimaxSupportsReasoningEffort } from 'manifest-shared';
 import { HttpStatus, Injectable, Logger, Optional } from '@nestjs/common';
 import { OPENAI_RESPONSES_ONLY_RE, stripVendorPrefix } from '../../common/constants/openai-models';
 import { XAI_RESPONSES_ONLY_RE } from '../../common/constants/xai-models';
@@ -766,11 +765,7 @@ export class ProviderClient {
               thinkingLookup: ctx.thinkingLookup,
               thinkingRouteContext,
             });
-      if (
-        endpointKey === 'minimax-subscription' &&
-        requestSource.reasoning_effort !== undefined &&
-        minimaxSupportsReasoningEffort(bareModel)
-      ) {
+      if (endpointKey === 'minimax-subscription' && requestSource.reasoning_effort !== undefined) {
         const outputConfig = (requestBody.output_config ?? {}) as Record<string, unknown>;
         requestBody.output_config = {
           effort: requestSource.reasoning_effort,
