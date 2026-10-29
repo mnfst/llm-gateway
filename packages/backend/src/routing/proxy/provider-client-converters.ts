@@ -1,3 +1,4 @@
+import { minimaxSupportsReasoningEffort } from 'manifest-shared';
 import {
   toGoogleRequest,
   fromGoogleResponse,
@@ -391,13 +392,14 @@ export function sanitizeOpenAiBody(
       cleaned[key] = value;
       continue;
     }
-    // These compatible hosts implement `reasoning_effort`; preserve the caller's
-    // value and let the provider validate its model-specific supported levels.
+    // xAI, DeepSeek and MiniMax M3/M3.1 Flash implement `reasoning_effort`; keep
+    // it there. Every other non-passthrough provider gets the OpenAI-only field
+    // stripped below.
     if (
       key === 'reasoning_effort' &&
       (endpointKey === 'xai' ||
         endpointKey === 'deepseek' ||
-        endpointKey === 'minimax' ||
+        (endpointKey === 'minimax' && minimaxSupportsReasoningEffort(bareForRegex)) ||
         options.forwardReasoningEffort)
     ) {
       cleaned[key] = value;

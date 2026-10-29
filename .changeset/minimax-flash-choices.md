@@ -2,4 +2,4 @@
 'manifest': patch
 ---
 
-Recommend MiniMax M3.1 Flash before M3 in model choices while preserving saved legacy routes. Preserve MiniMax reasoning effort through direct and subscription HTTP requests, and keep Flash image input available when capability catalogs lag.
+List MiniMax M3.1 Flash, then M3, first in model choices without hiding other MiniMax models. Forward reasoning effort to MiniMax M3 and M3.1 Flash on direct and subscription HTTP requests, and keep Flash image input available when capability catalogs lag.

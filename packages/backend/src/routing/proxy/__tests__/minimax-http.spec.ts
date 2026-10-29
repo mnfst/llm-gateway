@@ -123,6 +123,27 @@ describe('MiniMax HTTP boundary', () => {
     },
   );
 
+  it('strips reasoning_effort for MiniMax models that do not document it', async () => {
+    await client.forward({
+      provider: 'minimax',
+      apiKey: 'test-not-a-secret',
+      model: 'MiniMax-M2.7',
+      body: { messages: [{ role: 'user', content: 'hello' }], reasoning_effort: 'high' },
+      stream: false,
+    });
+    expect(received[0].body).not.toHaveProperty('reasoning_effort');
+
+    await client.forward({
+      provider: 'minimax',
+      authType: 'subscription',
+      apiKey: 'test-not-a-secret',
+      model: 'MiniMax-M2.7',
+      body: { messages: [{ role: 'user', content: 'hello' }], reasoning_effort: 'high' },
+      stream: false,
+    });
+    expect(received[1].body.output_config?.effort).toBeUndefined();
+  });
+
   it('preserves native Anthropic thinking, effort, images and signed tool history', async () => {
     const nativeMessages = [
       {

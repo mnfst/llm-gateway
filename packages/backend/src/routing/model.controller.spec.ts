@@ -116,6 +116,7 @@ describe('ModelController', () => {
     expect(rows.map((row) => row.model_name)).toEqual([
       'MiniMax-M3.1-Flash',
       'MiniMax-M3',
+      'MiniMax-M2.7',
       'custom:test/MiniMax-M2.7',
     ]);
     expect(models[0].id).toBe('MiniMax-M2.7');
