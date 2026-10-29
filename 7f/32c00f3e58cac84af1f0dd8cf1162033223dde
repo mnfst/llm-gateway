@@ -1,0 +1,34 @@
+packages/backend/src/model-discovery/model-fallback.spec.ts
+  s_c722c9cf6b4474::t_cc6f0d44a2c72f 62-69
+  s_c722c9cf6b4474::t_b991c00cddbd31 51-61,70
+packages/backend/src/routing/proxy/provider-client-converters.ts
+  s_c722c9cf6b4474::t_e2204f851c70e7 342-347,407
+packages/backend/src/routing/proxy/__tests__/minimax-http.spec.ts
+  s_c722c9cf6b4474::t_cc6f0d44a2c72f 126-171
+packages/backend/src/routing/proxy/provider-client.ts
+  s_c722c9cf6b4474::t_19e628bda8ae2b 714
+  s_c722c9cf6b4474::t_e2204f851c70e7 769-771,777,903
+packages/backend/src/model-discovery/model-fallback.ts
+  s_c722c9cf6b4474::t_a9e8774d89d102 33
+  s_c722c9cf6b4474::t_19e628bda8ae2b 250-252,265-267
+  s_c722c9cf6b4474::t_30288c9ddb547d 275,292-299
+  s_c722c9cf6b4474::t_510913c30f392b 305,315-318
+packages/backend/src/model-discovery/model-discovery.service.spec.ts
+  s_c722c9cf6b4474::t_b991c00cddbd31 2156-2179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7f32c00f3e58cac84af1f0dd8cf1162033223dde",
+  "prompts": {},
+  "sessions": {
+    "s_c722c9cf6b4474": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7b64759-68c3-4053-9310-ef277962286d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
