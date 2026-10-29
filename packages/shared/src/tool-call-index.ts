@@ -3,8 +3,9 @@
  *
  * Providers stream `delta.tool_calls[].index`, but some OpenAI-compatible ones (Gemini's
  * endpoint, for example) leave it out and send each call whole in its own chunk, each with its
- * own id. Without an index, a delta starts the next call when it brings a new id; anything else
- * continues the latest call, so argument and name fragments still merge.
+ * own id. Without an index, a delta starts the next call when it brings an id that differs from
+ * the latest call's id (a latest call with no id yet takes it instead); anything else continues
+ * the latest call, so argument and name fragments still merge.
  */
 export function resolveToolCallIndex(
   delta: { index?: unknown; id?: unknown },
