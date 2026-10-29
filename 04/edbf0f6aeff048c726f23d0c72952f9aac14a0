@@ -1,0 +1,45 @@
+packages/backend/src/routing/proxy/__tests__/minimax-http.spec.ts
+  s_c722c9cf6b4474::t_c8ca7409ea2ddd 126-146
+packages/backend/src/routing/proxy/provider-client.ts
+  s_c722c9cf6b4474::t_f31a99f29c0a54 2
+  s_c722c9cf6b4474::t_ccb0f9a4494e76 769-773
+packages/backend/src/routing/model.controller.spec.ts
+  s_c722c9cf6b4474::t_c8ca7409ea2ddd 119
+packages/shared/src/minimax-model-choices.ts
+  s_c722c9cf6b4474::t_f45e34bb0b081a 1-5,15,22,25-28,32-33,35-40
+  s_c722c9cf6b4474::t_b41ca3b5df6705 34
+packages/shared/__tests__/minimax-model-choices.spec.ts
+  s_c722c9cf6b4474::t_1eef6bda2138d4 1-5,11-12,16,20-22,28,33,41,49-56
+  s_b3281d9a5b58e8::t_91c54822c024e9 57
+packages/backend/src/routing/proxy/provider-client-converters.ts
+  s_c722c9cf6b4474::t_ccb0f9a4494e76 395-397,402
+  s_c722c9cf6b4474::t_f31a99f29c0a54 1
+packages/shared/src/index.ts
+  s_c722c9cf6b4474::t_1ab5244ed8219c 128-132
+.changeset/minimax-flash-choices.md
+  s_c722c9cf6b4474::t_f278f54e4ededf 5
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04edbf0f6aeff048c726f23d0c72952f9aac14a0",
+  "prompts": {},
+  "sessions": {
+    "s_b3281d9a5b58e8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "884f606f-eeca-481e-90a3-332dac40b618",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    },
+    "s_c722c9cf6b4474": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7b64759-68c3-4053-9310-ef277962286d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
