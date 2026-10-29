@@ -1,5 +1,13 @@
 # manifest
 
+## 6.28.11
+
+### Patch Changes
+
+- 698a3b0: Show compact token counts with the right unit and no trailing `.0` on the dashboard. A count from 999,950 to 999,999 was shown as `1000.0k` instead of `1M`, and a count that rounds to a whole number was shown as `1.0k` or `2.0M` instead of `1k` or `2M`.
+- 7264e2c: Keep parallel tool calls apart when a provider streams them without an index, in recorded conversations and in the /v1/messages and /v1/responses translations. A delta without an index starts the next call when it brings a new id.
+- 71dce7d: List MiniMax M3.1 Flash, then M3, first in model choices without hiding other MiniMax models. Forward reasoning effort to MiniMax on direct and subscription HTTP requests, and keep Flash image input available when capability catalogs lag.
+
 ## 6.28.10
 
 ### Patch Changes
