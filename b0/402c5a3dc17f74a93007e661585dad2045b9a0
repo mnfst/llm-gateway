@@ -1,0 +1,19 @@
+packages/shared/src/tool-call-index.ts
+  s_39fc49f3722d35::t_6288fb1c022566 6-8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b0402c5a3dc17f74a93007e661585dad2045b9a0",
+  "prompts": {},
+  "sessions": {
+    "s_39fc49f3722d35": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2ccd1c93-37fb-4fbd-a350-3fc431fb5662",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
