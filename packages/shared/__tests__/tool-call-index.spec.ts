@@ -1,0 +1,30 @@
+import { resolveToolCallIndex } from '../src/tool-call-index';
+
+describe('resolveToolCallIndex', () => {
+  it('uses the index the provider sent', () => {
+    expect(resolveToolCallIndex({ index: 2, id: 'call_c' }, { index: 0, id: 'call_a' })).toBe(2);
+  });
+
+  it('places the first call without an index at 0', () => {
+    expect(resolveToolCallIndex({ id: 'call_a' }, undefined)).toBe(0);
+  });
+
+  it('starts the next call when an index-less delta brings a new id', () => {
+    expect(resolveToolCallIndex({ id: 'call_b' }, { index: 0, id: 'call_a' })).toBe(1);
+  });
+
+  it('continues the latest call when an index-less delta has no id or the same id', () => {
+    expect(resolveToolCallIndex({}, { index: 1, id: 'call_b' })).toBe(1);
+    expect(resolveToolCallIndex({ id: '' }, { index: 1, id: 'call_b' })).toBe(1);
+    expect(resolveToolCallIndex({ id: 'call_b' }, { index: 1, id: 'call_b' })).toBe(1);
+  });
+
+  it('continues the latest call when that call has no id yet', () => {
+    expect(resolveToolCallIndex({ id: 'call_a' }, { index: 0 })).toBe(0);
+  });
+
+  it('continues the latest call when an index-less delta brings a name fragment without an id', () => {
+    const delta: { id?: string; function: unknown } = { function: { name: 'weather' } };
+    expect(resolveToolCallIndex(delta, { index: 0, id: 'call_a' })).toBe(0);
+  });
+});

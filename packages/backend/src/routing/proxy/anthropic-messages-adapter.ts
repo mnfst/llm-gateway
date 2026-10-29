@@ -5,6 +5,7 @@
  * for the OpenAI Responses API.
  */
 import { randomUUID } from 'crypto';
+import { resolveToolCallIndex } from 'manifest-shared';
 
 import { OpenAIMessage } from './proxy-types';
 
@@ -444,7 +445,12 @@ interface StreamState {
   thinkingOpened: boolean;
   textIndex: number | null;
   textOpened: boolean;
-  toolCalls: Map<number, { id: string; index: number; argBuffer: string; opened: boolean }>;
+  toolCalls: Map<
+    number,
+    { id: string; upstreamId?: string; index: number; argBuffer: string; opened: boolean }
+  >;
+  // Upstream index of the latest tool call delta, used to place deltas that carry no index.
+  latestToolCallIndex?: number;
   // Monotonic counter — block indices must keep increasing across the whole
   // stream, including across reopens of the same kind.
   nextBlockIndexCounter: number;
@@ -582,14 +588,23 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
       closeTextBlock(state, events);
       for (const call of delta.tool_calls) {
         if (!isRecord(call)) continue;
-        const callIndex = typeof call.index === 'number' ? call.index : 0;
+        const upstreamId = typeof call.id === 'string' && call.id !== '' ? call.id : undefined;
+        const latest =
+          state.latestToolCallIndex === undefined
+            ? undefined
+            : {
+                index: state.latestToolCallIndex,
+                id: state.toolCalls.get(state.latestToolCallIndex)?.upstreamId,
+              };
+        const callIndex = resolveToolCallIndex(call, latest);
+        state.latestToolCallIndex = callIndex;
         let entry = state.toolCalls.get(callIndex);
         if (!entry) {
           entry = {
-            id:
-              typeof call.id === 'string' && call.id !== ''
-                ? sanitizeToolUseId(call.id)
-                : `toolu_${randomUUID().replace(/-/g, '')}`,
+            id: upstreamId
+              ? sanitizeToolUseId(upstreamId)
+              : `toolu_${randomUUID().replace(/-/g, '')}`,
+            upstreamId,
             index: nextBlockIndex(state),
             argBuffer: '',
             opened: false,

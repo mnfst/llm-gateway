@@ -1312,6 +1312,30 @@ describe('Responses adapter', () => {
       expect(delta.delta).toBe('Hello');
     });
 
+    it('keeps parallel tool calls apart when the provider omits tool call indexes', () => {
+      const t = createResponsesStreamTransformer('gemini-3.8-flash');
+      const out = [
+        '{"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{\\"id\\":1}"}}]}}]}',
+        '{"choices":[{"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"weather","arguments":"{\\"city\\":\\"Paris\\"}"}}]}}]}',
+        '{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+      ]
+        .map((chunk) => t.transform(chunk) ?? '')
+        .join('');
+      const end = out + (t.finalize() ?? '');
+
+      const completed = firstEventData(end, 'response.completed')!;
+      expect(
+        completed.response.output.map((item: Record<string, unknown>) => [
+          item.call_id,
+          item.name,
+          item.arguments,
+        ]),
+      ).toEqual([
+        ['call_a', 'lookup', '{"id":1}'],
+        ['call_b', 'weather', '{"city":"Paris"}'],
+      ]);
+    });
+
     it('opens the item exactly once across multiple deltas', () => {
       const t = createResponsesStreamTransformer('gpt-4o');
       t.transform('{"choices":[{"delta":{"content":"Hel"}}]}');
