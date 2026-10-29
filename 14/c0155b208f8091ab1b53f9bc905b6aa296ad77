@@ -1,0 +1,27 @@
+packages/shared/src/index.ts
+  s_c722c9cf6b4474::t_d8c975b2de3f6b 128
+.changeset/minimax-flash-choices.md
+  s_c722c9cf6b4474::t_2abe0f9ed92af1 5
+packages/backend/src/routing/proxy/provider-client-converters.ts
+  s_c722c9cf6b4474::t_06ea4f424262f3 394-396,401
+packages/backend/src/routing/proxy/provider-client.ts
+  s_c722c9cf6b4474::t_e82488e90052b7 768
+packages/shared/__tests__/minimax-model-choices.spec.ts
+  s_c722c9cf6b4474::t_20d1b2f48cdb50 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "14c0155b208f8091ab1b53f9bc905b6aa296ad77",
+  "prompts": {},
+  "sessions": {
+    "s_c722c9cf6b4474": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7b64759-68c3-4053-9310-ef277962286d",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
