@@ -339,6 +339,12 @@ export interface SanitizeOpenAiBodyOptions {
    * without one.
    */
   forwardReasoningEffort?: boolean;
+  /**
+   * The provider implements `reasoning_effort` but is reached through an
+   * endpoint key the allow-list cannot name (MiniMax CN uses a `custom`
+   * override). Keep the caller's value; never inject one.
+   */
+  keepReasoningEffort?: boolean;
 }
 
 /**
@@ -398,7 +404,7 @@ export function sanitizeOpenAiBody(
       key === 'reasoning_effort' &&
       (endpointKey === 'xai' ||
         endpointKey === 'deepseek' ||
-        endpointKey === 'minimax' ||
+        options.keepReasoningEffort ||
         options.forwardReasoningEffort)
     ) {
       cleaned[key] = value;

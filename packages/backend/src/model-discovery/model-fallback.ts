@@ -30,7 +30,7 @@ interface PricingLookup {
 function normalizeProviderModelId(providerId: string, modelId: string): string {
   if (providerId.toLowerCase() === 'minimax') {
     if (/^minimax-m3\.1-flash(?::free)?$/i.test(modelId)) return 'MiniMax-M3.1-Flash';
-    if (/^minimax-m3$/i.test(modelId)) return 'MiniMax-M3';
+    if (/^minimax-m3(?::free)?$/i.test(modelId)) return 'MiniMax-M3';
   }
   return providerId.toLowerCase() === 'anthropic'
     ? normalizeAnthropicShortModelId(modelId)
@@ -247,6 +247,9 @@ export function buildFallbackModels(
   if (!pricingSync) return [];
   const models: DiscoveredModel[] = [];
   const seen = new Set<string>();
+  // MiniMax rows that came from an OpenRouter `:free` route; a direct-priced row
+  // for the same model replaces them.
+  const minimaxFreeIndex = new Map<string, number>();
   const hasConfirmed = confirmedModels != null && confirmedModels.size > 0;
 
   const orPrefix = findOpenRouterPrefix(providerId);
@@ -259,7 +262,9 @@ export function buildFallbackModels(
     // never through the synchronous chat completions proxy.
     if (fullId.endsWith(':batch')) continue;
     const modelId = normalizeProviderModelId(providerId, fullId.substring(orPrefix.length + 1));
-    if (seen.has(modelId)) continue;
+    const minimaxFreeRoute = providerId.toLowerCase() === 'minimax' && fullId.endsWith(':free');
+    const freeIndex = minimaxFreeIndex.get(modelId);
+    if (seen.has(modelId) && (freeIndex === undefined || minimaxFreeRoute)) continue;
 
     if (hasConfirmed && !confirmedModels!.has(modelId.toLowerCase())) continue;
     if (isMeta && !META_FALLBACK_MODEL_IDS.has(modelId)) continue;
@@ -267,8 +272,7 @@ export function buildFallbackModels(
     seen.add(modelId);
     const metaModel = isMeta ? META_MODEL_API_MODEL_BY_ID.get(modelId) : undefined;
     // An OpenRouter free route verifies the model name, not direct API pricing.
-    const minimaxFreeRoute = providerId.toLowerCase() === 'minimax' && fullId.endsWith(':free');
-    models.push({
+    const model: DiscoveredModel = {
       id: modelId,
       displayName: metaModel?.displayName ?? entry.displayName ?? modelId,
       provider: providerId,
@@ -285,16 +289,20 @@ export function buildFallbackModels(
           }
         : {}),
       qualityScore: 3,
-    });
+    };
+    if (freeIndex === undefined) {
+      if (minimaxFreeRoute) minimaxFreeIndex.set(modelId, models.length);
+      models.push(model);
+    } else {
+      models[freeIndex] = model;
+      minimaxFreeIndex.delete(modelId);
+    }
   }
 
   return models;
 }
 
-/**
- * Build a curated fallback model list for subscription providers.
- * Model availability comes exclusively from the provider's knownModels list.
- */
+/** The provider's curated subscription model IDs, narrowed by region. */
 function subscriptionModelIds(providerId: string, region?: string | null) {
   const models = getSubscriptionKnownModels(providerId);
   // Flash is confirmed for the international M Plan. Do not infer domestic
@@ -304,6 +312,10 @@ function subscriptionModelIds(providerId: string, region?: string | null) {
     : models;
 }
 
+/**
+ * Build a curated fallback model list for subscription providers.
+ * Model availability comes exclusively from the provider's knownModels list.
+ */
 export function buildSubscriptionFallbackModels(
   providerId: string,
   region?: string | null,

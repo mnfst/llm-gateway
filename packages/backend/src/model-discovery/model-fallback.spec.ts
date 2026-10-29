@@ -48,6 +48,26 @@ describe('buildFallbackModels', () => {
       'MiniMax-M3.1-Flash',
     );
   });
+  it('keeps direct MiniMax pricing when a :free route for the same model comes first', () => {
+    const pricing = makePricingSync(
+      new Map([
+        ['minimax/minimax-m3.1-flash:free', { input: 0, output: 0 }],
+        ['minimax/minimax-m3', { input: 0.000001, output: 0.000004 }],
+        ['minimax/minimax-m3.1-flash', { input: 0.0000002, output: 0.0000011 }],
+        ['minimax/minimax-m3:free', { input: 0, output: 0 }],
+      ]),
+    );
+    const models = buildFallbackModels(pricing, 'minimax');
+    expect(models.map((model) => model.id)).toEqual(['MiniMax-M3.1-Flash', 'MiniMax-M3']);
+    expect(models[0]).toMatchObject({
+      inputPricePerToken: 0.0000002,
+      outputPricePerToken: 0.0000011,
+    });
+    expect(models[1]).toMatchObject({
+      inputPricePerToken: 0.000001,
+      outputPricePerToken: 0.000004,
+    });
+  });
   it('should return models from OpenRouter cache for the given provider', () => {
     const cache = new Map([
       ['openai/gpt-4o', { input: 0.01, output: 0.02, displayName: 'GPT-4o' }],

@@ -123,6 +123,52 @@ describe('MiniMax HTTP boundary', () => {
     },
   );
 
+  it('forwards effort for every MiniMax model, not only M3 and Flash', async () => {
+    await client.forward({
+      provider: 'minimax',
+      apiKey: 'test-not-a-secret',
+      model: 'MiniMax-M2.7',
+      body: { messages: [{ role: 'user', content: 'hello' }], reasoning_effort: 'high' },
+      stream: false,
+    });
+    expect(received[0].body.reasoning_effort).toBe('high');
+  });
+
+  it.each([
+    ['minimax', 'high'],
+    ['custom:tenant', undefined],
+  ])('keeps effort through a CN-style custom endpoint only for %s', async (provider, expected) => {
+    await client.forward({
+      provider,
+      apiKey: 'test-not-a-secret',
+      model: 'MiniMax-M3',
+      customEndpoint: PROVIDER_ENDPOINTS.minimax,
+      body: { messages: [{ role: 'user', content: 'hello' }], reasoning_effort: 'high' },
+      stream: false,
+    });
+    expect(received[0].body.reasoning_effort).toBe(expected);
+  });
+
+  it('maps effort on a CN-style subscription override and drops the OpenAI field', async () => {
+    await client.forward({
+      provider: 'minimax',
+      authType: 'subscription',
+      apiKey: 'test-not-a-secret',
+      model: 'MiniMax-M3',
+      apiMode: 'messages',
+      customEndpoint: PROVIDER_ENDPOINTS['minimax-subscription'],
+      stream: false,
+      body: {
+        messages: [{ role: 'user', content: 'hello' }],
+        max_tokens: 64,
+        reasoning_effort: 'low',
+      },
+    });
+    expect(received[0].path).toBe('/anthropic/v1/messages');
+    expect(received[0].body.output_config).toEqual({ effort: 'low' });
+    expect(received[0].body).not.toHaveProperty('reasoning_effort');
+  });
+
   it('preserves native Anthropic thinking, effort, images and signed tool history', async () => {
     const nativeMessages = [
       {

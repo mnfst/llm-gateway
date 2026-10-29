@@ -2153,6 +2153,30 @@ describe('ModelDiscoveryService', () => {
       );
     });
 
+    it('leaves Flash out of the curated list for a MiniMax OAuth token on the CN host', async () => {
+      mockDecrypt.mockReturnValue(
+        JSON.stringify({
+          t: 'minimax-access',
+          r: 'minimax-refresh',
+          e: Date.now() + 60000,
+          u: 'https://api.minimaxi.com/anthropic',
+        }),
+      );
+      fetcher.fetch.mockResolvedValue([]);
+
+      const result = await service.discoverModels(
+        makeProvider({
+          provider: 'minimax',
+          auth_type: 'subscription',
+          api_key_encrypted: 'encrypted-blob',
+        }),
+      );
+
+      const ids = result.map((model) => model.id);
+      expect(ids).toContain('MiniMax-M3');
+      expect(ids).not.toContain('MiniMax-M3.1-Flash');
+    });
+
     it('routes pasted-token MiniMax CN subscription discovery to the CN host', async () => {
       // Pasted sk-cp- token: not a JSON blob, region=cn stored alongside
       mockDecrypt.mockReturnValue('sk-cp-cn-token');

@@ -711,6 +711,7 @@ export class ProviderClient {
     // Native matching targets read `body` directly. Cross-protocol targets
     // receive the lazily resolved Chat Completions view as `chatBody`.
     const requestSource = chatBody ?? body;
+    const isMinimax = ctx.provider.toLowerCase() === 'minimax';
 
     if (endpoint.format === 'google') {
       // Google accepts the API key via header (set by buildHeaders below) so
@@ -765,12 +766,15 @@ export class ProviderClient {
               thinkingLookup: ctx.thinkingLookup,
               thinkingRouteContext,
             });
-      if (endpointKey === 'minimax-subscription' && requestSource.reasoning_effort !== undefined) {
+      // MiniMax's Messages API takes effort as `output_config.effort`. Matched by
+      // provider, not endpoint key, so the CN override (`custom`) is covered.
+      if (isMinimax && requestSource.reasoning_effort !== undefined) {
         const outputConfig = (requestBody.output_config ?? {}) as Record<string, unknown>;
         requestBody.output_config = {
           effort: requestSource.reasoning_effort,
           ...outputConfig,
         };
+        delete requestBody.reasoning_effort;
       }
       requestBody.model = bareModel;
       if (stream) requestBody.stream = true;
@@ -896,6 +900,7 @@ export class ProviderClient {
     const sanitized = sanitizeOpenAiBody(requestSource, endpointKey, ctx.model, {
       requireMaxCompletionTokens: isBedrockRuntimeGpt,
       forwardReasoningEffort: isBedrockRuntimeGpt,
+      keepReasoningEffort: isMinimax,
     });
     if (stream && endpoint.streamUsageReporting === 'openai_stream_options') {
       const existing =
