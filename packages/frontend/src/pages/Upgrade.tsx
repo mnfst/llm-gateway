@@ -198,9 +198,9 @@ const Upgrade: Component = () => {
                   </section>
 
                   <section class="settings-card upgrade-plan-card upgrade-plan-card--pro">
-                    <span class="upgrade-plan-card__badge">Popular</span>
                     <div class="upgrade-plan-card__header">
                       <h2>Manifest Cloud</h2>
+                      <span class="upgrade-plan-card__badge">Popular</span>
                     </div>
                     <div class="upgrade-plan-card__price">
                       <span class="upgrade-plan-card__amount">{proPrice()}</span>

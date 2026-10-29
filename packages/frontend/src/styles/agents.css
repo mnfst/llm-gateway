@@ -482,10 +482,14 @@
   z-index: 1;
 }
 
+.upgrade-plan-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
 .upgrade-plan-card__badge {
-  position: absolute;
-  top: var(--gap-md);
-  right: var(--gap-md);
   padding: 3px 5px;
   border-radius: 2px;
   background: #2632ef;
