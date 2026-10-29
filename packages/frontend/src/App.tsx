@@ -14,6 +14,7 @@ import Sidebar from './components/Sidebar.jsx';
 import AuthGuard from './components/AuthGuard.jsx';
 import VersionIndicator from './components/VersionIndicator.jsx';
 import UsageLimitBanner from './components/UsageLimitBanner.jsx';
+import SubscriptionRequiredModal from './components/SubscriptionRequiredModal.jsx';
 import { connectSse } from './services/sse.js';
 import { RightSidebarProvider, useRightSidebar } from './services/right-sidebar.jsx';
 
@@ -83,6 +84,7 @@ const AppInner: ParentComponent = (props) => {
           <div class="plan-banners">
             <UsageLimitBanner />
           </div>
+          <SubscriptionRequiredModal />
           {props.children}
         </main>
         {rightSidebar()}

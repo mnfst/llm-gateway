@@ -646,6 +646,61 @@
   float: right;
 }
 
+/* ── Subscription required (Cloud workspace without a subscription) ── */
+.modal.subscription-required-modal {
+  max-width: 460px;
+}
+
+.subscription-required-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--gap-xl);
+}
+
+.subscription-required-modal__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  letter-spacing: -0.025em;
+}
+
+.subscription-required-modal__text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  line-height: 1.5;
+}
+
+.subscription-required-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+  margin-top: var(--gap-sm);
+}
+
+.subscription-required-modal__actions .btn {
+  flex: 1 1 180px;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.subscription-required-modal__later {
+  align-self: center;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.subscription-required-modal__later:hover {
+  color: hsl(var(--foreground));
+  text-decoration: underline;
+}
+
 .sidebar-usage {
   margin: 0 var(--gap-md) 10px;
 }

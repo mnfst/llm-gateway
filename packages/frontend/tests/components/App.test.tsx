@@ -38,6 +38,10 @@ vi.mock("../../src/components/AuthGuard.jsx", () => ({
   default: (props: any) => <div data-testid="auth-guard">{props.children}</div>,
 }));
 
+vi.mock("../../src/components/SubscriptionRequiredModal.jsx", () => ({
+  default: () => <div data-testid="subscription-required-modal" />,
+}));
+
 
 vi.mock("../../src/services/sse.js", () => ({
   connectSse: () => () => {},
@@ -70,6 +74,11 @@ describe("App", () => {
   it("renders main content area", () => {
     const { container } = render(() => <App />);
     expect(container.querySelector(".main-content")).not.toBeNull();
+  });
+
+  it("mounts the subscription required modal", () => {
+    const { container } = render(() => <App />);
+    expect(container.querySelector('[data-testid="subscription-required-modal"]')).not.toBeNull();
   });
 
   it("does not show sidebar on root redirect path /", () => {
