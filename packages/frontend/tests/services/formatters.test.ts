@@ -29,6 +29,16 @@ describe('formatNumber', () => {
     expect(formatNumber(999)).toBe('999');
     expect(formatNumber(0)).toBe('0');
   });
+  it("drops the '.0' left when a value rounds to a whole number", () => {
+    expect(formatNumber(1_001)).toBe('1k');
+    expect(formatNumber(20_040)).toBe('20k');
+    expect(formatNumber(1_999_999)).toBe('2M');
+  });
+  it('moves to M when thousands round up to 1000k', () => {
+    expect(formatNumber(999_949)).toBe('999.9k');
+    expect(formatNumber(999_950)).toBe('1M');
+    expect(formatNumber(999_999)).toBe('1M');
+  });
 });
 
 describe('formatCost', () => {

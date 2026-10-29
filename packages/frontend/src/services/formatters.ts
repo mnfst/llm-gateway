@@ -1,16 +1,14 @@
 /**
  * Format large numbers with suffix (1.2k, 304.3k, 1.2M).
+ *
+ * The one-decimal rounding decides the unit: 999,950 rounds to 1000k, so it is
+ * shown as 1M, and a value that rounds to a whole number (1,001 → 1.0k) drops
+ * the trailing ".0".
  */
 export function formatNumber(n: number): string {
   n = Number(n);
-  if (n >= 1_000_000) {
-    const v = n / 1_000_000;
-    return `${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}M`;
-  }
-  if (n >= 1_000) {
-    const v = n / 1_000;
-    return `${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}k`;
-  }
+  if (n >= 999_950) return `${Number((n / 1_000_000).toFixed(1))}M`;
+  if (n >= 1_000) return `${Number((n / 1_000).toFixed(1))}k`;
   return n.toString();
 }
 

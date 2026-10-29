@@ -15,8 +15,8 @@ describe("formatNumber edge cases", () => {
     expect(formatNumber(1_000_000)).toBe("1M");
   });
 
-  it("formats boundary between k and M (999999)", () => {
-    expect(formatNumber(999_999)).toBe("1000.0k");
+  it("formats boundary between k and M (999999) as 1M", () => {
+    expect(formatNumber(999_999)).toBe("1M");
   });
 
   it("formats negative numbers", () => {
