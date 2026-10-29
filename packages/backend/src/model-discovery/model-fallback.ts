@@ -28,6 +28,10 @@ interface PricingLookup {
 }
 
 function normalizeProviderModelId(providerId: string, modelId: string): string {
+  if (providerId.toLowerCase() === 'minimax') {
+    if (/^minimax-m3\.1-flash(?::free)?$/i.test(modelId)) return 'MiniMax-M3.1-Flash';
+    if (/^minimax-m3(?::free)?$/i.test(modelId)) return 'MiniMax-M3';
+  }
   return providerId.toLowerCase() === 'anthropic'
     ? normalizeAnthropicShortModelId(modelId)
     : modelId;
@@ -120,7 +124,7 @@ export function lookupWithVariants(
 
   // Try :free suffix (OpenRouter lists some models as "provider/model:free")
   const freeResult = pricingSync.lookupPricing(`${prefix}/${modelId}:free`);
-  if (freeResult) return freeResult;
+  if (freeResult && prefix !== 'minimax') return freeResult;
 
   // Strip Google variant suffixes: -preview-MM-DD, -exp-MMDD, -latest
   const noGoogleVariant = modelId.replace(GOOGLE_VARIANT_RE, '');
@@ -243,6 +247,9 @@ export function buildFallbackModels(
   if (!pricingSync) return [];
   const models: DiscoveredModel[] = [];
   const seen = new Set<string>();
+  // MiniMax rows that came from an OpenRouter `:free` route; a direct-priced row
+  // for the same model replaces them.
+  const minimaxFreeIndex = new Map<string, number>();
   const hasConfirmed = confirmedModels != null && confirmedModels.size > 0;
 
   const orPrefix = findOpenRouterPrefix(providerId);
@@ -255,21 +262,24 @@ export function buildFallbackModels(
     // never through the synchronous chat completions proxy.
     if (fullId.endsWith(':batch')) continue;
     const modelId = normalizeProviderModelId(providerId, fullId.substring(orPrefix.length + 1));
-    if (seen.has(modelId)) continue;
+    const minimaxFreeRoute = providerId.toLowerCase() === 'minimax' && fullId.endsWith(':free');
+    const freeIndex = minimaxFreeIndex.get(modelId);
+    if (seen.has(modelId) && (freeIndex === undefined || minimaxFreeRoute)) continue;
 
     if (hasConfirmed && !confirmedModels!.has(modelId.toLowerCase())) continue;
     if (isMeta && !META_FALLBACK_MODEL_IDS.has(modelId)) continue;
 
     seen.add(modelId);
     const metaModel = isMeta ? META_MODEL_API_MODEL_BY_ID.get(modelId) : undefined;
-    models.push({
+    // An OpenRouter free route verifies the model name, not direct API pricing.
+    const model: DiscoveredModel = {
       id: modelId,
       displayName: metaModel?.displayName ?? entry.displayName ?? modelId,
       provider: providerId,
       contextWindow:
         entry.contextWindow ?? (metaModel ? META_MODEL_API_CONTEXT_WINDOW : DEFAULT_CONTEXT_WINDOW),
-      inputPricePerToken: entry.input,
-      outputPricePerToken: entry.output,
+      inputPricePerToken: minimaxFreeRoute ? null : entry.input,
+      outputPricePerToken: minimaxFreeRoute ? null : entry.output,
       capabilityReasoning: !!metaModel,
       capabilityCode: !!metaModel,
       ...(metaModel
@@ -279,18 +289,38 @@ export function buildFallbackModels(
           }
         : {}),
       qualityScore: 3,
-    });
+    };
+    if (freeIndex === undefined) {
+      if (minimaxFreeRoute) minimaxFreeIndex.set(modelId, models.length);
+      models.push(model);
+    } else {
+      models[freeIndex] = model;
+      minimaxFreeIndex.delete(modelId);
+    }
   }
 
   return models;
+}
+
+/** The provider's curated subscription model IDs, narrowed by region. */
+function subscriptionModelIds(providerId: string, region?: string | null) {
+  const models = getSubscriptionKnownModels(providerId);
+  // Flash is confirmed for the international M Plan. Do not infer domestic
+  // Coding Plan entitlement; a native discovery response can still advertise it.
+  return providerId.toLowerCase() === 'minimax' && region === 'cn'
+    ? models?.filter((id) => id !== 'MiniMax-M3.1-Flash')
+    : models;
 }
 
 /**
  * Build a curated fallback model list for subscription providers.
  * Model availability comes exclusively from the provider's knownModels list.
  */
-export function buildSubscriptionFallbackModels(providerId: string): DiscoveredModel[] {
-  const knownModels = getSubscriptionKnownModels(providerId);
+export function buildSubscriptionFallbackModels(
+  providerId: string,
+  region?: string | null,
+): DiscoveredModel[] {
+  const knownModels = subscriptionModelIds(providerId, region);
   if (!knownModels) return [];
   const capabilities = getSubscriptionCapabilities(providerId);
   const defaultCtx = capabilities?.maxContextWindow ?? 200000;
@@ -348,8 +378,9 @@ export function reconcileCachedSubscriptionContextWindow(
 export function supplementWithKnownModels(
   raw: DiscoveredModel[],
   providerId: string,
+  region?: string | null,
 ): DiscoveredModel[] {
-  const knownModels = getSubscriptionKnownModels(providerId);
+  const knownModels = subscriptionModelIds(providerId, region);
   if (!knownModels) return raw;
   const matchMode = getSubscriptionKnownModelsMatch(providerId);
 

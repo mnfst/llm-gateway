@@ -171,6 +171,27 @@ describe('ModelPickerModal', () => {
     });
   });
 
+  it('places Flash before M3 even when display labels sort in the opposite order', () => {
+    const models = ['MiniMax-M3', 'MiniMax-M3.1-Flash'].map((id) => ({
+      ...baseModels[0],
+      provider: 'minimax',
+      model_name: id,
+      display_name: id,
+    }));
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="default"
+        models={models}
+        tiers={[]}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    ));
+    const text = container.textContent!;
+    expect(text.indexOf('MiniMax-M3.1-Flash')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('MiniMax-M3.1-Flash')).toBeLessThan(text.lastIndexOf('MiniMax-M3'));
+  });
+
   describe('automatic daily refresh', () => {
     it('refreshes stale models only once per agent and browser session each day', async () => {
       const onProviderRefreshed = vi.fn();
@@ -1536,5 +1557,4 @@ describe('ModelPickerModal', () => {
       expect(container.textContent).not.toContain('GPT-4o 199');
     });
   });
-
 });

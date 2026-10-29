@@ -339,6 +339,12 @@ export interface SanitizeOpenAiBodyOptions {
    * without one.
    */
   forwardReasoningEffort?: boolean;
+  /**
+   * The provider implements `reasoning_effort` but is reached through an
+   * endpoint key the allow-list cannot name (MiniMax CN uses a `custom`
+   * override). Keep the caller's value; never inject one.
+   */
+  keepReasoningEffort?: boolean;
 }
 
 /**
@@ -391,11 +397,15 @@ export function sanitizeOpenAiBody(
       cleaned[key] = value;
       continue;
     }
-    // xAI and DeepSeek implement `reasoning_effort`; keep it there. Every other
-    // non-passthrough provider gets the OpenAI-only field stripped below.
+    // xAI, DeepSeek and MiniMax implement `reasoning_effort`; keep it there.
+    // Every other non-passthrough provider gets the OpenAI-only field stripped
+    // below. Models that reject a level are left to Autofix.
     if (
       key === 'reasoning_effort' &&
-      (endpointKey === 'xai' || endpointKey === 'deepseek' || options.forwardReasoningEffort)
+      (endpointKey === 'xai' ||
+        endpointKey === 'deepseek' ||
+        options.keepReasoningEffort ||
+        options.forwardReasoningEffort)
     ) {
       cleaned[key] = value;
       continue;
