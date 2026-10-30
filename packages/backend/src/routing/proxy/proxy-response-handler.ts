@@ -56,6 +56,7 @@ import {
   unwrapCodeAssistStreamPayload,
 } from '../oauth/gemini/codeassist-envelope';
 import type { AttemptRecordingCapture } from './attempt-recording-capture';
+import { parseQuotaHalt, type QuotaHaltWindow } from './quota-halt';
 
 const logger = new Logger('ProxyResponseHandler');
 
@@ -315,6 +316,9 @@ export async function handleProviderError(
   );
   res.status(errorStatus);
   setHeaders(res, metaHeaders);
+  // Quota-window 429s get an honest Retry-After (RET-480-B1); every other
+  // status/body keeps the response untouched.
+  setQuotaHaltRetryAfter(res, errorStatus, errorBody);
   const responseBody = {
     ...(apiMode === 'messages' ? { type: 'error' } : {}),
     error: buildOpenAiCompatibleError(errorStatus, errorBody, {
@@ -325,6 +329,24 @@ export async function handleProviderError(
     }),
   };
   res.json(responseBody);
+}
+
+/**
+ * Emit an honest `Retry-After` when the upstream 429 is a quota-window halt
+ * (RET-480-B1): the window comes from the body's `next_flush_time`, bounded to
+ * [1s, 1h]. Concurrency 429s and every other error keep the response untouched
+ * — no header. Returns the parsed halt so callers can adopt the window
+ * identity for quota accounting; null when the status/body is not a halt.
+ */
+export function setQuotaHaltRetryAfter(
+  res: ExpressResponse,
+  errorStatus: number,
+  errorBody: string,
+): QuotaHaltWindow | null {
+  const halt = parseQuotaHalt(errorStatus, errorBody, Date.now());
+  if (!halt) return null;
+  res.setHeader('Retry-After', String(halt.retryAfterSeconds));
+  return halt;
 }
 
 function handleFallbackExhausted(
@@ -408,6 +430,9 @@ function handleFallbackExhausted(
   res.status(errorStatus);
   setHeaders(res, metaHeaders);
   res.setHeader('X-Manifest-Fallback-Exhausted', 'true');
+  // The exhaustion body is the PRIMARY provider's — source the halt window
+  // from it, same as the direct path (RET-480-B1).
+  setQuotaHaltRetryAfter(res, errorStatus, errorBody);
   const attempted = attemptedFallbackEntries(failedFallbacks, apiMode);
   const primaryAutofix = autofixSummary(autofix);
   // Every attempt reached a provider, so the error is provider-authored: the

@@ -488,6 +488,62 @@ describe('ProxyFallbackService.tryFallbacks — failure chain by status code', (
     });
   });
 
+  describe('quota-halt 429 cooldown adopts the window (RET-480-B1)', () => {
+    // Drive one real 429 carrying the given JSON body (plus an ordinary
+    // Retry-After header), then read the stored cooldown expiry — same
+    // measurement shape as the Retry-After TTL describe above.
+    const recordHaltCooldownTtl = async (responseBody: string): Promise<number> => {
+      providerClient.forward.mockResolvedValueOnce({
+        response: new Response(responseBody, {
+          status: 429,
+          headers: { 'retry-after': '30' },
+        }),
+        isGoogle: false,
+        isAnthropic: true,
+        isChatGpt: false,
+      });
+
+      const before = Date.now();
+      await service.tryForwardToProvider({
+        provider: 'anthropic',
+        apiKey: 'sk-anthropic-test',
+        model: 'claude-sonnet-4-6',
+        body,
+        stream: false,
+        sessionKey: 'sess-1',
+        agentId: 'agent-1',
+        providerKeyLabel: 'Claude Code',
+        authType: 'subscription',
+      });
+
+      const cooldowns = (service as unknown as { rateLimitCooldowns: Map<string, number> })
+        .rateLimitCooldowns;
+      expect(cooldowns.size).toBe(1);
+      const [expiresAt] = [...cooldowns.values()];
+      return expiresAt - before;
+    };
+
+    it('adopts the halt window for the route cooldown, bypassing the 5-minute cap', async () => {
+      const halt = JSON.stringify({
+        error: { code: 1316, next_flush_time: Date.now() + 40 * 60_000 },
+      });
+      const ttl = await recordHaltCooldownTtl(halt);
+      // ~40 minutes — far beyond the plain-429 5-minute ceiling.
+      expect(ttl).toBeGreaterThan(39 * 60_000);
+      expect(ttl).toBeLessThanOrEqual(40 * 60_000);
+    });
+
+    it('keeps the plain-429 treatment when a halt code carries no usable window', async () => {
+      // Halt code 1316 without next_flush_time: no honest window to adopt, so
+      // the cooldown falls back to the header path — the helper's 30s
+      // Retry-After header, not any synthesized window.
+      const haltWithoutWindow = JSON.stringify({ error: { code: 1316 } });
+      const ttl = await recordHaltCooldownTtl(haltWithoutWindow);
+      expect(ttl).toBeGreaterThan(29_000);
+      expect(ttl).toBeLessThanOrEqual(30_000);
+    });
+  });
+
   it('does NOT short-circuit on 401 auth errors — continues to next route (current contract)', async () => {
     // shouldTriggerFallback(401) === true, so an auth failure on the first
     // route keeps the loop going. This test pins that behavior: if anyone
