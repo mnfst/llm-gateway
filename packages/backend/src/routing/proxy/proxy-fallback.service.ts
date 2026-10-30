@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { AuthType, ModelRoute } from 'manifest-shared';
@@ -97,6 +97,7 @@ import {
 } from './route-credentials';
 import { recordingResponseFromText } from './attempt-recording-capture';
 import { parseQuotaHalt, quotaHaltCooldownTtlMs } from './quota-halt';
+import { QuotaAccountingService } from './quota-accounting.service';
 import {
   CredentialRejectionCooldown,
   type RejectedCredentialRef,
@@ -170,6 +171,8 @@ export class ProxyFallbackService {
     private readonly providerParamSpecs: ProviderParamSpecService,
     private readonly reasoningCache: ReasoningContentCache,
     private readonly autofixService: AutofixService,
+    @Optional()
+    private readonly quotaAccounting?: QuotaAccountingService,
   ) {}
 
   /**
@@ -720,6 +723,7 @@ export class ProxyFallbackService {
           model: opts.model,
         }),
         retried.response,
+        opts.provider,
       );
       return await this.bufferNonStreamBody(
         { ...retried, attempt, providerCallStarted: true },
@@ -833,12 +837,17 @@ export class ProxyFallbackService {
     opts: ForwardProviderOptions,
     response: Response,
   ): Promise<void> {
-    await this.recordRateLimitCooldownForKey(this.rateLimitCooldownKey(opts), response);
+    await this.recordRateLimitCooldownForKey(
+      this.rateLimitCooldownKey(opts),
+      response,
+      opts.provider,
+    );
   }
 
   private async recordRateLimitCooldownForKey(
     key: string | null,
     response: Response,
+    provider?: string,
   ): Promise<void> {
     if (response.status !== 429 || !key) return;
     if (this.rateLimitCooldowns.size >= MAX_RATE_LIMIT_COOLDOWNS) {
@@ -847,7 +856,7 @@ export class ProxyFallbackService {
         this.evictOldestRateLimitCooldown();
       }
     }
-    const ttlMs = await this.rateLimitCooldownTtlMs(response);
+    const ttlMs = await this.rateLimitCooldownTtlMs(response, provider);
     this.rateLimitCooldowns.set(key, Date.now() + ttlMs);
   }
 
@@ -859,13 +868,24 @@ export class ProxyFallbackService {
    * body stays unread for the client-facing path. Plain 429s keep the header /
    * 15s-default treatment unchanged.
    */
-  private async rateLimitCooldownTtlMs(response: Response): Promise<number> {
+  private async rateLimitCooldownTtlMs(response: Response, provider?: string): Promise<number> {
     const body = await response
       .clone()
       .text()
       .catch(() => null);
     const halt = body === null ? null : parseQuotaHalt(response.status, body, Date.now());
-    if (halt) return quotaHaltCooldownTtlMs(halt.flushMs);
+    if (halt) {
+      // The same probe pins the accounting window identity (RET-480-B2) —
+      // guarded, because telemetry can never break forwarding.
+      if (provider) {
+        try {
+          this.quotaAccounting?.noteWindowFlush(provider, halt.flushMs);
+        } catch {
+          // ignore accounting failures
+        }
+      }
+      return quotaHaltCooldownTtlMs(halt.flushMs);
+    }
     return this.parseRetryAfterMs(response.headers.get('retry-after'));
   }
 

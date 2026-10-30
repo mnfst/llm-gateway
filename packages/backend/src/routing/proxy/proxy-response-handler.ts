@@ -57,6 +57,7 @@ import {
 } from '../oauth/gemini/codeassist-envelope';
 import type { AttemptRecordingCapture } from './attempt-recording-capture';
 import { parseQuotaHalt, type QuotaHaltWindow } from './quota-halt';
+import { notifyWindowFlush } from './quota-accounting';
 
 const logger = new Logger('ProxyResponseHandler');
 
@@ -317,8 +318,11 @@ export async function handleProviderError(
   res.status(errorStatus);
   setHeaders(res, metaHeaders);
   // Quota-window 429s get an honest Retry-After (RET-480-B1); every other
-  // status/body keeps the response untouched.
-  setQuotaHaltRetryAfter(res, errorStatus, errorBody);
+  // status/body keeps the response untouched. A parsed halt also adopts the
+  // window identity for quota accounting (RET-480-B2); notifyWindowFlush is
+  // guarded and can never break the error path.
+  const halt = setQuotaHaltRetryAfter(res, errorStatus, errorBody);
+  if (halt) notifyWindowFlush(meta.provider, halt.flushMs);
   const responseBody = {
     ...(apiMode === 'messages' ? { type: 'error' } : {}),
     error: buildOpenAiCompatibleError(errorStatus, errorBody, {
@@ -432,7 +436,8 @@ function handleFallbackExhausted(
   res.setHeader('X-Manifest-Fallback-Exhausted', 'true');
   // The exhaustion body is the PRIMARY provider's — source the halt window
   // from it, same as the direct path (RET-480-B1).
-  setQuotaHaltRetryAfter(res, errorStatus, errorBody);
+  const exhaustedHalt = setQuotaHaltRetryAfter(res, errorStatus, errorBody);
+  if (exhaustedHalt) notifyWindowFlush(meta.provider, exhaustedHalt.flushMs);
   const attempted = attemptedFallbackEntries(failedFallbacks, apiMode);
   const primaryAutofix = autofixSummary(autofix);
   // Every attempt reached a provider, so the error is provider-authored: the

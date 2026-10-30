@@ -29,6 +29,8 @@ import { ModelsDevReasoningCatalog } from './reasoning-model-catalog';
 import { CodexSessionAffinity } from './codex-session-affinity';
 import { ProxyExceptionFilter } from './proxy-exception.filter';
 import { AttemptRecordingService } from './attempt-recording.service';
+import { QuotaAccountingService } from './quota-accounting.service';
+import { QuotaAccountingController } from './quota-accounting.controller';
 
 @Module({
   imports: [
@@ -45,7 +47,7 @@ import { AttemptRecordingService } from './attempt-recording.service';
     BillingModule,
     AutofixModule,
   ],
-  controllers: [ProxyController],
+  controllers: [ProxyController, QuotaAccountingController],
   providers: [
     ProxyService,
     ProxyFallbackService,
@@ -61,6 +63,7 @@ import { AttemptRecordingService } from './attempt-recording.service';
     CodexSessionAffinity,
     ProxyExceptionFilter,
     AttemptRecordingService,
+    QuotaAccountingService,
   ],
   exports: [ProviderClient],
 })
