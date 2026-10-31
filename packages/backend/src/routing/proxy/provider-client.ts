@@ -51,6 +51,7 @@ import { ManifestError } from '../../common/errors/manifest-error';
 import { MANAGED_FREE_PROVIDER_BY_ID } from '../../common/constants/managed-free-providers';
 import { isBedrockProvider } from '../bedrock-region';
 import { getBedrockRuntimeCapabilities } from '../bedrock-runtime-capabilities';
+import { QuotaAccountingService } from './quota-accounting.service';
 
 export interface ForwardResult {
   response: Response;
@@ -365,6 +366,8 @@ export class ProviderClient {
     codexAffinity?: CodexSessionAffinity,
     @Optional()
     private readonly reasoningCatalog?: ModelsDevReasoningCatalog,
+    @Optional()
+    private readonly quotaAccounting?: QuotaAccountingService,
   ) {
     this.codexAffinity = codexAffinity ?? new CodexSessionAffinity();
   }
@@ -497,16 +500,24 @@ export class ProviderClient {
         }
       }
 
-      const result = await this.executeFetch(url, finalHeaders, wireRequestBody, signal, stream, {
-        isGoogle,
-        isAnthropic,
-        isChatGpt,
-        isResponses,
-        isCodeAssist,
-        responsesTextFormat: textFormat,
-        responsesToolNames:
-          opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
-      });
+      const result = await this.executeFetch(
+        url,
+        finalHeaders,
+        wireRequestBody,
+        signal,
+        stream,
+        {
+          isGoogle,
+          isAnthropic,
+          isChatGpt,
+          isResponses,
+          isCodeAssist,
+          responsesTextFormat: textFormat,
+          responsesToolNames:
+            opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
+        },
+        opts.provider,
+      );
       const response =
         !stream &&
         endpoint.format === 'openai' &&
@@ -966,6 +977,7 @@ export class ProviderClient {
       responsesTextFormat?: Record<string, unknown>;
       responsesToolNames?: ResponsesToolNames;
     },
+    provider: string,
   ): Promise<ForwardResult> {
     let fetchSignal: AbortSignal;
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -986,11 +998,22 @@ export class ProviderClient {
     }
 
     let response: Response;
+    // Serialize ONCE: the accounting hook must observe the exact bytes the
+    // fetch sends (model + stream already folded into requestBody upstream).
+    const wireBody = JSON.stringify(requestBody);
+    // Attempted-request accounting (RET-480-B2): counted BEFORE the fetch, so
+    // retries and timeouts count as attempts. Optional-injected and guarded —
+    // telemetry can never break forwarding.
+    try {
+      this.quotaAccounting?.recordAttempt(provider, wireBody);
+    } catch {
+      // accounting failures must never break the forward
+    }
     try {
       response = await fetch(url, {
         method: 'POST',
         headers,
-        body: JSON.stringify(requestBody),
+        body: wireBody,
         signal: fetchSignal,
         // Block redirect-based SSRF escalation: a hostile upstream could 302
         // to a private/metadata endpoint after our pre-fetch validation.
