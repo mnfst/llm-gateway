@@ -1732,6 +1732,23 @@ describe('Google Adapter', () => {
       expect(choices[0].finish_reason).toBe('content_filter');
     });
 
+    it.each(['BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY'])(
+      'maps %s finish reason to content_filter',
+      (finishReason) => {
+        const google = {
+          candidates: [
+            {
+              content: { parts: [{ text: '' }] },
+              finishReason,
+            },
+          ],
+        };
+        const result = fromGoogleResponse(google, 'gemini-2.0-flash');
+        const choices = result.choices as Array<{ finish_reason: string }>;
+        expect(choices[0].finish_reason).toBe('content_filter');
+      },
+    );
+
     it('maps unknown finish reason to stop', () => {
       const google = {
         candidates: [

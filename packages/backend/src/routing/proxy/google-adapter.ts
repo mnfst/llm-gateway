@@ -544,6 +544,10 @@ function mapFinishReason(candidate: Record<string, unknown>, hasToolCalls = fals
     MAX_TOKENS: 'length',
     SAFETY: 'content_filter',
     RECITATION: 'content_filter',
+    BLOCKLIST: 'content_filter',
+    PROHIBITED_CONTENT: 'content_filter',
+    SPII: 'content_filter',
+    IMAGE_SAFETY: 'content_filter',
   };
   return map[reason] ?? 'stop';
 }
