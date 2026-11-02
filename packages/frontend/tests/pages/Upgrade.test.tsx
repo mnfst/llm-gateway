@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
-import { FREE_REQUEST_LIMIT_LABEL } from '../../src/services/billing-display';
 import { FREE_PLAN_REQUESTS_PER_MONTH } from 'manifest-shared';
 
 const mockNavigate = vi.fn();
@@ -39,7 +38,6 @@ vi.mock('../../src/services/toast-store.js', () => ({
 }));
 
 import Upgrade from '../../src/pages/Upgrade';
-import { FREE_PLAN_ENDS_NOTE } from '../../src/components/PlanPicker';
 
 const disabledStatus = {
   enabled: false,
@@ -87,32 +85,42 @@ describe('Upgrade', () => {
   it('fetches billing status without cache and renders plan choices', async () => {
     render(() => <Upgrade />);
 
-    await screen.findByText('Free');
+    await screen.findByText('Self-hosted');
 
     expect(mockGetBillingStatus).toHaveBeenCalledWith({ cache: false });
     expect(screen.getByText('Full control over your AI routing')).toBeDefined();
     expect(screen.getByText('$0')).toBeDefined();
+    expect(screen.getByText('forever')).toBeDefined();
     expect(screen.getByText('$20')).toBeDefined();
-    expect(screen.getByText('Unlimited agents')).toBeDefined();
-    expect(screen.getByText(`${FREE_REQUEST_LIMIT_LABEL} routed requests / month`)).toBeDefined();
-    expect(screen.getByText('All providers, no restrictions')).toBeDefined();
-    expect(screen.getByText('Subscription providers (Claude, ChatGPT, Gemini...)')).toBeDefined();
-    expect(screen.getByText('Unlimited routed requests')).toBeDefined();
-    expect(screen.getByText('365 days dashboard retention')).toBeDefined();
-    expect(screen.getByText('Budget alerts and notifications')).toBeDefined();
+    expect(screen.getByText('All providers, including local models')).toBeDefined();
+    expect(screen.getAllByText('Unlimited routed requests').length).toBe(2);
+    expect(screen.getByText('365 days of dashboard history')).toBeDefined();
+    expect(screen.getByText('Servers, database and uptime handled by us')).toBeDefined();
+    expect(screen.queryByText(/Everything in/)).toBeNull();
+    expect(screen.getByText('Manifest Cloud')).toBeDefined();
+    expect(screen.getByText('Read the self-hosting guide')).toBeDefined();
     expect(screen.getByText('Enterprise')).toBeDefined();
     expect(screen.getByText("Let's Talk")).toBeDefined();
     expect(screen.getByText('Talk to sales')).toBeDefined();
-    expect(screen.getByText('Upgrade to Pro')).toBeDefined();
+    expect(screen.getByText('Subscribe')).toBeDefined();
   });
 
-  it('shows the request-limit entry message', async () => {
+  it('shows the subscription-required entry message when the tenant has no allowance', async () => {
     mockSearchParams = { reason: 'requests' };
     render(() => <Upgrade />);
 
-    await screen.findByText(
-      new RegExp(`You've used all ${FREE_REQUEST_LIMIT_LABEL} requests this month`),
-    );
+    await screen.findByText('Manifest Cloud needs a Pro subscription to route requests.');
+  });
+
+  it('shows the used-up allowance entry message when the tenant has a positive limit', async () => {
+    mockSearchParams = { reason: 'requests' };
+    mockGetBillingStatus.mockResolvedValue({
+      ...freeStatus,
+      requests: { used: 500, limit: 500, periodEnd: null },
+    });
+    render(() => <Upgrade />);
+
+    await screen.findByText(/You've used all 500 requests this month/);
   });
 
   it('hides the request-limit entry message on the Pro plan', async () => {
@@ -156,8 +164,7 @@ describe('Upgrade', () => {
   it('continues on Free by navigating to the dashboard', async () => {
     render(() => <Upgrade />);
 
-    const button = await screen.findByText('Use Manifest for free');
-    expect(screen.getByText(FREE_PLAN_ENDS_NOTE)).toBeDefined();
+    const button = await screen.findByText('Continue without a subscription');
     fireEvent.click(button);
 
     expect(mockNavigate).toHaveBeenCalledWith('/');
@@ -168,7 +175,7 @@ describe('Upgrade', () => {
     window.history.pushState({}, '', '/upgrade?reason=requests');
     render(() => <Upgrade />);
 
-    const button = await screen.findByText('Upgrade to Pro');
+    const button = await screen.findByText('Subscribe');
     fireEvent.click(button);
 
     expect(mockUpgrade).toHaveBeenCalledWith({
@@ -183,7 +190,7 @@ describe('Upgrade', () => {
     mockUpgrade.mockRejectedValue(new Error('stripe down'));
     render(() => <Upgrade />);
 
-    fireEvent.click(await screen.findByText('Upgrade to Pro'));
+    fireEvent.click(await screen.findByText('Subscribe'));
 
     await waitFor(() =>
       expect(mockToastError).toHaveBeenCalledWith('Could not start the upgrade. Please try again.'),
@@ -194,7 +201,7 @@ describe('Upgrade', () => {
     mockUpgrade.mockResolvedValue({ error: { message: 'stripe down' } });
     render(() => <Upgrade />);
 
-    fireEvent.click(await screen.findByText('Upgrade to Pro'));
+    fireEvent.click(await screen.findByText('Subscribe'));
 
     await waitFor(() =>
       expect(mockToastError).toHaveBeenCalledWith('Could not start the upgrade. Please try again.'),

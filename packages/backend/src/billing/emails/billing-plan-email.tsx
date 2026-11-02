@@ -119,8 +119,8 @@ function subscriptionCopy(props: SubscriptionPlanEmailProps): {
           to {props.planName} features{end ? ` until ${end}` : ''}.
         </>,
         <>
-          After that date, your workspace will switch back to the Free plan with 10,000 routed
-          requests per month and 7-day dashboard retention.
+          After that date, your workspace keeps its dashboard and settings but stops routing
+          requests until you subscribe again.
         </>,
         <>
           If there's anything we can do, or if you'd like to discuss your needs, we're here to help.

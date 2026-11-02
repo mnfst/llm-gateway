@@ -482,10 +482,14 @@
   z-index: 1;
 }
 
+.upgrade-plan-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
 .upgrade-plan-card__badge {
-  position: absolute;
-  top: var(--gap-md);
-  right: var(--gap-md);
   padding: 3px 5px;
   border-radius: 2px;
   background: #2632ef;
@@ -537,15 +541,6 @@
   margin: var(--gap-md) 0 0;
   color: hsl(var(--muted-foreground));
   font-size: var(--font-size-sm);
-  line-height: 1.5;
-}
-
-.upgrade-plan-card__notice {
-  display: block;
-  margin-top: var(--gap-sm);
-  color: hsl(var(--primary));
-  font-size: var(--font-size-xs);
-  font-weight: 500;
   line-height: 1.5;
 }
 

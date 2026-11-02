@@ -53,7 +53,7 @@ Manifest LLM Gateway is an open-source LLM gateway for AI agents and apps. Conne
 
 ### Cloud version
 
-Go to [app.manifest.build](https://app.manifest.build) and follow the guide.
+Go to [app.manifest.build](https://app.manifest.build). Manifest Cloud is $19/month; the self-hosted gateway below is free.
 
 ### Self-hosted
 
@@ -67,13 +67,13 @@ Open [http://localhost:2099](http://localhost:2099) and sign up — the first ac
 
 ### Deploy with one click
 
-| Platform                                                                   | Notes                                                                                                |
-| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| [Railway](https://railway.com/deploy/wild-wild)                            | Best path. Template includes Manifest, PostgreSQL, and S3-compatible storage for request recordings. |
+| Platform                                                                      | Notes                                                                                                |
+| ----------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| [Railway](https://railway.com/deploy/wild-wild)                               | Best path. Template includes Manifest, PostgreSQL, and S3-compatible storage for request recordings. |
 | [Render](https://render.com/deploy?repo=https://github.com/mnfst/llm-gateway) | Blueprint includes Manifest, PostgreSQL, and a persistent recording disk.                            |
-| [DigitalOcean](deploy/digitalocean/TUTORIAL.md)                            | App Platform and PostgreSQL; provide a private Space for recordings.                                 |
-| [AWS](deploy/aws/TUTORIAL.md)                                              | CloudFormation provisions ECS, RDS, and a private recording bucket.                                  |
-| [GCP](deploy/gcp/TUTORIAL.md)                                              | DeployStack provisions Cloud Run, Cloud SQL, and Cloud Storage.                                      |
+| [DigitalOcean](deploy/digitalocean/TUTORIAL.md)                               | App Platform and PostgreSQL; provide a private Space for recordings.                                 |
+| [AWS](deploy/aws/TUTORIAL.md)                                                 | CloudFormation provisions ECS, RDS, and a private recording bucket.                                  |
+| [GCP](deploy/gcp/TUTORIAL.md)                                                 | DeployStack provisions Cloud Run, Cloud SQL, and Cloud Storage.                                      |
 
 > Every deployment path now uses durable request-recording storage. Railway, AWS, GCP, and Fly.io provision it natively; Render, Coolify, Easypanel, Docker, and Apple Containers mount persistent storage. DigitalOcean, Heroku, and Koyeb collect external S3-compatible settings during setup. Volume-backed templates are single-instance; use S3-compatible storage before scaling horizontally.
 

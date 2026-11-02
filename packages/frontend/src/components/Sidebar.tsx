@@ -1,7 +1,6 @@
 import { A, useLocation } from '@solidjs/router';
 import { Show, createSignal, createResource, type Component } from 'solid-js';
 import { getBillingStatus } from '../services/api/billing.js';
-import { FREE_REQUEST_LIMIT_LABEL } from '../services/billing-display.js';
 import { checkIsSelfHosted, checkMcpEnabled } from '../services/setup-status.js';
 import AddAgentModal from './AddAgentModal.jsx';
 import ServicesContactModal from './ServicesContactModal.jsx';
@@ -45,8 +44,10 @@ const Sidebar: Component<SidebarProps> = (props) => {
     }
   });
   const showUpgrade = () => billing()?.enabled && billing()?.plan === 'free';
-  const requestLimitLabel = () =>
-    billing()?.requests.limit?.toLocaleString('en-US') ?? FREE_REQUEST_LIMIT_LABEL;
+  // A tenant without a subscription has a limit of 0 since the Cloud Free plan
+  // ended: there is no allowance to meter, only the upgrade link stays.
+  const hasAllowance = () => (billing()?.requests.limit ?? 0) > 0;
+  const requestLimitLabel = () => (billing()?.requests.limit ?? 0).toLocaleString('en-US');
 
   const handleNav = () => {
     props.onNavigate?.();
@@ -191,49 +192,51 @@ const Sidebar: Component<SidebarProps> = (props) => {
       </button>
 
       <Show when={!selfHosted() && showUpgrade()}>
-        <div class="sidebar-usage">
-          <span class="sidebar-usage__title">
-            {new Date().toLocaleDateString('en-US', { month: 'long' })} usage
-          </span>
-          <span
-            class="sidebar-usage__count"
-            classList={{
-              'sidebar-usage__count--danger':
-                (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8,
-            }}
-          >
-            {billing()!.requests.used != null
-              ? billing()!.requests.used!.toLocaleString('en-US')
-              : '0'}
-            {' / '}
-            {billing()!.requests.limit != null
-              ? billing()!.requests.limit!.toLocaleString('en-US')
-              : '0'}
-            {' requests'}
-          </span>
-          <div class="sidebar-usage__bar">
-            <div
-              class="sidebar-usage__fill"
+        <Show when={hasAllowance()}>
+          <div class="sidebar-usage">
+            <span class="sidebar-usage__title">
+              {new Date().toLocaleDateString('en-US', { month: 'long' })} usage
+            </span>
+            <span
+              class="sidebar-usage__count"
               classList={{
-                'sidebar-usage__fill--warning':
-                  (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.5 &&
-                  (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) < 0.8,
-                'sidebar-usage__fill--danger':
+                'sidebar-usage__count--danger':
                   (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8,
               }}
-              style={{
-                width: `${Math.min(100, ((billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1)) * 100)}%`,
-              }}
-            />
+            >
+              {billing()!.requests.used != null
+                ? billing()!.requests.used!.toLocaleString('en-US')
+                : '0'}
+              {' / '}
+              {billing()!.requests.limit != null
+                ? billing()!.requests.limit!.toLocaleString('en-US')
+                : '0'}
+              {' requests'}
+            </span>
+            <div class="sidebar-usage__bar">
+              <div
+                class="sidebar-usage__fill"
+                classList={{
+                  'sidebar-usage__fill--warning':
+                    (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.5 &&
+                    (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) < 0.8,
+                  'sidebar-usage__fill--danger':
+                    (billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8,
+                }}
+                style={{
+                  width: `${Math.min(100, ((billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1)) * 100)}%`,
+                }}
+              />
+            </div>
+            <Show when={(billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8}>
+              <p class="sidebar-usage__alert">
+                {(billing()!.requests.used ?? 0) >= (billing()!.requests.limit ?? 1)
+                  ? "You've reached your monthly limit. Requests are being blocked."
+                  : `You're limited to ${requestLimitLabel()} requests this month. Upgrade for unlimited.`}
+              </p>
+            </Show>
           </div>
-          <Show when={(billing()!.requests.used ?? 0) / (billing()!.requests.limit ?? 1) >= 0.8}>
-            <p class="sidebar-usage__alert">
-              {(billing()!.requests.used ?? 0) >= (billing()!.requests.limit ?? 1)
-                ? "You've reached your monthly limit. Requests are being blocked."
-                : `You're limited to ${requestLimitLabel()} requests this month. Upgrade for unlimited.`}
-            </p>
-          </Show>
-        </div>
+        </Show>
         <A href="/upgrade" class="sidebar-upgrade" onClick={handleNav}>
           <svg
             xmlns="http://www.w3.org/2000/svg"

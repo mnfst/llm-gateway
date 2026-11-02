@@ -1,7 +1,4 @@
-import { PLAN_LIMITS, type BillingPrice } from 'manifest-shared';
-
-export const FREE_REQUEST_LIMIT = PLAN_LIMITS.free.requestsPerMonth ?? 0;
-export const FREE_REQUEST_LIMIT_LABEL = FREE_REQUEST_LIMIT.toLocaleString('en-US');
+import type { BillingPrice } from 'manifest-shared';
 
 export function formatBillingPrice(price: BillingPrice | null | undefined): string | null {
   if (price?.amount == null || !price.currency) return null;

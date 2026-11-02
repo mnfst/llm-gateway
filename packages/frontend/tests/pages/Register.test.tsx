@@ -332,8 +332,8 @@ describe('Register', () => {
 
     const freeCard = Array.from(
       container.querySelectorAll<HTMLButtonElement>('.plan-picker__card'),
-    ).find((card) => card.textContent?.includes('Free'));
-    if (!freeCard) throw new Error('Free plan card not found');
+    ).find((card) => card.textContent?.includes('Self-hosted'));
+    if (!freeCard) throw new Error('Self-hosted plan card not found');
     fireEvent.click(freeCard);
     fireEvent.click(container.querySelector('.plan-picker__cta')!);
 
@@ -542,7 +542,7 @@ describe('Register', () => {
     await vi.waitFor(() => {
       expect(screen.getByText('Choose your plan')).toBeDefined();
     });
-    expect(screen.getByText(/Manifest now offers Free and Pro plans/)).toBeDefined();
+    expect(screen.getByText(/Manifest Cloud is \$19\/month/)).toBeDefined();
   });
 
   it('shows "Create an account" title without context=login (email signup)', async () => {

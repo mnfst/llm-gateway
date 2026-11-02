@@ -1471,18 +1471,6 @@
         "data.css"
       ]
     },
-    "free-plan-ends-banner": {
-      "classes": [
-        "free-plan-ends-banner",
-        "free-plan-ends-banner__actions",
-        "free-plan-ends-banner__btn",
-        "free-plan-ends-banner__link",
-        "free-plan-ends-banner__text"
-      ],
-      "files": [
-        "modals.css"
-      ]
-    },
     "free-tag": {
       "classes": [
         "free-tag"
@@ -2513,7 +2501,6 @@
         "plan-picker__details",
         "plan-picker__features",
         "plan-picker__name",
-        "plan-picker__notice",
         "plan-picker__period",
         "plan-picker__price-inline",
         "plan-picker__radio",
@@ -3820,6 +3807,19 @@
         "routing-providers.css"
       ]
     },
+    "subscription-required-modal": {
+      "classes": [
+        "subscription-required-modal",
+        "subscription-required-modal__actions",
+        "subscription-required-modal__body",
+        "subscription-required-modal__later",
+        "subscription-required-modal__text",
+        "subscription-required-modal__title"
+      ],
+      "files": [
+        "modals.css"
+      ]
+    },
     "summary-card": {
       "classes": [
         "summary-card",
@@ -4100,7 +4100,6 @@
         "upgrade-plan-card__footer",
         "upgrade-plan-card__header",
         "upgrade-plan-card__no-commitment",
-        "upgrade-plan-card__notice",
         "upgrade-plan-card__period",
         "upgrade-plan-card__price",
         "upgrade-plan-card__usage"
@@ -5117,7 +5116,7 @@
     "tokens": 79,
     "darkOverrides": 38,
     "blocks": 317,
-    "classes": 1705,
+    "classes": 1704,
     "canonicalRules": 46,
     "ghostRules": 46
   }

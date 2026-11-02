@@ -122,7 +122,7 @@ describe('request limit gate (/v1 proxy)', () => {
       .expect(402);
     expect(res.body.error.code).toBe('PLAN_LIMIT_REQUESTS');
     expect(res.body.error.type).toBe('insufficient_quota');
-    expect(res.body.error.message).toContain('Upgrade to Pro');
+    expect(res.body.error.message).toContain('needs a Pro subscription');
     expect(res.body.limit).toBe(0);
     expect(await waitForManifestBlockCount(tenantId, blocksBefore[0].n + 1)).toBe(
       blocksBefore[0].n + 1,

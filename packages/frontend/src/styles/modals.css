@@ -646,6 +646,61 @@
   float: right;
 }
 
+/* ── Subscription required (Cloud workspace without a subscription) ── */
+.modal.subscription-required-modal {
+  max-width: 460px;
+}
+
+.subscription-required-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--gap-xl);
+}
+
+.subscription-required-modal__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  letter-spacing: -0.025em;
+}
+
+.subscription-required-modal__text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  line-height: 1.5;
+}
+
+.subscription-required-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+  margin-top: var(--gap-sm);
+}
+
+.subscription-required-modal__actions .btn {
+  flex: 1 1 180px;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.subscription-required-modal__later {
+  align-self: center;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.subscription-required-modal__later:hover {
+  color: hsl(var(--foreground));
+  text-decoration: underline;
+}
+
 .sidebar-usage {
   margin: 0 var(--gap-md) 10px;
 }
@@ -677,7 +732,7 @@
   margin-bottom: 6px;
 }
 
-/* ── Top banners (Free plan notice + usage limit) ── */
+/* ── Top banners (usage limit) ── */
 .plan-banners {
   display: flex;
   flex-wrap: wrap;
@@ -691,49 +746,6 @@
 
 .plan-banners > * {
   flex: 1 1 320px;
-}
-
-.free-plan-ends-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--gap-md);
-  padding: var(--gap-md) var(--gap-lg);
-  background: hsl(var(--primary) / 0.1);
-  border: 1px solid hsl(var(--primary) / 0.4);
-  border-radius: var(--radius);
-  font-size: var(--font-size-sm);
-  color: hsl(var(--foreground));
-}
-
-.free-plan-ends-banner__text {
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.free-plan-ends-banner__text strong {
-  font-weight: 700;
-  color: hsl(var(--primary));
-}
-
-.free-plan-ends-banner__link {
-  color: hsl(var(--primary));
-  text-decoration: underline;
-}
-
-.free-plan-ends-banner__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-sm);
-  flex-shrink: 0;
-}
-
-.free-plan-ends-banner__btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  text-decoration: none;
-  white-space: nowrap;
 }
 
 /* ── Global Usage Limit Banner ────────────────────── */

@@ -343,7 +343,7 @@ const Register: Component = () => {
             </h1>
             <p class="auth-header__subtitle">
               {searchParams.context === 'login'
-                ? 'Manifest now offers Free and Pro plans. Select the one that fits your needs.'
+                ? 'Manifest Cloud is $19/month. The self-hosted gateway is free.'
                 : "Monitor your AI harnesses' costs and usage"}
             </p>
           </div>

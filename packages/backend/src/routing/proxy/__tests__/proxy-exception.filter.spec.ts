@@ -1,7 +1,6 @@
 import { UnauthorizedException, BadRequestException, HttpException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ArgumentsHost } from '@nestjs/common';
-import { FREE_PLAN_REQUESTS_PER_MONTH } from 'manifest-shared';
 import { ProxyExceptionFilter } from '../proxy-exception.filter';
 import type { ProxyMessageRecorder } from '../proxy-message-recorder';
 
@@ -369,8 +368,8 @@ describe('ProxyExceptionFilter', () => {
         {
           statusCode: 402,
           code: 'PLAN_LIMIT_REQUESTS',
-          limit: FREE_PLAN_REQUESTS_PER_MONTH,
-          used: FREE_PLAN_REQUESTS_PER_MONTH,
+          limit: 0,
+          used: 0,
         },
         402,
       );
@@ -383,7 +382,7 @@ describe('ProxyExceptionFilter', () => {
       const payload = res.json.mock.calls[0][0];
       const content = payload.choices[0].message.content as string;
       expect(content).toContain('M204');
-      expect(content).toContain(`${FREE_PLAN_REQUESTS_PER_MONTH} requests`);
+      expect(content).toContain('needs a Pro subscription to route requests');
       expect(content).toContain('http://localhost:3001/upgrade?reason=requests');
     });
 
@@ -397,10 +396,10 @@ describe('ProxyExceptionFilter', () => {
           error: expect.objectContaining({
             type: 'insufficient_quota',
             code: 'PLAN_LIMIT_REQUESTS',
-            message: expect.stringContaining('Upgrade to Pro'),
+            message: expect.stringContaining('Subscribe here'),
           }),
-          limit: FREE_PLAN_REQUESTS_PER_MONTH,
-          used: FREE_PLAN_REQUESTS_PER_MONTH,
+          limit: 0,
+          used: 0,
         }),
       );
       const payload = res.json.mock.calls[0][0];

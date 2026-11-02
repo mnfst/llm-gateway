@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (317 BEM blocks, 1705 classes)
+## Blocks (317 BEM blocks, 1704 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -197,7 +197,6 @@ free-models-caret (data.css): free-models-caret
 free-models-disabled-btn (data.css): free-models-disabled-btn
 free-models-logo-dark (data.css): free-models-logo-dark
 free-models-logo-light (data.css): free-models-logo-light
-free-plan-ends-banner (modals.css): free-plan-ends-banner free-plan-ends-banner__actions free-plan-ends-banner__btn free-plan-ends-banner__link free-plan-ends-banner__text
 free-tag (theme.css): free-tag
 function_ (syntax-highlight.css): function_
 header (controls.css, theme.css): header header__avatar header__avatar-btn header__breadcrumb-current header__breadcrumb-icon header__breadcrumb-label header__breadcrumb-link header__breadcrumb-provider-icon header__docs-link header__dropdown header__dropdown-divider header__dropdown-email header__dropdown-header header__dropdown-item header__dropdown-item--danger header__dropdown-name header__gear header__gear-btn header__github-icon header__github-star header__github-star-action header__github-star-btn header__github-star-close header__github-star-count header__github-star-label header__left header__logo header__logo-img header__logo-img--dark header__logo-img--light header__mode-badge header__mode-badge--dev header__pro-badge header__right header__separator header__star-separator
@@ -283,7 +282,7 @@ page-header (analytics-overview.css, connection-detail.css, layout.css, theme.cs
 pagination (data.css): pagination pagination__btn pagination__controls pagination__summary
 panel (analytics-overview.css, cards.css, charts.css, limits.css, request-drawer.css, routing-providers.css, routing-tabs.css, theme.css, welcome.css, wizard.css): panel panel--disabled panel__header panel__tab panel__tab--active panel__tab-icon panel__tabs panel__title
 plan-banners (modals.css): plan-banners
-plan-picker (auth.css): plan-picker plan-picker__amount plan-picker__badge plan-picker__card plan-picker__card--expanded plan-picker__card--pro plan-picker__cta plan-picker__details plan-picker__features plan-picker__name plan-picker__notice plan-picker__period plan-picker__price-inline plan-picker__radio plan-picker__radio-dot plan-picker__row plan-picker__section-header plan-picker__section-subtitle plan-picker__section-title plan-picker__usage
+plan-picker (auth.css): plan-picker plan-picker__amount plan-picker__badge plan-picker__card plan-picker__card--expanded plan-picker__card--pro plan-picker__cta plan-picker__details plan-picker__features plan-picker__name plan-picker__period plan-picker__price-inline plan-picker__radio plan-picker__radio-dot plan-picker__row plan-picker__section-header plan-picker__section-subtitle plan-picker__section-title plan-picker__usage
 platform-icon (platform-icons.css): platform-icon
 playground (playground.css): playground playground--embedded playground__add playground__add-plus playground__add-shortcut playground__add-shortcut-plus playground__columns
 playground-column (playground.css): playground-column playground-column__best playground-column__best--on playground-column__best--static playground-column__body playground-column__chip playground-column__edit-icon playground-column__error playground-column__error-text playground-column__header playground-column__headers playground-column__headers-caret playground-column__headers-caret--open playground-column__headers-list playground-column__headers-toggle playground-column__icon playground-column__metric playground-column__metric-label playground-column__metric-value playground-column__metric-value-row playground-column__metrics playground-column__name playground-column__placeholder playground-column__remove playground-column__response playground-column__skeleton playground-column__title playground-column__title--readonly playground-column__title-left playground-column__win-badge
@@ -377,6 +376,7 @@ sr-only (playground.css, skeleton.css): sr-only
 status-badge (data.css, theme.css): status-badge status-badge--auto_fixed status-badge--error status-badge--fallback_error status-badge--neutral status-badge--ok status-badge--rate_limited status-badge--retry
 status-badge-tooltip (data.css): status-badge-tooltip status-badge-tooltip__bubble
 subscription-detail (routing-providers.css): subscription-detail__alt subscription-detail__alt-divider subscription-detail__alt-hint subscription-detail__btn subscription-detail__primary
+subscription-required-modal (modals.css): subscription-required-modal subscription-required-modal__actions subscription-required-modal__body subscription-required-modal__later subscription-required-modal__text subscription-required-modal__title
 summary-card (cards.css, theme.css): summary-card summary-card__label summary-card__subtitle summary-card__value
 theme-picker (agents.css): theme-picker theme-picker__option theme-picker__option--active
 theme-toggle (layout.css, theme.css): theme-toggle theme-toggle__icon
@@ -401,7 +401,7 @@ u-wrap (cards.css, charts.css, theme.css): u-wrap
 upgrade-back (agents.css): upgrade-back
 upgrade-limit-notice (agents.css): upgrade-limit-notice
 upgrade-page-header (agents.css): upgrade-page-header upgrade-page-header--centered upgrade-page-header__copy
-upgrade-plan-card (agents.css): upgrade-plan-card upgrade-plan-card--pro upgrade-plan-card__amount upgrade-plan-card__amount--custom upgrade-plan-card__badge upgrade-plan-card__body upgrade-plan-card__cta upgrade-plan-card__desc upgrade-plan-card__divider upgrade-plan-card__features upgrade-plan-card__features-intro upgrade-plan-card__footer upgrade-plan-card__header upgrade-plan-card__no-commitment upgrade-plan-card__notice upgrade-plan-card__period upgrade-plan-card__price upgrade-plan-card__usage
+upgrade-plan-card (agents.css): upgrade-plan-card upgrade-plan-card--pro upgrade-plan-card__amount upgrade-plan-card__amount--custom upgrade-plan-card__badge upgrade-plan-card__body upgrade-plan-card__cta upgrade-plan-card__desc upgrade-plan-card__divider upgrade-plan-card__features upgrade-plan-card__features-intro upgrade-plan-card__footer upgrade-plan-card__header upgrade-plan-card__no-commitment upgrade-plan-card__period upgrade-plan-card__price upgrade-plan-card__usage
 upgrade-plan-grid (agents.css): upgrade-plan-grid
 upgrade-pro-current (agents.css): upgrade-pro-current upgrade-pro-current__card upgrade-pro-current__status
 upgrade-success-modal (modals.css): upgrade-success-modal upgrade-success-modal__body upgrade-success-modal__done upgrade-success-modal__features upgrade-success-modal__icon upgrade-success-modal__subtitle upgrade-success-modal__title
