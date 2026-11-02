@@ -102,7 +102,7 @@ const SubscriptionRequiredModal: Component = () => {
               </p>
               <div class="subscription-required-modal__actions">
                 <button type="button" class="btn btn--primary" onClick={subscribe}>
-                  Subscribe for {price()}/month
+                  Subscribe
                 </button>
                 <a
                   class="btn btn--outline"
