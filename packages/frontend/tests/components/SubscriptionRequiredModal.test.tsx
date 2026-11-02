@@ -53,7 +53,8 @@ describe('SubscriptionRequiredModal', () => {
     render(() => <SubscriptionRequiredModal />);
 
     await screen.findByText('Your requests are paused');
-    expect(screen.getByText('Subscribe for $19/month')).toBeDefined();
+    expect(screen.getByText('Subscribe')).toBeDefined();
+    expect(screen.getByText(/\$19\/month since November 2, 2026/)).toBeDefined();
     const guide = screen.getByText('Self-host for free') as HTMLAnchorElement;
     expect(guide.getAttribute('href')).toBe(SELF_HOSTING_GUIDE_URL);
     expect(guide.getAttribute('target')).toBe('_blank');
@@ -65,7 +66,7 @@ describe('SubscriptionRequiredModal', () => {
     );
     render(() => <SubscriptionRequiredModal />);
 
-    await screen.findByText('Subscribe for $19/month');
+    await screen.findByText(/\$19\/month since November 2, 2026/);
   });
 
   it('closes on "Not now" and stays closed for the same session', async () => {
@@ -112,7 +113,7 @@ describe('SubscriptionRequiredModal', () => {
     render(() => <SubscriptionRequiredModal />);
     await screen.findByText('Your requests are paused');
 
-    fireEvent.click(screen.getByText('Subscribe for $19/month'));
+    fireEvent.click(screen.getByText('Subscribe'));
 
     expect(mockNavigate).toHaveBeenCalledWith('/upgrade?reason=requests');
     await waitFor(() => expect(dialog()).toBeNull());

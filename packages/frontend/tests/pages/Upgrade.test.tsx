@@ -38,6 +38,7 @@ vi.mock('../../src/services/toast-store.js', () => ({
 }));
 
 import Upgrade from '../../src/pages/Upgrade';
+import { SELF_HOSTING_GUIDE_URL } from '../../src/components/PlanPicker';
 
 const disabledStatus = {
   enabled: false,
@@ -161,13 +162,15 @@ describe('Upgrade', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/');
   });
 
-  it('continues on Free by navigating to the dashboard', async () => {
+  it('sends the Self-hosted card to the self-hosting guide', async () => {
     render(() => <Upgrade />);
 
-    const button = await screen.findByText('Continue without a subscription');
-    fireEvent.click(button);
+    const link = (await screen.findByText('Read the self-hosting guide')) as HTMLAnchorElement;
 
-    expect(mockNavigate).toHaveBeenCalledWith('/');
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe(SELF_HOSTING_GUIDE_URL);
+    expect(link.getAttribute('target')).toBe('_blank');
+    expect(screen.queryByText('Continue without a subscription')).toBeNull();
   });
 
   it('starts checkout with the current upgrade URL as cancel URL', async () => {
