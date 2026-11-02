@@ -154,18 +154,8 @@ const Upgrade: Component = () => {
                       The same gateway on your own server. You install, update and run it.
                     </p>
                     <div class="upgrade-plan-card__cta">
-                      <button
-                        class="btn btn--outline"
-                        onClick={() => {
-                          const uid = userId();
-                          if (uid) markPlanChosen(uid);
-                          navigate('/');
-                        }}
-                      >
-                        Continue without a subscription
-                      </button>
                       <a
-                        class="upgrade-plan-card__no-commitment"
+                        class="btn btn--outline"
                         href={SELF_HOSTING_GUIDE_URL}
                         target="_blank"
                         rel="noopener noreferrer"
