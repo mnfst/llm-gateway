@@ -96,7 +96,7 @@
 --z-toast: 8000
 --z-tooltip: 9999
 
-## Blocks (317 BEM blocks, 1704 classes)
+## Blocks (317 BEM blocks, 1699 classes)
 account-back-btn (agents.css): account-back-btn
 account-email-footer (agents.css): account-email-footer
 account-email-toggle (agents.css): account-email-toggle--disabled
@@ -282,7 +282,7 @@ page-header (analytics-overview.css, connection-detail.css, layout.css, theme.cs
 pagination (data.css): pagination pagination__btn pagination__controls pagination__summary
 panel (analytics-overview.css, cards.css, charts.css, limits.css, request-drawer.css, routing-providers.css, routing-tabs.css, theme.css, welcome.css, wizard.css): panel panel--disabled panel__header panel__tab panel__tab--active panel__tab-icon panel__tabs panel__title
 plan-banners (modals.css): plan-banners
-plan-picker (auth.css): plan-picker plan-picker__amount plan-picker__badge plan-picker__card plan-picker__card--expanded plan-picker__card--pro plan-picker__cta plan-picker__details plan-picker__features plan-picker__name plan-picker__period plan-picker__price-inline plan-picker__radio plan-picker__radio-dot plan-picker__row plan-picker__section-header plan-picker__section-subtitle plan-picker__section-title plan-picker__usage
+plan-picker (auth.css): plan-picker plan-picker__amount plan-picker__card plan-picker__cta plan-picker__details plan-picker__features plan-picker__name plan-picker__period plan-picker__price-inline plan-picker__row plan-picker__section-header plan-picker__section-subtitle plan-picker__section-title plan-picker__sign-out
 platform-icon (platform-icons.css): platform-icon
 playground (playground.css): playground playground--embedded playground__add playground__add-plus playground__add-shortcut playground__add-shortcut-plus playground__columns
 playground-column (playground.css): playground-column playground-column__best playground-column__best--on playground-column__best--static playground-column__body playground-column__chip playground-column__edit-icon playground-column__error playground-column__error-text playground-column__header playground-column__headers playground-column__headers-caret playground-column__headers-caret--open playground-column__headers-list playground-column__headers-toggle playground-column__icon playground-column__metric playground-column__metric-label playground-column__metric-value playground-column__metric-value-row playground-column__metrics playground-column__name playground-column__placeholder playground-column__remove playground-column__response playground-column__skeleton playground-column__title playground-column__title--readonly playground-column__title-left playground-column__win-badge
