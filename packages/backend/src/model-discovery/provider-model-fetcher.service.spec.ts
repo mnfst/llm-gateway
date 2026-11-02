@@ -19,6 +19,7 @@ describe('ProviderModelFetcherService', () => {
   it('should have configs for all providers including subscription variants', () => {
     const expected = [
       'openai',
+      'atlascloud',
       'openai-subscription',
       'bedrock',
       'cerebras',
@@ -56,6 +57,25 @@ describe('ProviderModelFetcherService', () => {
     for (const id of expected) {
       expect(PROVIDER_CONFIGS[id]).toBeDefined();
     }
+  });
+
+  it('should fetch Atlas Cloud models from the OpenAI-compatible models endpoint', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        data: [{ id: 'deepseek-ai/deepseek-v4-pro' }, { id: 'text-embedding-test' }],
+      }),
+    });
+
+    const result = await service.fetch('atlascloud', 'apikey-test');
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://api.atlascloud.ai/v1/models',
+      expect.objectContaining({
+        headers: { Authorization: 'Bearer apikey-test' },
+      }),
+    );
+    expect(result.map((model) => model.id)).toEqual(['deepseek-ai/deepseek-v4-pro']);
   });
 
   it('discovers only Gemini models from the Gemini Free LiteLLM catalog', async () => {
