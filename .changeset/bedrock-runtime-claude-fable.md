@@ -2,4 +2,4 @@
 'manifest': patch
 ---
 
-Bedrock model discovery now lists the Claude Fable 5 and 5.1 inference profiles and serves them through Bedrock Runtime Messages. AWS only allows these models when the account's Bedrock data retention mode for the Region is `aws_review` (or the legacy `provider_data_share`): prompts and completions are then retained within the AWS boundary for up to 30 days and may be reviewed by AWS, and are not shared with the model provider. Without it, Bedrock rejects the request with a 400 ValidationException.
+Bedrock discovery now lists the Claude Fable 5 and 5.1 inference profiles. AWS only serves them when the Region's data retention mode is `aws_review` (or legacy `provider_data_share`), which retains prompts and completions for up to 30 days and lets AWS review them; otherwise Bedrock answers 400.
