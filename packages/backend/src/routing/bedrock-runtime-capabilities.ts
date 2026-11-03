@@ -73,8 +73,26 @@ const CATALOG_BY_MODEL_ID = new Map(
 /**
  * Claude base models checked live on the Runtime `/anthropic/v1/messages`
  * endpoint. Bedrock does not publish which models it serves there (older
- * Sonnet 4.x and Opus 4.1-4.6 reject it with 404, Fable with a 400
- * data-retention error), so each entry is verified before it is added.
+ * Sonnet 4.x and Opus 4.1-4.6 reject it with 404), so each entry is verified
+ * before it is added.
+ *
+ * Fable 5 / 5.1 are served on Runtime Messages through cross-Region inference
+ * profiles. Verified 200 on the `us.` and `global.` profiles of both
+ * `anthropic.claude-fable-5` and `anthropic.claude-fable-5-1` on 2026-11-03
+ * with the account in `provider_data_share`; `aws_review` is sufficient per
+ * the AWS docs. AWS only allows them when the account's Bedrock data retention
+ * mode for the Region is `aws_review` (or the legacy `provider_data_share`).
+ * The setting is per Region. With the mode unset (`inherit`), `default` or
+ * `none`, Runtime answers 400 ValidationException (e.g. "data retention mode
+ * 'default' is not available for this model"). `aws_review` means prompts and
+ * completions are retained within the AWS boundary for up to 30 days and may
+ * be reviewed by AWS (not shared with the model provider). With cross-region
+ * inference (the only way Manifest reaches these models), retained data is
+ * stored in the Region that processes the request. It is the account owner's
+ * decision, set on the Bedrock control plane
+ * (`PUT https://bedrock.<region>.amazonaws.com/data-retention`) and separate
+ * from the bedrock-mantle account setting. See
+ * https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html.
  */
 export const BEDROCK_RUNTIME_CLAUDE_MESSAGES_MODELS: readonly {
   modelId: string;
@@ -90,6 +108,10 @@ export const BEDROCK_RUNTIME_CLAUDE_MESSAGES_MODELS: readonly {
   // AWS lists the us./global. CRIS profiles, and Runtime Messages recognises the
   // ID (403 entitlement, not the 400 an unknown ID gets). Not yet a 200.
   { modelId: 'anthropic.claude-haiku-5-5', verifiedAt: '2026-10-09' },
+  // 200 only when the Region's data retention mode is `aws_review` (or the
+  // legacy `provider_data_share`); otherwise a 400 ValidationException (see above).
+  { modelId: 'anthropic.claude-fable-5', verifiedAt: '2026-11-03' },
+  { modelId: 'anthropic.claude-fable-5-1', verifiedAt: '2026-11-03' },
 ];
 
 const CLAUDE_MESSAGES_MODEL_IDS = new Set(
