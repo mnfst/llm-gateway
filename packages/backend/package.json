@@ -52,7 +52,7 @@
     "express-rate-limit": "^8.7.0",
     "helmet": "^8.3.0",
     "manifest-shared": "*",
-    "modelparams": "^0.0.57",
+    "modelparams": "^0.0.72",
     "pg": "^8.23.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
