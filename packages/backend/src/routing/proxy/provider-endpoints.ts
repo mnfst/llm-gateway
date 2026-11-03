@@ -71,6 +71,8 @@ export interface ProviderEndpoint {
   acceptsMaxOutputTokens?: boolean;
   /** Send Manifest's stable `prompt_cache_key` when the caller did not set one. */
   acceptsPromptCacheKey?: boolean;
+  /** Map Chat Completions `reasoning_effort` to `reasoning: { effort, summary: 'auto' }`. */
+  acceptsReasoningSummary?: boolean;
 }
 
 const openaiStreamUsage = { streamUsageReporting: 'openai_stream_options' as const };
@@ -256,6 +258,7 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     forwardResponsesStream: true,
     acceptsMaxOutputTokens: true,
     acceptsPromptCacheKey: true,
+    acceptsReasoningSummary: true,
   },
   'bedrock-anthropic': {
     baseUrl: getBedrockMantleBaseUrl(),
