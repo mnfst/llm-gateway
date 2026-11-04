@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import type { AuthType, ModelRoute } from 'manifest-shared';
@@ -96,6 +96,8 @@ import {
   type RouteCredentialDeps,
 } from './route-credentials';
 import { recordingResponseFromText } from './attempt-recording-capture';
+import { parseQuotaHalt, quotaHaltCooldownTtlMs } from './quota-halt';
+import { QuotaAccountingService } from './quota-accounting.service';
 import {
   CredentialRejectionCooldown,
   type RejectedCredentialRef,
@@ -169,6 +171,8 @@ export class ProxyFallbackService {
     private readonly providerParamSpecs: ProviderParamSpecService,
     private readonly reasoningCache: ReasoningContentCache,
     private readonly autofixService: AutofixService,
+    @Optional()
+    private readonly quotaAccounting?: QuotaAccountingService,
   ) {}
 
   /**
@@ -605,7 +609,7 @@ export class ProxyFallbackService {
         opts,
         forward,
       );
-      this.recordRateLimitCooldown(opts, result.response);
+      await this.recordRateLimitCooldown(opts, result.response);
       // Still 401 after any OAuth refresh: the credential is stale (refresh
       // rejected, or the account itself is refused). Skip it until it changes.
       if (result.response.status === 401) {
@@ -710,7 +714,7 @@ export class ProxyFallbackService {
       // A healed retry can itself be rate-limited. Record the cooldown so the
       // next attempt on this route skips it, exactly as tryForwardToProvider
       // does for a first attempt.
-      this.recordRateLimitCooldownForKey(
+      await this.recordRateLimitCooldownForKey(
         this.rateLimitCooldownKey({
           agentId: opts.agentId,
           authType: opts.authType,
@@ -719,6 +723,7 @@ export class ProxyFallbackService {
           model: opts.model,
         }),
         retried.response,
+        opts.provider,
       );
       return await this.bufferNonStreamBody(
         { ...retried, attempt, providerCallStarted: true },
@@ -828,11 +833,22 @@ export class ProxyFallbackService {
     };
   }
 
-  private recordRateLimitCooldown(opts: ForwardProviderOptions, response: Response): void {
-    this.recordRateLimitCooldownForKey(this.rateLimitCooldownKey(opts), response);
+  private async recordRateLimitCooldown(
+    opts: ForwardProviderOptions,
+    response: Response,
+  ): Promise<void> {
+    await this.recordRateLimitCooldownForKey(
+      this.rateLimitCooldownKey(opts),
+      response,
+      opts.provider,
+    );
   }
 
-  private recordRateLimitCooldownForKey(key: string | null, response: Response): void {
+  private async recordRateLimitCooldownForKey(
+    key: string | null,
+    response: Response,
+    provider?: string,
+  ): Promise<void> {
     if (response.status !== 429 || !key) return;
     if (this.rateLimitCooldowns.size >= MAX_RATE_LIMIT_COOLDOWNS) {
       this.evictExpiredRateLimitCooldowns();
@@ -840,8 +856,37 @@ export class ProxyFallbackService {
         this.evictOldestRateLimitCooldown();
       }
     }
-    const ttlMs = this.parseRetryAfterMs(response.headers.get('retry-after'));
+    const ttlMs = await this.rateLimitCooldownTtlMs(response, provider);
     this.rateLimitCooldowns.set(key, Date.now() + ttlMs);
+  }
+
+  /**
+   * Cooldown TTL for an upstream 429 (RET-480-B1). A quota-window halt adopts
+   * its real `next_flush_time` window — bounded [1s, 1h] and deliberately NOT
+   * clamped to the plain-429 5-minute cap, because every in-window retry
+   * provably fails. The body is probed through response.clone() so the error
+   * body stays unread for the client-facing path. Plain 429s keep the header /
+   * 15s-default treatment unchanged.
+   */
+  private async rateLimitCooldownTtlMs(response: Response, provider?: string): Promise<number> {
+    const body = await response
+      .clone()
+      .text()
+      .catch(() => null);
+    const halt = body === null ? null : parseQuotaHalt(response.status, body, Date.now());
+    if (halt) {
+      // The same probe pins the accounting window identity (RET-480-B2) —
+      // guarded, because telemetry can never break forwarding.
+      if (provider) {
+        try {
+          this.quotaAccounting?.noteWindowFlush(provider, halt.flushMs);
+        } catch {
+          // ignore accounting failures
+        }
+      }
+      return quotaHaltCooldownTtlMs(halt.flushMs);
+    }
+    return this.parseRetryAfterMs(response.headers.get('retry-after'));
   }
 
   private evictExpiredRateLimitCooldowns(now = Date.now()): void {

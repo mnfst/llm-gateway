@@ -67,6 +67,7 @@ import { openAiModelId, subscriptionOpenAiModelId } from './openai-model-id';
 import { openAiModelCapabilities, type OpenAiModelCapabilities } from './openai-model-capabilities';
 import { PlanService } from '../../billing/plan.service';
 import { StreamFailure } from './stream-writer';
+import { QuotaAccountingService } from './quota-accounting.service';
 import { AgentRecordingConfigService } from '../../common/services/agent-recording-config.service';
 import { AttemptRecordingService } from './attempt-recording.service';
 import {
@@ -146,6 +147,8 @@ export class ProxyController {
     private readonly recordingConfig?: AgentRecordingConfigService,
     @Optional()
     private readonly attemptRecording?: AttemptRecordingService,
+    @Optional()
+    private readonly quotaAccounting?: QuotaAccountingService,
   ) {}
 
   @Get('models')
@@ -572,6 +575,14 @@ export class ProxyController {
           apiMode,
           fallbackAutofix,
         );
+        // Consumed accounting (RET-480-B2): normalized prompt+completion usage
+        // of the routed provider that actually served this request. Guarded —
+        // telemetry can never break the proxy path.
+        try {
+          this.quotaAccounting?.recordConsumed(meta.provider, streamUsage);
+        } catch {
+          // ignore accounting failures
+        }
       }
     } catch (err: unknown) {
       await this.handleProxyError(

@@ -3755,6 +3755,84 @@ describe('proxy-response-handler', () => {
   });
   /* ── Credential scrubbing in log output ── */
 
+  describe('Retry-After on quota-halt 429s (RET-480-B1)', () => {
+    // A halt window exactly 120s out keeps the expected header deterministic:
+    // the parsed seconds delta stays in (119, 120] regardless of the few ms
+    // spent between building the body and parsing it.
+    const haltBody = (code: number) =>
+      JSON.stringify({ error: { code, next_flush_time: Date.now() + 120_000 } });
+
+    it('sets Retry-After on the direct provider-error path for quota-window 429s', async () => {
+      const { res, headers } = mockResponse();
+      const recorder = mockRecorder();
+      const meta = makeMeta();
+
+      await handleProviderError(
+        res as any,
+        testCtx,
+        meta,
+        buildMetaHeaders(meta),
+        429,
+        haltBody(1316),
+        undefined,
+        recorder as any,
+        'trace-429-halt',
+      );
+
+      expect(res.status).toHaveBeenCalledWith(429);
+      expect(headers['Retry-After']).toBe('120');
+    });
+
+    it('sets Retry-After on the fallback-exhausted path for quota-window 429s', async () => {
+      const { res, headers } = mockResponse();
+      const recorder = mockRecorder();
+      const meta = makeMeta();
+
+      await handleProviderError(
+        res as any,
+        testCtx,
+        meta,
+        buildMetaHeaders(meta),
+        429,
+        haltBody(1318),
+        [
+          {
+            model: 'gpt-4o-mini',
+            provider: 'openai',
+            fallbackIndex: 0,
+            status: 429,
+            errorBody: 'rate limited',
+          },
+        ] as any,
+        recorder as any,
+        'trace-429-halt-exhausted',
+      );
+
+      expect(headers['X-Manifest-Fallback-Exhausted']).toBe('true');
+      expect(headers['Retry-After']).toBe('120');
+    });
+
+    it('leaves concurrency 429s unchanged (no Retry-After header)', async () => {
+      const { res, headers } = mockResponse();
+      const recorder = mockRecorder();
+      const meta = makeMeta();
+
+      await handleProviderError(
+        res as any,
+        testCtx,
+        meta,
+        buildMetaHeaders(meta),
+        429,
+        haltBody(1302),
+        undefined,
+        recorder as any,
+        'trace-429-concurrency',
+      );
+
+      expect(headers).not.toHaveProperty('Retry-After');
+    });
+  });
+
   describe('secret scrubbing of logged upstream error bodies', () => {
     // Anthropic 401s echo the caller's own auth header back inside the error
     // body. Everything we log has to go through scrubSecrets first.
