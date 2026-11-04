@@ -26,6 +26,7 @@ import {
   normalizeOpenAiReasoningDelta,
   type OpenAiReasoningStreamFormat,
 } from './reasoning-format';
+import { hasFunctionTools } from '../function-tools';
 
 /** Convert a ChatGPT Responses API response to OpenAI format. */
 export function convertChatGptResponse(
@@ -430,8 +431,7 @@ export function sanitizeOpenAiBody(
   if (
     options.forwardReasoningEffort &&
     cleaned.reasoning_effort === undefined &&
-    Array.isArray(cleaned.tools) &&
-    cleaned.tools.some((tool) => (tool as { type?: unknown } | null)?.type === 'function')
+    hasFunctionTools(cleaned.tools)
   ) {
     cleaned.reasoning_effort = 'none';
   }

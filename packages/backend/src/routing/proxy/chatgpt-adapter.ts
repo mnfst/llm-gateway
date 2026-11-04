@@ -249,6 +249,25 @@ interface ReasoningStreamState {
   streamed: boolean;
   /** True once the stream has emitted any function_call output item / delta. */
   sawToolCall: boolean;
+  /** Responses `output_index` → Chat Completions tool call index, in first-seen order. */
+  toolCallIndex?: Map<number, number>;
+}
+
+/**
+ * Chat Completions numbers tool calls from 0, and the OpenAI SDK accumulates
+ * them by that index. A Responses `output_index` counts every output item, so
+ * a reasoning item first pushes the first function call to 1. With stream
+ * state, renumber densely in first-seen order; without it, keep the raw index.
+ */
+function denseIndex(state: ReasoningStreamState | undefined, outputIndex: number): number {
+  if (!state) return outputIndex;
+  state.toolCallIndex ??= new Map();
+  let index = state.toolCallIndex.get(outputIndex);
+  if (index === undefined) {
+    index = state.toolCallIndex.size;
+    state.toolCallIndex.set(outputIndex, index);
+  }
+  return index;
 }
 
 /**
@@ -390,6 +409,11 @@ export function transformResponsesStreamChunk(
   }
 
   if (!eventType && !dataStr) return null;
+  // Bedrock Runtime sends frames with no `event:` line; the name is only in `data.type`.
+  if (!eventType) {
+    const type = safeParse(dataStr)?.type;
+    if (typeof type === 'string') eventType = type;
+  }
 
   if (eventType === 'response.output_text.delta') {
     const data = safeParse(dataStr);
@@ -415,7 +439,10 @@ export function transformResponsesStreamChunk(
         delta: {
           tool_calls: [
             {
-              index: typeof data.output_index === 'number' ? data.output_index : 0,
+              index: denseIndex(
+                state,
+                typeof data.output_index === 'number' ? data.output_index : 0,
+              ),
               function: { arguments: delta },
             },
           ],
@@ -437,7 +464,10 @@ export function transformResponsesStreamChunk(
         delta: {
           tool_calls: [
             {
-              index: typeof data.output_index === 'number' ? data.output_index : 0,
+              index: denseIndex(
+                state,
+                typeof data.output_index === 'number' ? data.output_index : 0,
+              ),
               id: (item.call_id as string) ?? '',
               type: 'function',
               function: { name: (item.name as string) ?? '', arguments: '' },

@@ -863,11 +863,10 @@ describe('ProviderClient', () => {
         expect(sent.reasoning_effort).toBe('none');
       });
 
-      it.each([{ tools }, {}])('forwards the caller reasoning_effort (%o)', async (extra) => {
-        const sent = await sentBodyFor('us.openai.gpt-6-luna', {
-          ...extra,
-          reasoning_effort: 'high',
-        });
+      // With function tools, effort high goes to Responses instead; see
+      // provider-client.bedrock-gpt-responses.spec.ts.
+      it('forwards the caller reasoning_effort', async () => {
+        const sent = await sentBodyFor('us.openai.gpt-6-luna', { reasoning_effort: 'high' });
 
         expect(sent.reasoning_effort).toBe('high');
       });
