@@ -74,6 +74,9 @@ describe('bedrockRuntimeChatNeedsResponses', () => {
       ['low', 'low'],
       ['high', 'high'],
       ['max', 'max'],
+      // Chat rejects `none` for Astra; Responses rejects it too, but chat has no
+      // valid effort with tools at all, so the request still takes the Responses route.
+      ['none', 'none'],
     ])('is true with function tools and effort %s', (_label, effort) => {
       const body: Record<string, unknown> = { tools: [functionTool] };
       if (effort !== undefined) body.reasoning_effort = effort;

@@ -446,6 +446,18 @@ describe('dense tool call index in the Chat Completions stream', () => {
       expect(toolCallsOf(parseOutput(delta))[0].index).toBe(0);
     });
 
+    it('defaults to index 0 when a function call announcement has no output_index', () => {
+      const announce = transformResponsesStreamChunk(
+        named({
+          type: 'response.output_item.added',
+          item: { type: 'function_call', call_id: 'call_1', name: 'get_weather' },
+        }),
+        MODEL,
+      );
+
+      expect(toolCallsOf(parseOutput(announce))[0].index).toBe(0);
+    });
+
     it('reads data.type without an event line and keeps the raw output_index', () => {
       const announce = transformResponsesStreamChunk(
         bare(callAdded(1, 'call_1', 'get_weather')),
