@@ -1,0 +1,25 @@
+packages/backend/src/routing/proxy/__tests__/chatgpt-adapter.bedrock-sse.spec.ts
+  s_6be6e55fa1743d::t_320690882021c2 449-460
+packages/backend/src/routing/__tests__/bedrock-runtime-chat-routing.spec.ts
+  s_6be6e55fa1743d::t_9c9820fe2e097f 77-79
+CLAUDE.md
+  s_6be6e55fa1743d::t_5600f80a3bed46 496
+packages/backend/.env.example
+  s_6be6e55fa1743d::t_20ecf6394750a2 72-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f7504da072494c5bb78ff3cc5e90779e3fedc1b1",
+  "prompts": {},
+  "sessions": {
+    "s_6be6e55fa1743d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ff381f6e-b7f6-445e-8b47-5242e3e55fc9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
