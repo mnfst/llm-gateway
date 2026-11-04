@@ -73,8 +73,17 @@ const CATALOG_BY_MODEL_ID = new Map(
 /**
  * Claude base models checked live on the Runtime `/anthropic/v1/messages`
  * endpoint. Bedrock does not publish which models it serves there (older
- * Sonnet 4.x and Opus 4.1-4.6 reject it with 404, Fable with a 400
- * data-retention error), so each entry is verified before it is added.
+ * Sonnet 4.x and Opus 4.1-4.6 reject it with 404), so each entry is verified
+ * before it is added.
+ *
+ * Fable 5 / 5.1 are served here through their cross-Region inference profiles
+ * (200 verified on the `us.` and `global.` profiles, 2026-11-03), but only when
+ * the account's Bedrock data retention mode for the Region is `aws_review` (or
+ * the legacy `provider_data_share`); otherwise Runtime answers 400
+ * ValidationException. `aws_review` retains prompts and completions within AWS
+ * for up to 30 days and lets AWS review them. It is the account owner's choice,
+ * set per Region on the Bedrock control plane:
+ * https://docs.aws.amazon.com/bedrock/latest/userguide/data-retention.html
  */
 export const BEDROCK_RUNTIME_CLAUDE_MESSAGES_MODELS: readonly {
   modelId: string;
@@ -90,6 +99,9 @@ export const BEDROCK_RUNTIME_CLAUDE_MESSAGES_MODELS: readonly {
   // AWS lists the us./global. CRIS profiles, and Runtime Messages recognises the
   // ID (403 entitlement, not the 400 an unknown ID gets). Not yet a 200.
   { modelId: 'anthropic.claude-haiku-5-5', verifiedAt: '2026-10-09' },
+  // Needs data retention aws_review; see above.
+  { modelId: 'anthropic.claude-fable-5', verifiedAt: '2026-11-03' },
+  { modelId: 'anthropic.claude-fable-5-1', verifiedAt: '2026-11-03' },
 ];
 
 const CLAUDE_MESSAGES_MODEL_IDS = new Set(

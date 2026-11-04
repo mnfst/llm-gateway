@@ -73,6 +73,8 @@ describe('Bedrock Runtime Claude Messages list', () => {
     'anthropic.claude-opus-5-5',
     'anthropic.claude-haiku-4-5-20251001-v1:0',
     'anthropic.claude-haiku-5-5',
+    'anthropic.claude-fable-5',
+    'anthropic.claude-fable-5-1',
   ];
   const UNSUPPORTED_IDS = [
     'anthropic.claude-opus-4-1-20250805-v1:0',
@@ -81,8 +83,6 @@ describe('Bedrock Runtime Claude Messages list', () => {
     'anthropic.claude-sonnet-4-20250514-v1:0',
     'anthropic.claude-sonnet-4-5-20250929-v1:0',
     'anthropic.claude-sonnet-4-6',
-    'anthropic.claude-fable-5',
-    'anthropic.claude-fable-5-1',
     'anthropic.claude-3-haiku-20240307-v1:0',
     'anthropic.claude-3-5-sonnet-20241022-v2:0',
   ];
