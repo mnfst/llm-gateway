@@ -271,6 +271,7 @@ describe('resolveBedrockEndpointKey', () => {
   it.each([
     'us.openai.gpt-5.6-luna',
     'global.openai.gpt-6-astra',
+    'global.openai.gpt-6.1-sol',
     'us.openai.gpt-6-sol',
     'global.openai.gpt-6-luna',
     'global.moonshotai.kimi-k3',
