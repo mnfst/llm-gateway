@@ -274,6 +274,7 @@ describe('ProviderModelFetcherService', () => {
           inferenceProfileSummaries: [
             { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
             { inferenceProfileId: 'global.openai.gpt-6-luna', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.openai.gpt-6.1-sol', status: 'ACTIVE' },
             { inferenceProfileId: 'global.openai.gpt-6-astra', status: 'INACTIVE' },
             { inferenceProfileId: 'global.anthropic.claude-sonnet-4-6', status: 'ACTIVE' },
           ],
@@ -295,6 +296,7 @@ describe('ProviderModelFetcherService', () => {
         'openai.gpt-6-sol',
         'global.moonshotai.kimi-k3',
         'global.openai.gpt-6-luna',
+        'global.openai.gpt-6.1-sol',
       ]);
       expect(result[1]).toMatchObject({
         provider: 'bedrock',
