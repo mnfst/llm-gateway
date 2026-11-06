@@ -1,5 +1,11 @@
 # manifest
 
+## 6.29.1
+
+### Patch Changes
+
+- e10162d: Request recordings are no longer deleted after a retention period on Manifest Cloud, for any plan. Self-hosted installs now keep them forever by default; set `REQUEST_RECORDING_RETENTION_DAYS` to delete older ones.
+
 ## 6.29.0
 
 ### Minor Changes
