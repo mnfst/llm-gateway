@@ -523,6 +523,25 @@ describe('chatgpt-adapter', () => {
       expect(message.reasoning_content).toBe('Summary text.\n\nReasoning text.');
     });
 
+    it('reports reasoning tokens as completion_tokens_details.reasoning_tokens', () => {
+      const out = fromResponsesResponse(
+        {
+          output: [],
+          usage: {
+            input_tokens: 10,
+            output_tokens: 50,
+            total_tokens: 60,
+            output_tokens_details: { reasoning_tokens: 42 },
+          },
+        },
+        'gpt-5',
+      );
+      expect(out.usage).toMatchObject({
+        completion_tokens: 50,
+        completion_tokens_details: { reasoning_tokens: 42 },
+      });
+    });
+
     it('defaults missing usage fields to zero', () => {
       const out = fromResponsesResponse({ output: [] }, 'gpt-5');
       expect(out.usage).toEqual({
@@ -681,6 +700,18 @@ describe('chatgpt-adapter', () => {
       const parsed = JSON.parse(first.replace(/^data: /, ''));
       expect(parsed.choices[0].finish_reason).toBe('stop');
       expect(parsed.usage).toMatchObject({ prompt_tokens: 1, completion_tokens: 2 });
+    });
+
+    it('carries reasoning tokens into the streamed usage', () => {
+      const chunk =
+        'event: response.completed\ndata: {"response":{"usage":{"input_tokens":1,"output_tokens":9,"total_tokens":10,"output_tokens_details":{"reasoning_tokens":7}},"output":[]}}';
+      const raw = transformResponsesStreamChunk(chunk, 'gpt-5');
+      const first = raw!.split('\n\n')[0];
+      const parsed = JSON.parse(first.replace(/^data: /, ''));
+      expect(parsed.usage).toMatchObject({
+        completion_tokens: 9,
+        completion_tokens_details: { reasoning_tokens: 7 },
+      });
     });
 
     it('marks finish_reason=tool_calls when the completed response had function_call items', () => {
