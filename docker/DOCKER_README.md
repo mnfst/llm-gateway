@@ -131,7 +131,7 @@ session-signing secret also decrypts every stored credential and recording.
 Set it before first boot.
 Recordings written under a previous secret are not migrated: after the secret
 changes they can no longer be decrypted and the dashboard shows them as
-unavailable, while retention removes them on schedule.
+unavailable.
 
 (Optional: to use a stronger database password, set BOTH `POSTGRES_PASSWORD` and `DATABASE_URL` in `.env`, they must agree, and any special characters in the password need to be percent-encoded in the URL.)
 

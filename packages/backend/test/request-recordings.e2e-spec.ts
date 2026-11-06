@@ -298,20 +298,23 @@ describe(`Provider Attempt recording E2E (${expectedBackend})`, () => {
     await expect(storage.get(jsonRecording.recording_key)).resolves.toBeInstanceOf(Buffer);
   });
 
-  it('retention removes the object before clearing its attempt pointer and preserves the parent Request', async () => {
-    await dataSource.query(
-      `UPDATE agent_messages
-       SET timestamp = CURRENT_TIMESTAMP - INTERVAL '10 days'
-       WHERE id = $1`,
+  it('Manifest Cloud keeps an expired recording even with a retention window set', async () => {
+    await backdateJsonRecording();
+    const retention = retentionService('cloud');
+
+    await expect(retention.deleteExpiredRecordings()).resolves.toBe(0);
+
+    const metadata = await dataSource.query(
+      `SELECT recording_key FROM agent_messages WHERE id = $1`,
       [jsonRecording.attempt_id],
     );
-    const retention = new RequestRecordingRetentionService(
-      dataSource,
-      {
-        get: (key: string) => (key === 'app.requestRecordingRetentionDays' ? 1 : undefined),
-      } as ConfigService,
-      storage,
-    );
+    expect(metadata).toEqual([{ recording_key: jsonRecording.recording_key }]);
+    await expect(storage.get(jsonRecording.recording_key)).resolves.toBeInstanceOf(Buffer);
+  });
+
+  it('self-hosted retention removes the object before clearing its attempt pointer and preserves the parent Request', async () => {
+    await backdateJsonRecording();
+    const retention = retentionService('selfhosted');
 
     await expect(retention.deleteExpiredRecordings()).resolves.toBe(1);
 
@@ -331,6 +334,33 @@ describe(`Provider Attempt recording E2E (${expectedBackend})`, () => {
 function refreshAppReferences(): void {
   dataSource = app.get(DataSource);
   storage = app.get(RequestRecordingStorageService);
+}
+
+async function backdateJsonRecording(): Promise<void> {
+  await dataSource.query(
+    `UPDATE agent_messages
+     SET timestamp = CURRENT_TIMESTAMP - INTERVAL '10 days'
+     WHERE id = $1`,
+    [jsonRecording.attempt_id],
+  );
+}
+
+/** Builds the retention job as a one-day window would in the given deployment mode. */
+function retentionService(mode: 'cloud' | 'selfhosted'): RequestRecordingRetentionService {
+  const previousMode = process.env['MANIFEST_MODE'];
+  process.env['MANIFEST_MODE'] = mode;
+  try {
+    return new RequestRecordingRetentionService(
+      dataSource,
+      {
+        get: (key: string) => (key === 'app.requestRecordingRetentionDays' ? 1 : undefined),
+      } as ConfigService,
+      storage,
+    );
+  } finally {
+    if (previousMode === undefined) delete process.env['MANIFEST_MODE'];
+    else process.env['MANIFEST_MODE'] = previousMode;
+  }
 }
 
 async function configureRecordingAgent(): Promise<void> {

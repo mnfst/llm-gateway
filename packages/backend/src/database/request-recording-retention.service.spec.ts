@@ -1,12 +1,12 @@
 import { Logger } from '@nestjs/common';
-import { isBillingEnabled } from '../billing/billing.config';
+import { isSelfHosted } from '../common/utils/detect-self-hosted';
 import { RequestRecordingRetentionService } from './request-recording-retention.service';
 
-jest.mock('../billing/billing.config', () => ({
-  isBillingEnabled: jest.fn(),
+jest.mock('../common/utils/detect-self-hosted', () => ({
+  isSelfHosted: jest.fn(),
 }));
 
-const mockedIsBillingEnabled = jest.mocked(isBillingEnabled);
+const mockedIsSelfHosted = jest.mocked(isSelfHosted);
 
 describe('RequestRecordingRetentionService', () => {
   const query = jest.fn();
@@ -16,125 +16,144 @@ describe('RequestRecordingRetentionService', () => {
   const createQueryRunner = jest.fn(() => queryRunner);
   const get = jest.fn();
   const storage = { delete: jest.fn() };
-  let service: RequestRecordingRetentionService;
+  const expired = {
+    attempt_id: 'attempt-1',
+    storage_key: 'request-recordings/v1/attempt-1.json.gz',
+  };
+  let warn: jest.SpyInstance;
+
+  const build = () =>
+    new RequestRecordingRetentionService(
+      { createQueryRunner } as never,
+      { get } as never,
+      storage as never,
+    );
 
   beforeEach(() => {
     jest.clearAllMocks();
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
-    get.mockReturnValue(null);
+    warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    mockedIsSelfHosted.mockReturnValue(true);
+    get.mockReturnValue(30);
     connect.mockResolvedValue(undefined);
     release.mockResolvedValue(undefined);
     storage.delete.mockResolvedValue(undefined);
-    mockedIsBillingEnabled.mockReturnValue(true);
     query.mockImplementation(async (sql: string) => {
       if (sql.includes('pg_try_advisory_lock')) return [{ acquired: true }];
-      if (sql.includes('pg_advisory_unlock')) return [{ unlocked: true }];
-      if (sql.includes('UPDATE agent_messages')) {
-        return [[{ id: 'attempt-1' }], 1];
-      }
+      if (sql.includes('FROM agent_messages')) return [expired];
+      if (sql.includes('UPDATE agent_messages')) return [[{ id: 'attempt-1' }], 1];
       return [];
     });
-    service = new RequestRecordingRetentionService(
-      { createQueryRunner } as never,
-      { get } as never,
-      storage as never,
-    );
   });
 
   afterEach(() => jest.restoreAllMocks());
 
-  it('deletes Free recordings after 7 days and Pro recordings after 365 days', async () => {
-    const expired = {
-      attempt_id: 'attempt-1',
-      storage_key: 'request-recordings/v1/attempt-1.json.gz',
-    };
-    query.mockImplementation(async (sql: string) => {
-      if (sql.includes('pg_try_advisory_lock')) return [{ acquired: true }];
-      if (sql.includes('FROM agent_messages attempt')) return [expired];
-      if (sql.includes('UPDATE agent_messages')) {
-        return [[{ id: 'attempt-1' }], 1];
-      }
-      return [];
-    });
+  it('never deletes on Manifest Cloud, even when a retention window is configured', async () => {
+    mockedIsSelfHosted.mockReturnValue(false);
+    const service = build();
+
+    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+
+    expect(createQueryRunner).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      'REQUEST_RECORDING_RETENTION_DAYS is ignored on Manifest Cloud: request recordings are never deleted',
+    );
+  });
+
+  it('never deletes on Manifest Cloud without a retention window', async () => {
+    mockedIsSelfHosted.mockReturnValue(false);
+    get.mockReturnValue(undefined);
+    const service = build();
+
+    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+
+    expect(createQueryRunner).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('keeps every self-hosted recording when the operator sets no retention window', async () => {
+    get.mockReturnValue(null);
+    const service = build();
+
+    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+
+    expect(createQueryRunner).not.toHaveBeenCalled();
+    expect(storage.delete).not.toHaveBeenCalled();
+  });
+
+  it('deletes self-hosted recordings past the operator window, object before pointer', async () => {
+    const service = build();
 
     await expect(service.deleteExpiredRecordings()).resolves.toBe(1);
 
-    const planQuery = query.mock.calls.find(([sql]) =>
-      String(sql).includes('FROM agent_messages attempt'),
-    );
-    expect(planQuery).toBeDefined();
-    expect(planQuery![0]).toContain('AND NOT EXISTS');
-    expect(planQuery![0]).toContain('AND EXISTS');
-    expect(planQuery![0]).toContain("subscription.status IN ('active', 'trialing', 'past_due')");
-    expect(planQuery![0]).toContain(
-      "AND attempt.timestamp < CURRENT_TIMESTAMP - (LEAST($1::int, $2::int) * INTERVAL '1 day')",
-    );
-    expect(planQuery![1]).toEqual([7, 365]);
-    expect(storage.delete).toHaveBeenCalledWith(expired.storage_key);
-    const deleteCall = query.mock.calls.findIndex(([sql]) =>
-      String(sql).includes('UPDATE agent_messages'),
-    );
-    expect(storage.delete.mock.invocationCallOrder[0]).toBeLessThan(
-      query.mock.invocationCallOrder[deleteCall]!,
-    );
-  });
-
-  it('uses one global retention override for every plan', async () => {
-    get.mockReturnValue(30);
-    service = new RequestRecordingRetentionService(
-      { createQueryRunner } as never,
-      { get } as never,
-      storage as never,
-    );
-
-    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
-
-    const select = query.mock.calls.find(
-      ([sql]) =>
-        String(sql).includes('FROM agent_messages') &&
-        !String(sql).includes('FROM agent_messages attempt'),
-    );
+    const select = query.mock.calls.find(([sql]) => String(sql).includes('FROM agent_messages'));
     expect(select).toBeDefined();
     expect(select![0]).not.toContain('subscription');
     expect(select![1]).toEqual([30]);
+    expect(storage.delete).toHaveBeenCalledWith(expired.storage_key);
+    const pointerUpdate = query.mock.calls.findIndex(([sql]) =>
+      String(sql).includes('UPDATE agent_messages'),
+    );
+    expect(storage.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      query.mock.invocationCallOrder[pointerUpdate]!,
+    );
+    expect(Logger.prototype.log).toHaveBeenCalledWith(
+      'Deleted 1 expired Provider Attempt recording(s)',
+    );
   });
 
-  it('uses the 365-day default outside billing deployments', async () => {
-    mockedIsBillingEnabled.mockReturnValue(false);
+  it('counts pointer rows returned without the affected-count tuple', async () => {
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory_lock')) return [{ acquired: true }];
+      if (sql.includes('FROM agent_messages')) return [expired];
+      if (sql.includes('UPDATE agent_messages')) return [{ id: 'attempt-1' }];
+      return [];
+    });
 
-    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+    await expect(build().deleteExpiredRecordings()).resolves.toBe(1);
+  });
 
-    expect(query).toHaveBeenCalledWith(expect.stringContaining('FROM agent_messages'), [365]);
+  it('ignores unlock and release failures after a run', async () => {
+    query.mockImplementation(async (sql: string) => {
+      if (sql.includes('pg_try_advisory_lock')) return [{ acquired: true }];
+      if (sql.includes('pg_advisory_unlock')) throw new Error('connection dropped');
+      return [];
+    });
+    release.mockRejectedValue(new Error('already released'));
+
+    await expect(build().deleteExpiredRecordings()).resolves.toBe(0);
   });
 
   it('does no work when another replica owns the advisory lock', async () => {
     query.mockResolvedValueOnce([{ acquired: false }]);
 
-    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+    await expect(build().deleteExpiredRecordings()).resolves.toBe(0);
 
     expect(storage.delete).not.toHaveBeenCalled();
     expect(release).toHaveBeenCalled();
   });
 
   it('keeps metadata when object deletion fails so cleanup can retry', async () => {
-    query.mockImplementation(async (sql: string) => {
-      if (sql.includes('pg_try_advisory_lock')) return [{ acquired: true }];
-      if (sql.includes('FROM agent_messages attempt')) {
-        return [
-          {
-            attempt_id: 'attempt-1',
-            storage_key: 'request-recordings/v1/attempt-1.json.gz',
-          },
-        ];
-      }
-      return [];
-    });
     storage.delete.mockRejectedValue(new Error('bucket offline'));
 
-    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+    await expect(build().deleteExpiredRecordings()).resolves.toBe(0);
 
     expect(query.mock.calls.some(([sql]) => String(sql).includes('UPDATE agent_messages'))).toBe(
       false,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      'Could not delete Provider Attempt recording attempt-1: bucket offline',
+    );
+  });
+
+  it('logs non-Error object deletion failures', async () => {
+    storage.delete.mockRejectedValue('offline');
+
+    await expect(build().deleteExpiredRecordings()).resolves.toBe(0);
+
+    expect(warn).toHaveBeenCalledWith(
+      'Could not delete Provider Attempt recording attempt-1: offline',
     );
   });
 
@@ -142,7 +161,7 @@ describe('RequestRecordingRetentionService', () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
     query.mockRejectedValueOnce(new Error('database unavailable'));
 
-    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+    await expect(build().deleteExpiredRecordings()).resolves.toBe(0);
 
     expect(error).toHaveBeenCalledWith('Request recording retention failed: database unavailable');
     expect(release).toHaveBeenCalled();
@@ -152,7 +171,7 @@ describe('RequestRecordingRetentionService', () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation();
     query.mockRejectedValueOnce('offline');
 
-    await expect(service.deleteExpiredRecordings()).resolves.toBe(0);
+    await expect(build().deleteExpiredRecordings()).resolves.toBe(0);
 
     expect(error).toHaveBeenCalledWith('Request recording retention failed: offline');
   });
