@@ -369,8 +369,25 @@ export function fromResponsesResponse(
       cache_read_tokens: inputDetails?.cached_tokens ?? 0,
       cache_creation_tokens:
         inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_input_tokens ?? 0,
+      ...reasoningTokensDetails(usage),
     },
   };
+}
+
+/**
+ * Responses API reports reasoning tokens under `output_tokens_details`
+ * (already included in `output_tokens`). Surface them the way Chat Completions
+ * does, as `completion_tokens_details.reasoning_tokens`, so clients keep seeing
+ * them. Omitted when the upstream does not report the figure.
+ */
+function reasoningTokensDetails(usage: Record<string, unknown> | undefined): {
+  completion_tokens_details?: { reasoning_tokens: number };
+} {
+  const outputDetails = usage?.output_tokens_details as Record<string, unknown> | undefined;
+  const reasoning = outputDetails?.reasoning_tokens;
+  return typeof reasoning === 'number'
+    ? { completion_tokens_details: { reasoning_tokens: reasoning } }
+    : {};
 }
 
 /* ── Streaming SSE conversion ── */
@@ -544,7 +561,7 @@ function incompleteFinishReason(response: Record<string, unknown> | undefined): 
 
 function extractResponseUsage(
   response: Record<string, unknown> | undefined,
-): Record<string, number> | undefined {
+): Record<string, unknown> | undefined {
   const responseUsage = response?.usage as Record<string, unknown> | undefined;
   if (!responseUsage) return undefined;
   const inputDetails = responseUsage.input_tokens_details as Record<string, number> | undefined;
@@ -555,6 +572,7 @@ function extractResponseUsage(
     cache_read_tokens: inputDetails?.cached_tokens ?? 0,
     cache_creation_tokens:
       inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_input_tokens ?? 0,
+    ...reasoningTokensDetails(responseUsage),
   };
 }
 
