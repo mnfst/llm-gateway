@@ -779,6 +779,26 @@ describe('Anthropic Messages adapter', () => {
       expect(result.stop_reason).toBe('tool_use');
     });
 
+    it('reports tool_use when tool calls arrive with finish_reason "stop"', () => {
+      const result = chatCompletionsResponseToMessages(
+        {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  { id: 'tc_1', function: { name: 'search', arguments: '{"q":"a"}' } },
+                ],
+              },
+              finish_reason: 'stop',
+            },
+          ],
+        },
+        'm',
+      );
+      expect(result.stop_reason).toBe('tool_use');
+    });
+
     it('maps stop reasons and falls back to end_turn for unknown values', () => {
       const length = chatCompletionsResponseToMessages(
         { choices: [{ message: { content: 'x' }, finish_reason: 'length' }] },
@@ -1021,6 +1041,17 @@ describe('Anthropic Messages adapter', () => {
         'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"q"}}',
       );
       expect(sse).toContain('"stop_reason":"tool_use"');
+    });
+
+    it('streams tool_use stop_reason when tool calls finish with "stop"', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"model":"claude","choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      ]);
+
+      expect(sse).toContain('"stop_reason":"tool_use"');
+      expect(sse).not.toContain('"stop_reason":"end_turn"');
     });
 
     it('streams a content_filter finish_reason as a refusal stop_reason', () => {

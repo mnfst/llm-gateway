@@ -323,7 +323,13 @@ const STOP_REASON_MAP: Record<string, string> = {
   content_filter: 'refusal',
 };
 
-function toAnthropicStopReason(finishReason: unknown): string {
+function toAnthropicStopReason(finishReason: unknown, hasToolCalls = false): string {
+  // Some OpenAI-compatible providers finish a tool-calling turn with
+  // `stop` (or no reason at all); the client must still see `tool_use`
+  // or it treats the turn as finished and never runs the tools.
+  if (hasToolCalls && (finishReason === 'stop' || typeof finishReason !== 'string')) {
+    return 'tool_use';
+  }
   if (typeof finishReason !== 'string') return 'end_turn';
   return STOP_REASON_MAP[finishReason] ?? 'end_turn';
 }
@@ -419,7 +425,10 @@ export function chatCompletionsResponseToMessages(body: JsonRecord, model: strin
     }
   }
 
-  const stopReason = toAnthropicStopReason(firstChoice.finish_reason);
+  const stopReason = toAnthropicStopReason(
+    firstChoice.finish_reason,
+    content.some((b) => b.type === 'tool_use'),
+  );
 
   return {
     id: typeof body.id === 'string' ? body.id : `msg_${randomUUID().replace(/-/g, '')}`,
@@ -641,7 +650,7 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
     }
 
     if (choice.finish_reason) {
-      state.stopReason = toAnthropicStopReason(choice.finish_reason);
+      state.stopReason = toAnthropicStopReason(choice.finish_reason, state.toolCalls.size > 0);
       if (isRecord(data.usage) && !state.finalUsage) {
         state.finalUsage = toAnthropicUsage(data.usage);
       }
