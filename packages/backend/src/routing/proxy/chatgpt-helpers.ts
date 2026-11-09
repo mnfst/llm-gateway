@@ -122,7 +122,7 @@ export function safeParse(str: string): Record<string, unknown> | null {
 export function formatSSE(
   choice: Record<string, unknown>,
   model: string,
-  usage?: Record<string, number>,
+  usage?: Record<string, unknown>,
 ): string {
   const payload: Record<string, unknown> = {
     id: `chatcmpl-${randomUUID().replace(/-/g, '').slice(0, 29)}`,
