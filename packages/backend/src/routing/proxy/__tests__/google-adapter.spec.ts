@@ -1795,6 +1795,19 @@ describe('Google Adapter', () => {
       expect(choices).toHaveLength(0);
     });
 
+    it('maps a prompt blocked by promptFeedback to a content_filter choice', () => {
+      const google = {
+        promptFeedback: { blockReason: 'PROHIBITED_CONTENT' },
+        usageMetadata: { promptTokenCount: 7, totalTokenCount: 7 },
+      };
+      const result = fromGoogleResponse(google, 'gemini-2.0-flash');
+      const choices = result.choices as Array<Record<string, unknown>>;
+      expect(choices).toHaveLength(1);
+      expect(choices[0].finish_reason).toBe('content_filter');
+      expect(choices[0].message).toEqual({ role: 'assistant', content: null });
+      expect((result.usage as Record<string, number>).prompt_tokens).toBe(7);
+    });
+
     it('returns null content when parts have no text', () => {
       const google = {
         candidates: [
@@ -2412,6 +2425,19 @@ describe('Google Adapter', () => {
         expect(out.map((e) => e.choices[0]?.finish_reason ?? null)).toEqual([
           null,
           'tool_calls',
+          null,
+        ]);
+        expect(out.filter((e) => e.usage)).toHaveLength(1);
+      });
+
+      it('closes with content_filter on a promptFeedback block with no candidates', () => {
+        const blocked = JSON.stringify({
+          promptFeedback: { blockReason: 'SAFETY' },
+          usageMetadata: { promptTokenCount: 4, totalTokenCount: 4 },
+        });
+        const out = runStream([blocked]);
+        expect(out.map((e) => e.choices[0]?.finish_reason ?? null)).toEqual([
+          'content_filter',
           null,
         ]);
         expect(out.filter((e) => e.usage)).toHaveLength(1);
