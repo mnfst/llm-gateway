@@ -323,7 +323,7 @@ const STOP_REASON_MAP: Record<string, string> = {
   content_filter: 'refusal',
 };
 
-function toAnthropicStopReason(finishReason: unknown, hasToolCalls = false): string {
+function toAnthropicStopReason(finishReason: unknown, hasToolCalls: boolean): string {
   // Some OpenAI-compatible providers finish a tool-calling turn with
   // `stop` (or no reason at all); the client must still see `tool_use`
   // or it treats the turn as finished and never runs the tools.
