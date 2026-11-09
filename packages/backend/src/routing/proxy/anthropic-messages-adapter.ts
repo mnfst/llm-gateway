@@ -765,7 +765,7 @@ function closeStream(state: StreamState): string[] {
     formatMessagesEvent('message_delta', {
       type: 'message_delta',
       delta: {
-        stop_reason: state.stopReason ?? 'end_turn',
+        stop_reason: state.stopReason ?? toAnthropicStopReason(undefined, state.toolCalls.size > 0),
         stop_sequence: null,
       },
       usage: state.finalUsage ?? toAnthropicUsage({}),
