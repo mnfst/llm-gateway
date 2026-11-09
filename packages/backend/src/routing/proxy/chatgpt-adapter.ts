@@ -251,6 +251,8 @@ interface ReasoningStreamState {
   sawToolCall: boolean;
   /** Responses `output_index` → Chat Completions tool call index, in first-seen order. */
   toolCallIndex?: Map<number, number>;
+  /** Output indexes whose arguments arrived as deltas. */
+  argsStreamed?: Set<number>;
 }
 
 /**
@@ -451,17 +453,36 @@ export function transformResponsesStreamChunk(
     const data = safeParse(dataStr);
     if (!data) return null;
     const delta = typeof data.delta === 'string' ? data.delta : '';
+    const outputIndex = typeof data.output_index === 'number' ? data.output_index : 0;
+    if (state && delta) (state.argsStreamed ??= new Set()).add(outputIndex);
     return formatSSE(
       {
         delta: {
           tool_calls: [
             {
-              index: denseIndex(
-                state,
-                typeof data.output_index === 'number' ? data.output_index : 0,
-              ),
+              index: denseIndex(state, outputIndex),
               function: { arguments: delta },
             },
+          ],
+        },
+        finish_reason: null,
+      },
+      model,
+    );
+  }
+
+  // Parallel calls can arrive with no deltas, only the full arguments on `.done`.
+  if (eventType === 'response.function_call_arguments.done') {
+    const data = safeParse(dataStr);
+    if (!data || typeof data.arguments !== 'string' || !state) return null;
+    const outputIndex = typeof data.output_index === 'number' ? data.output_index : 0;
+    if (state.argsStreamed?.has(outputIndex)) return null;
+    (state.argsStreamed ??= new Set()).add(outputIndex);
+    return formatSSE(
+      {
+        delta: {
+          tool_calls: [
+            { index: denseIndex(state, outputIndex), function: { arguments: data.arguments } },
           ],
         },
         finish_reason: null,
@@ -655,6 +676,12 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
       const tc = toolCallMap.get(idx);
       if (tc) {
         tc.function.arguments += typeof data.delta === 'string' ? data.delta : '';
+      }
+    } else if (eventType === 'response.function_call_arguments.done') {
+      const idx = typeof data.output_index === 'number' ? data.output_index : 0;
+      const tc = toolCallMap.get(idx);
+      if (tc && typeof data.arguments === 'string') {
+        tc.function.arguments = data.arguments;
       }
     } else if (eventType === 'response.completed') {
       const response = isObjectRecord(data.response) ? data.response : undefined;
