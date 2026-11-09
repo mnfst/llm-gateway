@@ -1,5 +1,14 @@
 # manifest
 
+## 6.29.1
+
+### Patch Changes
+
+- c973255: Keep tool call arguments for parallel tool calls on the ChatGPT subscription provider. The backend can send a call's arguments only on `response.function_call_arguments.done`, with no deltas, so Chat Completions and Messages clients got every call with empty arguments (#3118).
+- 7e81f40: Responses from the ChatGPT backend now include `completion_tokens_details.reasoning_tokens` in the usage, so clients see reasoning token counts for streaming and non-streaming requests.
+- 0c834ac: Gemini prompts rejected up front (`promptFeedback.blockReason`, no candidates) now return a `content_filter` finish reason with usage instead of an empty `choices` array or a bare `stop`.
+- e10162d: Request recordings are no longer deleted after a retention period on Manifest Cloud, for any plan. Self-hosted installs now keep them forever by default; set `REQUEST_RECORDING_RETENTION_DAYS` to delete older ones.
+
 ## 6.29.0
 
 ### Minor Changes
