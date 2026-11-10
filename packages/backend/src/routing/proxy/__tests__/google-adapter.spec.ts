@@ -1385,7 +1385,10 @@ describe('Google Adapter', () => {
       });
     });
 
-    it('treats a null JSON arguments string as an empty object', () => {
+    it.each([
+      ['null', 'null'],
+      ['array', '[]'],
+    ])('treats a %s JSON arguments string as an empty object', (_label, args) => {
       const body = {
         messages: [
           {
@@ -1395,7 +1398,7 @@ describe('Google Adapter', () => {
               {
                 id: 'call_1',
                 type: 'function',
-                function: { name: 'noop', arguments: 'null' },
+                function: { name: 'noop', arguments: args },
               },
             ],
           },
