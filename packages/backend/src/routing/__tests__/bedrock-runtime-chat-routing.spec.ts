@@ -102,6 +102,15 @@ describe('bedrockRuntimeChatNeedsResponses', () => {
     });
   });
 
+  it('routes us.openai.gpt-6.1-sol with function tools to Responses, with or without effort', () => {
+    const model = 'us.openai.gpt-6.1-sol';
+
+    expect(bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool] })).toBe(true);
+    expect(
+      bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool], reasoning_effort: 'high' }),
+    ).toBe(true);
+  });
+
   describe.each(NOT_ROUTED)('%s', (model) => {
     it.each([undefined, 'none', 'low', 'high', 'max'])(
       'is false with function tools and effort %p',
