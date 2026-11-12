@@ -209,6 +209,7 @@ describe('ProviderClient: Bedrock Runtime GPT chat with function tools and reaso
       expect(url).toBe(RUNTIME_RESPONSES_URL);
       expect(sent.tools).toEqual([flatWeatherTool]);
       expect(sent).not.toHaveProperty('reasoning');
+      expect(sent).not.toHaveProperty('reasoning_effort');
       expect(sent).not.toHaveProperty('messages');
     });
 

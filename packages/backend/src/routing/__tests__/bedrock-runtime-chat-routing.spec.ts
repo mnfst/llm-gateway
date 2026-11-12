@@ -109,6 +109,9 @@ describe('bedrockRuntimeChatNeedsResponses', () => {
     expect(
       bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool], reasoning_effort: 'high' }),
     ).toBe(true);
+    expect(
+      bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool], reasoning_effort: 'none' }),
+    ).toBe(true);
   });
 
   describe.each(NOT_ROUTED)('%s', (model) => {
