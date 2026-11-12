@@ -1,0 +1,23 @@
+.changeset/bedrock-runtime-gpt-6-1-sol.md
+  s_c60f6b7bdf11f0::t_ce415c5bb5ab92 5
+packages/backend/src/routing/__tests__/bedrock-runtime-chat-routing.spec.ts
+  s_c60f6b7bdf11f0::t_ce415c5bb5ab92 112-114
+packages/backend/src/routing/proxy/__tests__/provider-client.bedrock-gpt-responses.spec.ts
+  s_c60f6b7bdf11f0::t_ce415c5bb5ab92 212
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "29cc547994b341d8b0fb1744280b3ca8a140789b",
+  "prompts": {},
+  "sessions": {
+    "s_c60f6b7bdf11f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8c20944e-be05-497b-ba7c-2953b9f2416a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Guillaume Gay <guillaume.gay@protonmail.com>"
+    }
+  }
+}
