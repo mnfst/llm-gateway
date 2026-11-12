@@ -1,5 +1,12 @@
 # manifest
 
+## 6.29.2
+
+### Patch Changes
+
+- e48ea50: The Anthropic Messages endpoint now reports `stop_reason: "tool_use"` when a provider returns tool calls with a `stop` (or missing) finish reason, so clients run the tools instead of ending the turn.
+- 6e4b2f4: Non-streaming Gemini function calls with no arguments now keep `arguments` set to `"{}"`. A missing or null `args` used to omit the field or send the string `"null"`; replayed non-object JSON such as `"null"` or `"[]"` is now sent as `{}` instead of an invalid Gemini `args` value.
+
 ## 6.29.1
 
 ### Patch Changes
