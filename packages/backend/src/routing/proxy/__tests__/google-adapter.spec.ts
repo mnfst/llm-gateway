@@ -1385,6 +1385,34 @@ describe('Google Adapter', () => {
       });
     });
 
+    it.each([
+      ['null', 'null'],
+      ['array', '[]'],
+    ])('treats a %s JSON arguments string as an empty object', (_label, args) => {
+      const body = {
+        messages: [
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'noop', arguments: args },
+              },
+            ],
+          },
+        ],
+      };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+      const contents = result.contents as Array<{ parts: Array<Record<string, unknown>> }>;
+      expect(contents[0].parts[0].functionCall).toEqual({
+        id: 'call_1',
+        name: 'noop',
+        args: {},
+      });
+    });
+
     it('handles tool_calls in assistant messages', () => {
       const body = {
         messages: [
@@ -1696,6 +1724,32 @@ describe('Google Adapter', () => {
       const fn = toolCalls[0].function as { name: string; arguments: string };
       expect(fn.name).toBe('search');
       expect(JSON.parse(fn.arguments)).toEqual({ query: 'cats' });
+    });
+
+    it.each([
+      ['null args', { name: 'noop', args: null }],
+      ['omitted args', { name: 'noop' }],
+    ])('serializes a no-argument functionCall (%s) as {}', (_label, functionCall) => {
+      const result = fromGoogleResponse(
+        {
+          candidates: [
+            {
+              content: { parts: [{ functionCall }] },
+              finishReason: 'STOP',
+            },
+          ],
+        },
+        'gemini-2.0-flash',
+      );
+      const choices = result.choices as Array<{ message: Record<string, unknown> }>;
+      const toolCalls = choices[0].message.tool_calls as Array<{
+        function: { name: string; arguments: string };
+      }>;
+      // Chat clients require arguments to be a JSON object string. A missing
+      // field is dropped on the wire, and the string "null" is not an object.
+      expect(JSON.stringify(toolCalls[0].function)).toBe(
+        JSON.stringify({ name: 'noop', arguments: '{}' }),
+      );
     });
 
     it('handles empty candidates', () => {

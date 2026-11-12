@@ -131,10 +131,15 @@ function sanitizeSchema(schema: unknown, isPropertiesMap = false): unknown {
 
 function safeParseArgs(args: string | undefined): Record<string, unknown> {
   try {
-    return JSON.parse(args || '{}') as Record<string, unknown>;
+    // JSON.parse('null') and JSON.parse('[]') succeed, but Gemini functionCall
+    // args must be a Struct. A no-arg tool echoed as the string "null" would
+    // otherwise be forwarded as args: null and rejected.
+    const parsed: unknown = JSON.parse(args || '{}');
+    if (isRecord(parsed)) return parsed;
   } catch {
-    return {};
+    // Malformed arguments are an empty object, same as a missing payload.
   }
+  return {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -500,7 +505,7 @@ export function fromGoogleResponse(
       const toolCall: Record<string, unknown> = {
         id: toolCallId,
         type: 'function',
-        function: { name: fc.name, arguments: JSON.stringify(fc.args) },
+        function: { name: fc.name, arguments: JSON.stringify(fc.args ?? {}) },
       };
       const sig = part.thoughtSignature;
       if (typeof sig === 'string' && sig) {
