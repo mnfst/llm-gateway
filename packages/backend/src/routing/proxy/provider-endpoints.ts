@@ -207,6 +207,13 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     format: 'openai',
     ...openaiStreamUsage,
   },
+  atlascloud: {
+    baseUrl: 'https://api.atlascloud.ai',
+    buildHeaders: openaiHeaders,
+    buildPath: openaiPath,
+    format: 'openai',
+    ...openaiStreamUsage,
+  },
   'openai-subscription': {
     baseUrl: CHATGPT_SUBSCRIPTION_BASE,
     buildHeaders: chatgptSubscriptionHeaders,
