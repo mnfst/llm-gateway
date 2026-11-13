@@ -353,7 +353,7 @@
   text-decoration: underline;
 }
 
-/* ── Plan Picker (accordion in auth card) ────────── */
+/* ── Plan Picker (signup plan step) ─────────────── */
 .plan-picker {
   display: flex;
   flex-direction: column;
@@ -367,26 +367,10 @@
   width: 100%;
   padding: var(--gap-md);
   background: hsl(var(--background));
-  border: 1px solid hsl(var(--input));
+  border: 1px solid hsl(var(--foreground));
   border-radius: var(--radius);
-  cursor: pointer;
   text-align: left;
   font-family: var(--font-family);
-  transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.plan-picker__card:hover {
-  border-color: hsl(var(--foreground) / 0.25);
-}
-
-.plan-picker__card--expanded {
-  border-color: hsl(var(--foreground));
-}
-
-.plan-picker__card--pro.plan-picker__card--expanded {
-  border-color: hsl(var(--foreground));
 }
 
 .plan-picker__row {
@@ -403,40 +387,6 @@
   font-size: var(--font-size-sm);
   font-weight: 600;
   color: hsl(var(--foreground));
-}
-
-.plan-picker__radio {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 2px solid hsl(var(--input));
-  flex-shrink: 0;
-  transition: border-color var(--transition-fast);
-}
-
-.plan-picker__card--expanded .plan-picker__radio {
-  border-color: hsl(var(--primary));
-}
-
-.plan-picker__radio-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: hsl(var(--primary));
-}
-
-.plan-picker__badge {
-  padding: 3px 5px;
-  border-radius: 2px;
-  background: #2632ef;
-  color: #ffffff;
-  font-size: 9px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .plan-picker__price-inline {
@@ -460,25 +410,6 @@
   margin-top: var(--gap-md);
   padding-top: var(--gap-md);
   border-top: 1px solid hsl(var(--border));
-  animation: planDetailsIn 200ms ease-out both;
-}
-
-@keyframes planDetailsIn {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.plan-picker__usage {
-  margin: 0 0 var(--gap-sm);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: hsl(var(--foreground));
 }
 
 .plan-picker__features {
@@ -520,6 +451,14 @@
   margin: 2px 0 0;
   font-size: var(--font-size-xs);
   color: hsl(var(--muted-foreground));
+}
+
+.plan-picker__sign-out {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  cursor: pointer;
 }
 
 .plan-picker__cta {

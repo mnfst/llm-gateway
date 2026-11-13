@@ -2493,23 +2493,18 @@
       "classes": [
         "plan-picker",
         "plan-picker__amount",
-        "plan-picker__badge",
         "plan-picker__card",
-        "plan-picker__card--expanded",
-        "plan-picker__card--pro",
         "plan-picker__cta",
         "plan-picker__details",
         "plan-picker__features",
         "plan-picker__name",
         "plan-picker__period",
         "plan-picker__price-inline",
-        "plan-picker__radio",
-        "plan-picker__radio-dot",
         "plan-picker__row",
         "plan-picker__section-header",
         "plan-picker__section-subtitle",
         "plan-picker__section-title",
-        "plan-picker__usage"
+        "plan-picker__sign-out"
       ],
       "files": [
         "auth.css"
@@ -5116,7 +5111,7 @@
     "tokens": 79,
     "darkOverrides": 38,
     "blocks": 317,
-    "classes": 1704,
+    "classes": 1699,
     "canonicalRules": 46,
     "ghostRules": 46
   }

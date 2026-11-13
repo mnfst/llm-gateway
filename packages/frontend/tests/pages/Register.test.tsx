@@ -5,6 +5,7 @@ const mockSignUpEmail = vi.fn().mockResolvedValue({});
 const mockSignInSocial = vi.fn().mockResolvedValue({});
 const mockSendVerificationEmail = vi.fn().mockResolvedValue({});
 const mockSubscriptionUpgrade = vi.fn().mockResolvedValue({});
+const mockSignOut = vi.fn().mockResolvedValue({});
 const mockGetBillingStatus = vi.fn().mockResolvedValue({ enabled: false, plan: 'free' });
 const mockCheckIsSelfHosted = vi.fn().mockResolvedValue(false);
 const mockCheckSocialProviders = vi.fn().mockResolvedValue([]);
@@ -39,6 +40,7 @@ vi.mock('../../src/services/auth-client.js', () => ({
     signIn: { social: (...args: unknown[]) => mockSignInSocial(...args) },
     sendVerificationEmail: (...args: unknown[]) => mockSendVerificationEmail(...args),
     subscription: { upgrade: (...args: unknown[]) => mockSubscriptionUpgrade(...args) },
+    signOut: (...args: unknown[]) => mockSignOut(...args),
   },
 }));
 
@@ -314,12 +316,7 @@ describe('Register', () => {
     });
   });
 
-  it('lets users choose the free plan from the plan step', async () => {
-    const replace = vi.fn();
-    const locationSpy = vi.spyOn(window, 'location', 'get').mockReturnValue({
-      ...window.location,
-      replace,
-    });
+  it('offers Manifest Cloud only on the plan step', async () => {
     mockSearchParams = { step: 'plan' };
     mockGetBillingStatus.mockResolvedValue({
       enabled: true,
@@ -330,14 +327,27 @@ describe('Register', () => {
     const { container } = render(() => <Register />);
     await screen.findByText('Choose your plan');
 
-    const freeCard = Array.from(
-      container.querySelectorAll<HTMLButtonElement>('.plan-picker__card'),
-    ).find((card) => card.textContent?.includes('Self-hosted'));
-    if (!freeCard) throw new Error('Self-hosted plan card not found');
-    fireEvent.click(freeCard);
-    fireEvent.click(container.querySelector('.plan-picker__cta')!);
+    expect(container.querySelectorAll('.plan-picker__card')).toHaveLength(1);
+    expect(screen.getByText('Manifest Cloud')).toBeDefined();
+    expect(screen.queryByText('Self-hosted')).toBeNull();
+    expect(screen.queryByText('Talk to sales')).toBeNull();
+    expect(screen.queryByText('Continue without a subscription')).toBeNull();
+  });
 
-    expect(replace).toHaveBeenCalledWith('/');
+  it('signs out from the plan step', async () => {
+    const replace = vi.fn();
+    const locationSpy = vi.spyOn(window, 'location', 'get').mockReturnValue({
+      ...window.location,
+      replace,
+    });
+    mockSearchParams = { step: 'plan' };
+    mockGetBillingStatus.mockResolvedValue({ enabled: true, plan: 'free' });
+
+    render(() => <Register />);
+    fireEvent.click(await screen.findByText('Sign out'));
+
+    await vi.waitFor(() => expect(replace).toHaveBeenCalledWith('/login'));
+    expect(mockSignOut).toHaveBeenCalled();
     locationSpy.mockRestore();
   });
 
@@ -542,7 +552,7 @@ describe('Register', () => {
     await vi.waitFor(() => {
       expect(screen.getByText('Choose your plan')).toBeDefined();
     });
-    expect(screen.getByText(/Manifest Cloud is \$19\/month/)).toBeDefined();
+    expect(screen.getByText('Subscribe to Manifest Cloud to route your requests.')).toBeDefined();
   });
 
   it('shows "Create an account" title without context=login (email signup)', async () => {
