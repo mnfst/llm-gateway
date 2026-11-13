@@ -435,6 +435,7 @@ export function toGoogleRequest(
   if (maxTokens !== undefined) genConfig.maxOutputTokens = maxTokens;
   if (body.temperature !== undefined) genConfig.temperature = body.temperature;
   if (body.top_p !== undefined) genConfig.topP = body.top_p;
+  if (body.seed !== undefined) genConfig.seed = body.seed;
   // chat_completions `stop` accepts a string or string[]; Gemini
   // `stopSequences` is always an array. An explicit empty `stop` ([] or '')
   // means "no stop sequences", so it also clears native ones.
