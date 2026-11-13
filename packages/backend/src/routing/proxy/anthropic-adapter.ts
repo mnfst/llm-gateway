@@ -48,16 +48,21 @@ const SUBSCRIPTION_IDENTITY_BLOCK: ContentBlock = {
   text: "You are a Claude agent, built on Anthropic's Claude Agent SDK.",
 };
 
-function safeParseArgs(args: string | undefined): unknown {
-  try {
-    return JSON.parse(args || '{}');
-  } catch {
-    return {};
-  }
-}
-
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function safeParseArgs(args: string | undefined): Record<string, unknown> {
+  try {
+    // JSON.parse('null') and JSON.parse('[]') succeed, but Anthropic
+    // tool_use.input must be an object. A no-arg tool echoed as the string
+    // "null" would otherwise be forwarded as input: null and rejected.
+    const parsed: unknown = JSON.parse(args || '{}');
+    if (isObjectRecord(parsed)) return parsed;
+  } catch {
+    // Malformed arguments are an empty object, same as a missing payload.
+  }
+  return {};
 }
 
 /**
