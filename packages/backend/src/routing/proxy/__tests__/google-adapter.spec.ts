@@ -86,6 +86,16 @@ describe('Google Adapter', () => {
       });
     });
 
+    it('maps seed to generationConfig.seed', () => {
+      const body = {
+        messages: [{ role: 'user', content: 'Hi' }],
+        seed: 42,
+      };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+
+      expect(result.generationConfig).toEqual({ seed: 42 });
+    });
+
     it('maps max_completion_tokens to maxOutputTokens', () => {
       const body = {
         messages: [{ role: 'user', content: 'Hi' }],
