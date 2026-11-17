@@ -1,5 +1,15 @@
 # manifest
 
+## 6.29.2
+
+### Patch Changes
+
+- 239cb32: Replayed Anthropic tool calls whose arguments are JSON null or another non-object now send `tool_use.input` as `{}`. A missing payload was already empty; `"null"` and `"[]"` were forwarded and rejected.
+- e48ea50: The Anthropic Messages endpoint now reports `stop_reason: "tool_use"` when a provider returns tool calls with a `stop` (or missing) finish reason, so clients run the tools instead of ending the turn.
+- 6e4b2f4: Non-streaming Gemini function calls with no arguments now keep `arguments` set to `"{}"`. A missing or null `args` used to omit the field or send the string `"null"`; replayed non-object JSON such as `"null"` or `"[]"` is now sent as `{}` instead of an invalid Gemini `args` value.
+- a244229: OpenAI-format requests routed to Gemini now forward `seed` as `generationConfig.seed` instead of silently dropping it.
+- 899f65e: Pass empty completions through instead of failing them. A provider reply that finished normally with no text and no tool call (Chat Completions with `finish_reason: "stop"`, or a completed ChatGPT subscription response) now reaches the caller as a normal 200. Manifest no longer turns it into a 502 or moves to the next fallback.
+
 ## 6.29.1
 
 ### Patch Changes
