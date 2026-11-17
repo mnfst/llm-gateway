@@ -108,7 +108,7 @@ describe('ProviderClient', () => {
       expect(result.isAnthropic).toBe(false);
     });
 
-    it('turns a Chat Completions response without choices into a provider failure', async () => {
+    it('turns a Chat Completions response with an empty choices list into a provider failure', async () => {
       mockFetch.mockResolvedValue(
         new Response(JSON.stringify({ choices: [] }), {
           status: 200,
