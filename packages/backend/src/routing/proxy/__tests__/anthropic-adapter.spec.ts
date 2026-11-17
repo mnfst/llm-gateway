@@ -870,6 +870,38 @@ describe('Anthropic Adapter', () => {
       expect(toolBlock.input).toEqual({});
     });
 
+    it.each([
+      ['null', 'null'],
+      ['an array', '[]'],
+    ])('treats %s JSON arguments as an empty tool_use input', (_label, args) => {
+      const body = {
+        messages: [
+          {
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_1',
+                type: 'function',
+                function: { name: 'noop', arguments: args },
+              },
+            ],
+          },
+        ],
+      };
+      const result = toAnthropicRequest(body, 'claude-sonnet-4-20250514');
+      const messages = result.messages as Array<{ content: Array<Record<string, unknown>> }>;
+      const toolBlock = messages[0].content.find((b) => b.type === 'tool_use');
+      // Anthropic rejects tool_use.input unless it is an object. JSON.parse
+      // accepts "null" and "[]", so those strings must not be forwarded as-is.
+      expect(toolBlock).toEqual({
+        type: 'tool_use',
+        id: 'call_1',
+        name: 'noop',
+        input: {},
+      });
+    });
+
     it('skips user messages with no usable content blocks', () => {
       const body = {
         messages: [
