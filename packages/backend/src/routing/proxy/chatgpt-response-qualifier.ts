@@ -59,10 +59,6 @@ function outputTextParts(item: Record<string, unknown>): { index: number; text: 
   });
 }
 
-function hasUsableOutput(output: Record<string, unknown>[]): boolean {
-  return output.some((item) => item.type === 'function_call' || outputTextParts(item).length > 0);
-}
-
 function isDeliverable(event: ParsedEvent): boolean {
   if (event.type === 'response.output_text.delta') {
     return typeof event.data.delta === 'string' && event.data.delta.length > 0;
@@ -241,8 +237,9 @@ async function readWithTimeout(
 /**
  * The ChatGPT Codex endpoint reports protocol success inside an HTTP 200 SSE
  * body. Hold the body until it contains text/tool output (or a terminal event)
- * so fallback selection does not mistake an empty/failed generation for a
- * successful provider attempt.
+ * so fallback selection does not mistake a failed or stalled generation for a
+ * successful provider attempt. A completed generation with empty output is a
+ * success.
  */
 export async function qualifyChatGptResponse(
   response: Response,
@@ -300,14 +297,16 @@ export async function qualifyChatGptResponse(
       }
       if (event.type !== 'response.completed') continue;
 
+      // A completed response with no text or tool call is still a valid answer
+      // (the model chose to say nothing), so it is delivered, not failed (#3128).
       const terminal = terminalOutput(event);
-      if (!terminal || !hasUsableOutput(terminal)) {
+      if (!terminal) {
         await discard(reader);
         return errorResponse(
           response,
           502,
-          'ChatGPT Codex completed without text or tool output',
-          'empty_response',
+          'ChatGPT Codex completed without a response object',
+          'malformed_response',
         );
       }
 
