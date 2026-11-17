@@ -122,8 +122,17 @@ describe('qualifyChatGptResponse', () => {
     const response = await qualifyChatGptResponse(codexResponse(sse), {
       downstreamFormat: 'chat-completions',
     });
+    const collected = collectChatGptSseResponse(await response.text(), 'gpt-5');
 
     expect(response.status).toBe(200);
+    expect(collected).toMatchObject({
+      choices: [
+        {
+          message: { content: null, reasoning_content: 'Internal reasoning' },
+          finish_reason: 'stop',
+        },
+      ],
+    });
   });
 
   it('keeps incomplete terminal events valid instead of bypassing content filtering', async () => {
@@ -372,17 +381,11 @@ describe('qualifyChatGptResponse', () => {
     expect(response.status).toBe(200);
   });
 
-  it('treats a non-array terminal output as empty output', async () => {
-    const response = await qualifyChatGptResponse(
-      codexResponse(event('response.completed', { response: { output: null } })),
-      { downstreamFormat: 'chat-completions' },
-    );
-
-    expect(response.status).toBe(200);
-  });
-
-  it('rejects a completed event without a response object', async () => {
-    const response = await qualifyChatGptResponse(codexResponse(event('response.completed', {})), {
+  it.each([
+    ['missing terminal response', event('response.completed', {})],
+    ['malformed terminal output', event('response.completed', { response: { output: null } })],
+  ])('rejects %s', async (_case, completed) => {
+    const response = await qualifyChatGptResponse(codexResponse(completed), {
       downstreamFormat: 'chat-completions',
     });
 

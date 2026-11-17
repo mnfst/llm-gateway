@@ -45,8 +45,8 @@ function parseEvent(payload: string): ParsedEvent | null {
 
 function terminalOutput(event: ParsedEvent): Record<string, unknown>[] | null {
   const response = isObjectRecord(event.data.response) ? event.data.response : undefined;
-  if (!response) return null;
-  return Array.isArray(response.output) ? response.output.filter(isObjectRecord) : [];
+  if (!response || !Array.isArray(response.output)) return null;
+  return response.output.filter(isObjectRecord);
 }
 
 function outputTextParts(item: Record<string, unknown>): { index: number; text: string }[] {
@@ -305,7 +305,7 @@ export async function qualifyChatGptResponse(
         return errorResponse(
           response,
           502,
-          'ChatGPT Codex completed without a response object',
+          'ChatGPT Codex completed without a response output list',
           'malformed_response',
         );
       }

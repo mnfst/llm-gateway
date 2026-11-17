@@ -188,6 +188,40 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * A Chat Completions reply with no choice at all carries no answer and breaks
+ * SDKs that read `choices[0]`, so it fails like a provider error. A choice with
+ * empty content is a valid answer and passes through (#3128).
+ */
+async function rejectChoicelessChatCompletion(
+  response: Response,
+  attempt?: ProviderAttemptRef,
+): Promise<Response> {
+  if (response.status !== HttpStatus.OK) return response;
+
+  let body: unknown;
+  try {
+    body = await response.clone().json();
+  } catch {
+    return response;
+  }
+  if (!isRecord(body) || !Array.isArray(body.choices) || body.choices.length > 0) {
+    return response;
+  }
+  await attempt?.finishRecording?.({ type: 'json', body });
+
+  return new Response(
+    JSON.stringify({
+      error: {
+        message: 'Upstream provider returned a Chat Completions response without choices',
+        type: 'server_error',
+        code: 'malformed_response',
+      },
+    }),
+    { status: HttpStatus.BAD_GATEWAY, headers: { 'content-type': 'application/json' } },
+  );
+}
+
 function responsesTextFormat(
   body: Record<string, unknown>,
   apiMode: ForwardOptions['apiMode'],
@@ -466,15 +500,21 @@ export class ProviderClient {
         responsesToolNames:
           opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
       });
+      const response =
+        !stream &&
+        endpoint.format === 'openai' &&
+        (opts.apiMode === undefined || opts.apiMode === 'chat_completions')
+          ? await rejectChoicelessChatCompletion(result.response, attempt)
+          : result.response;
       const qualifiedResult =
         endpointKey === 'openai-subscription'
           ? {
               ...result,
-              response: await qualifyChatGptResponse(result.response, {
+              response: await qualifyChatGptResponse(response, {
                 downstreamFormat: isResponses ? 'responses' : 'chat-completions',
               }),
             }
-          : result;
+          : { ...result, response };
       if (affinity) {
         this.codexAffinity.capture(
           affinity.storeKey,
