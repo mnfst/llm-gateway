@@ -38,9 +38,18 @@ describe('Bedrock Runtime capability catalog', () => {
     );
   });
 
+  it('marks gpt-6.1-sol as rejecting reasoning effort none', () => {
+    expect(getBedrockRuntimeCapabilities('global.openai.gpt-6.1-sol')).toMatchObject({
+      modelId: 'openai.gpt-6.1-sol',
+      chatTokenParameter: 'max_completion_tokens',
+      rejectsReasoningNone: true,
+    });
+  });
+
   it('matches nothing but exact CRIS profiles of catalogued models', () => {
     // Base model IDs are served by Mantle.
     expect(getBedrockRuntimeCapabilities('openai.gpt-6-sol')).toBeNull();
+    expect(getBedrockRuntimeCapabilities('openai.gpt-6.1-sol')).toBeNull();
     expect(getBedrockRuntimeCapabilities('us.anthropic.claude-sonnet-5')).toBeNull();
     expect(getBedrockRuntimeCapabilities('us.OpenAI.GPT-6-Sol')).toBeNull();
     expect(getBedrockRuntimeCapabilities('ca.openai.gpt-6-sol')).toBeNull();
@@ -48,6 +57,10 @@ describe('Bedrock Runtime capability catalog', () => {
 
   it('publishes the Manifest endpoints that serve a catalogued profile', () => {
     expect(getBedrockRuntimeSupportedEndpoints('global.openai.gpt-6-luna')).toEqual([
+      '/v1/chat/completions',
+      '/v1/responses',
+    ]);
+    expect(getBedrockRuntimeSupportedEndpoints('global.openai.gpt-6.1-sol')).toEqual([
       '/v1/chat/completions',
       '/v1/responses',
     ]);

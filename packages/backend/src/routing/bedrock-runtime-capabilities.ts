@@ -56,6 +56,14 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG: readonly BedrockRuntimeCapabili
     verifiedAt: VERIFIED_AT,
   },
   {
+    modelId: 'openai.gpt-6.1-sol',
+    apis: CHAT_AND_RESPONSES,
+    chatTokenParameter: 'max_completion_tokens',
+    rejectsReasoningNone: true,
+    sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-1-sol.html`,
+    verifiedAt: '2026-11-05',
+  },
+  {
     modelId: 'openai.gpt-6-luna',
     apis: CHAT_AND_RESPONSES,
     chatTokenParameter: 'max_completion_tokens',

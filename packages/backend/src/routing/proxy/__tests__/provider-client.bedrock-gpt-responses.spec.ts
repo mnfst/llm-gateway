@@ -203,6 +203,15 @@ describe('ProviderClient: Bedrock Runtime GPT chat with function tools and reaso
       expect(sent).not.toHaveProperty('reasoning_effort');
     });
 
+    it('sends gpt-6.1-sol with tools and no effort to Responses without a reasoning object', async () => {
+      const { url, sent } = await send('global.openai.gpt-6.1-sol', { tools }, { connection });
+
+      expect(url).toBe(RUNTIME_RESPONSES_URL);
+      expect(sent.tools).toEqual([flatWeatherTool]);
+      expect(sent).not.toHaveProperty('reasoning');
+      expect(sent).not.toHaveProperty('messages');
+    });
+
     it.each([
       ['luna', LUNA],
       ['sol', 'global.openai.gpt-6-sol'],
