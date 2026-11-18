@@ -60,6 +60,16 @@ describe('PROVIDER_REGISTRY', () => {
     expect(openrouter!.requiresApiKey).toBe(true);
   });
 
+  it('requesty is registered as an API-key router mirroring OpenRouter', () => {
+    const requesty = PROVIDER_REGISTRY.find((p) => p.id === 'requesty');
+    expect(requesty).toBeDefined();
+    expect(requesty!.displayName).toBe('Requesty');
+    expect(requesty!.aliases).toEqual([]);
+    expect(requesty!.openRouterPrefixes).toEqual(['requesty']);
+    expect(requesty!.requiresApiKey).toBe(true);
+    expect(requesty!.localOnly).toBe(false);
+  });
+
   it('anthropic has no aliases', () => {
     const anthropic = PROVIDER_REGISTRY.find((p) => p.id === 'anthropic');
     expect(anthropic).toBeDefined();
