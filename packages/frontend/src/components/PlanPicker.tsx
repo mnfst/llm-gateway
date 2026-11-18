@@ -1,12 +1,10 @@
-import { For, Show, createSignal, type Component } from 'solid-js';
+import { For, type Component } from 'solid-js';
 
 export const SELF_HOSTING_GUIDE_URL = 'https://manifest.build/llm-gateway/docs/self-hosted';
 
 /* ── Plan data ───────────────────────────────────────── */
 
-// `free` is the plan id of a tenant without a subscription. Since the Cloud Free
-// plan ended on 2026-11-02 the card sells self-hosting, which is where the free
-// gateway lives; picking it still enters the dashboard.
+// Features of the self-hosted gateway, shown on the Upgrade page.
 const freeFeatures = [
   'Unlimited routed requests',
   'All providers, including local models',
@@ -41,169 +39,64 @@ export const FALLBACK_PRO_PRICE = '$19';
 
 export type PlanId = 'free' | 'pro' | 'enterprise';
 
-interface PlanDef {
-  id: PlanId;
-  name: string;
-  price: string;
-  period?: string;
-  desc: string;
-  features: string[];
-  popular?: boolean;
-}
-
 export interface PlanPickerProps {
-  /** Price label for Pro plan (e.g. "$19"). Falls back to FALLBACK_PRO_PRICE if null. */
+  /** Price label for the Cloud plan (e.g. "$19"). Falls back to FALLBACK_PRO_PRICE if null. */
   proPrice?: string | null;
-  /** Called when the user clicks "Choose this plan". */
-  onSelect: (plan: PlanId) => void;
-  /** Show a loading spinner on the selected plan's button. */
+  /** Called when the user clicks Subscribe. */
+  onSubscribe: () => void;
+  /** Show a loading spinner on the Subscribe button. */
   busy?: boolean;
-  /** Current usage (free plan only). */
-  usedRequests?: number | null;
 }
 
-const fmt = (n: number) => n.toLocaleString('en-US');
-
-const PlanPicker: Component<PlanPickerProps> = (props) => {
-  const [expanded, setExpanded] = createSignal<PlanId | null>('pro');
-
-  const plans = (): PlanDef[] => [
-    {
-      id: 'free',
-      name: 'Self-hosted',
-      price: '$0',
-      period: 'forever',
-      desc: 'The same gateway on your own server. You install, update and run it.',
-      features: freeFeatures,
-    },
-    {
-      id: 'pro',
-      name: 'Manifest Cloud',
-      price: props.proPrice ?? FALLBACK_PRO_PRICE,
-      period: '/month',
-      desc: 'The gateway hosted and run by us. No server to install, update or watch.',
-      features: proFeatures,
-      popular: true,
-    },
-    {
-      id: 'enterprise',
-      name: 'Enterprise',
-      price: 'Custom',
-      desc: 'For scaling projects, large scale teams. Enterprise-grade support and security.',
-      features: enterpriseFeatures,
-    },
-  ];
-
-  const toggle = (id: PlanId) => {
-    setExpanded((prev) => (prev === id ? null : id));
-  };
-
-  return (
-    <div class="plan-picker">
-      <For each={plans()}>
-        {(plan) => {
-          const isExpanded = () => expanded() === plan.id;
-
-          return (
-            <button
-              type="button"
-              class={`plan-picker__card${plan.popular ? ' plan-picker__card--pro' : ''}${isExpanded() ? ' plan-picker__card--expanded' : ''}`}
-              onClick={() => toggle(plan.id)}
-            >
-              <div class="plan-picker__row">
-                <div class="plan-picker__name">
-                  <span class="plan-picker__radio">
-                    <Show when={isExpanded()}>
-                      <span class="plan-picker__radio-dot" />
-                    </Show>
-                  </span>
-                  <span>{plan.name}</span>
-                  <Show when={plan.popular}>
-                    <span class="plan-picker__badge">Popular</span>
-                  </Show>
-                </div>
-                <div class="plan-picker__price-inline">
-                  <span class="plan-picker__amount">{plan.price}</span>
-                  <Show when={plan.period}>
-                    <span class="plan-picker__period">{plan.period}</span>
-                  </Show>
-                </div>
-              </div>
-
-              <Show when={isExpanded()}>
-                <div class="plan-picker__details">
-                  <Show when={plan.id === 'free' && props.usedRequests != null}>
-                    <p class="plan-picker__usage">{fmt(props.usedRequests!)} used this month</p>
-                  </Show>
-                  <ul class="plan-picker__features">
-                    <For each={plan.features}>
-                      {(feature) => (
-                        <li>
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="14"
-                            height="14"
-                            fill="#2632EF"
-                            viewBox="0 0 24 24"
-                            aria-hidden="true"
-                          >
-                            <path d="M9 15.59 4.71 11.3 3.3 12.71l5 5c.2.2.45.29.71.29s.51-.1.71-.29l11-11-1.41-1.41L9.02 15.59Z" />
-                          </svg>
-                          <span>{feature}</span>
-                        </li>
-                      )}
-                    </For>
-                  </ul>
-                </div>
-              </Show>
-            </button>
-          );
-        }}
-      </For>
-
-      <Show when={expanded()}>
-        <Show
-          when={expanded() !== 'enterprise'}
-          fallback={
-            <a
-              class="auth-form__submit plan-picker__cta"
-              href="https://manifest.build/pricing"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Talk to sales
-            </a>
-          }
-        >
-          <button
-            type="button"
-            class="auth-form__submit plan-picker__cta"
-            disabled={props.busy}
-            onClick={() => props.onSelect(expanded()!)}
-          >
-            {props.busy ? (
-              <span class="spinner" />
-            ) : expanded() === 'free' ? (
-              'Continue without a subscription'
-            ) : (
-              'Subscribe'
+/**
+ * The signup plan step. Manifest Cloud has one paid plan, so the step shows
+ * that plan alone: no free option and no sales path inside the signup flow.
+ */
+const PlanPicker: Component<PlanPickerProps> = (props) => (
+  <div class="plan-picker">
+    <div class="plan-picker__card">
+      <div class="plan-picker__row">
+        <div class="plan-picker__name">
+          <span>Manifest Cloud</span>
+        </div>
+        <div class="plan-picker__price-inline">
+          <span class="plan-picker__amount">{props.proPrice ?? FALLBACK_PRO_PRICE}</span>
+          <span class="plan-picker__period">/month</span>
+        </div>
+      </div>
+      <div class="plan-picker__details">
+        <ul class="plan-picker__features">
+          <For each={proFeatures}>
+            {(feature) => (
+              <li>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  fill="#2632EF"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path d="M9 15.59 4.71 11.3 3.3 12.71l5 5c.2.2.45.29.71.29s.51-.1.71-.29l11-11-1.41-1.41L9.02 15.59Z" />
+                </svg>
+                <span>{feature}</span>
+              </li>
             )}
-          </button>
-        </Show>
-        <Show when={expanded() === 'free'}>
-          <a
-            class="auth-footer__link plan-picker__guide-link"
-            href={SELF_HOSTING_GUIDE_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read the self-hosting guide
-          </a>
-        </Show>
-      </Show>
+          </For>
+        </ul>
+      </div>
     </div>
-  );
-};
+
+    <button
+      type="button"
+      class="auth-form__submit plan-picker__cta"
+      disabled={props.busy}
+      onClick={() => props.onSubscribe()}
+    >
+      {props.busy ? <span class="spinner" /> : 'Subscribe'}
+    </button>
+  </div>
+);
 
 export default PlanPicker;
 
