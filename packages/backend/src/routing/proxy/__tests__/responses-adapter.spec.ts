@@ -314,6 +314,42 @@ describe('Responses adapter', () => {
     });
   });
 
+  it('translates saved Chat Completions params merged into a native Responses body', () => {
+    const body = {
+      input: 'hi',
+      reasoning_effort: 'high',
+      max_completion_tokens: 512,
+    };
+    expect(
+      toNativeResponsesRequest(body, 'gpt-5', {
+        mapReasoningSummary: true,
+        mapMaxOutputTokens: true,
+      }),
+    ).toEqual({
+      input: 'hi',
+      model: 'gpt-5',
+      stream: false,
+      store: false,
+      reasoning: { effort: 'high', summary: 'auto' },
+      max_output_tokens: 512,
+    });
+    // No Chat Completions name may reach the Responses backend.
+    const plain = toNativeResponsesRequest(body, 'gpt-5');
+    expect(plain).not.toHaveProperty('reasoning_effort');
+    expect(plain).not.toHaveProperty('max_completion_tokens');
+    expect(plain).not.toHaveProperty('max_output_tokens');
+    expect(plain.reasoning).toEqual({ effort: 'high' });
+  });
+
+  it('keeps a caller-supplied reasoning object over a saved reasoning_effort', () => {
+    const request = toNativeResponsesRequest(
+      { input: 'hi', reasoning: { effort: 'low' }, reasoning_effort: 'high' },
+      'gpt-5',
+    );
+    expect(request.reasoning).toEqual({ effort: 'low' });
+    expect(request).not.toHaveProperty('reasoning_effort');
+  });
+
   it('can add default instructions for native Responses backends that require them', () => {
     expect(
       toNativeResponsesRequest({ input: 'hi' }, 'gpt-5.4', { defaultInstructions: true }),

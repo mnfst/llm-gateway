@@ -218,9 +218,34 @@ export function toNativeResponsesRequest(
     inputList?: boolean;
     forceStream?: boolean;
     stripCodexUnsupported?: boolean;
+    /** Send `reasoning.summary: 'auto'` with a mapped `reasoning_effort`. */
+    mapReasoningSummary?: boolean;
+    /** Keep a mapped `max_completion_tokens` as `max_output_tokens`; otherwise it is dropped. */
+    mapMaxOutputTokens?: boolean;
   },
 ): JsonRecord {
   const request: JsonRecord = { ...body, model };
+  // Saved route params use Chat Completions names (the param specs are keyed
+  // by provider/auth/model, not API mode) and are merged into this native
+  // body before it gets here. The Responses API rejects them, so translate.
+  if ('reasoning_effort' in request) {
+    if (typeof request.reasoning_effort === 'string' && !isRecord(request.reasoning)) {
+      request.reasoning = opts?.mapReasoningSummary
+        ? { effort: request.reasoning_effort, summary: 'auto' }
+        : { effort: request.reasoning_effort };
+    }
+    delete request.reasoning_effort;
+  }
+  if ('max_completion_tokens' in request) {
+    if (
+      opts?.mapMaxOutputTokens &&
+      typeof request.max_completion_tokens === 'number' &&
+      request.max_output_tokens === undefined
+    ) {
+      request.max_output_tokens = request.max_completion_tokens;
+    }
+    delete request.max_completion_tokens;
+  }
   if (opts?.stripCodexUnsupported) {
     for (const key of CODEX_SUBSCRIPTION_UNSUPPORTED_PARAMS) {
       delete request[key];

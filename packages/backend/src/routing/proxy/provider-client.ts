@@ -829,6 +829,15 @@ export class ProviderClient {
               inputList: endpointKey === 'openai-subscription',
               forceStream: endpointKey === 'openai-subscription',
               stripCodexUnsupported: endpointKey === 'openai-subscription',
+              mapReasoningSummary:
+                endpointKey === 'openai-subscription' ||
+                endpointKey === 'openai-responses' ||
+                endpoint.acceptsReasoningSummary,
+              mapMaxOutputTokens:
+                endpointKey === 'openai-responses' ||
+                endpointKey === 'copilot-responses' ||
+                endpointKey === 'xai-responses' ||
+                endpoint.acceptsMaxOutputTokens,
             })
           : toResponsesRequest(requestSource, bareModel, {
               // The subscription backend only serves SSE. Manifest buffers it
