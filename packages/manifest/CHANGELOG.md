@@ -1,5 +1,11 @@
 # manifest
 
+## 6.29.3
+
+### Patch Changes
+
+- 433814d: Map Gemini `LANGUAGE`, `IMAGE_PROHIBITED_CONTENT` and `IMAGE_RECITATION` finish reasons to `content_filter` instead of reporting the blocked response as `stop`
+
 ## 6.29.2
 
 ### Patch Changes
