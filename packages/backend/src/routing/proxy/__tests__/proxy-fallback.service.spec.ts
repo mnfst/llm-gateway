@@ -955,6 +955,70 @@ describe('ProxyFallbackService', () => {
       );
     });
 
+    it.each(['api_key', 'subscription'] as const)(
+      'applies saved tier overrides on native OpenAI Responses with %s auth',
+      async (authType) => {
+        const model = 'gpt-6-luna';
+        const identity = { provider: 'openai', authType, model };
+        const realClient = new ProviderClient();
+        providerClient.forward.mockImplementationOnce((options) => realClient.forward(options));
+        modelParamsService.get.mockResolvedValueOnce({
+          reasoning_effort: 'high',
+          max_completion_tokens: 512,
+        });
+        providerParamSpecs.getSpecs.mockResolvedValueOnce([
+          {
+            ...identity,
+            path: 'reasoning_effort',
+            type: 'enum',
+            group: 'reasoning',
+            label: 'Reasoning effort',
+            description: 'Effort used for reasoning.',
+            values: ['low', 'high'],
+          },
+          {
+            ...identity,
+            path: 'max_completion_tokens',
+            type: 'integer',
+            group: 'generation_length',
+            label: 'Output limit',
+            description: 'Maximum output tokens.',
+          },
+        ]);
+        const fetchMock = jest
+          .spyOn(globalThis, 'fetch')
+          .mockResolvedValueOnce(
+            new Response(
+              'data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n',
+              { headers: { 'content-type': 'text/event-stream' } },
+            ),
+          );
+
+        try {
+          const { wireRequestBody } = await service.tryForwardToProvider({
+            ...identity,
+            apiKey: 'test-key',
+            body: {
+              input: 'hi',
+              reasoning: { effort: 'low', summary: 'detailed' },
+              max_output_tokens: 4096,
+            },
+            stream: false,
+            sessionKey: 'sess-1',
+            apiMode: 'responses',
+            paramMergeContext: { agentId: 'agent-1', scopeKey: 'header:h1' },
+          });
+
+          expect(wireRequestBody?.reasoning).toEqual({ effort: 'high', summary: 'detailed' });
+          expect(wireRequestBody?.max_output_tokens).toBe(authType === 'api_key' ? 512 : undefined);
+          expect(wireRequestBody).not.toHaveProperty('reasoning_effort');
+          expect(wireRequestBody).not.toHaveProperty('max_completion_tokens');
+        } finally {
+          fetchMock.mockRestore();
+        }
+      },
+    );
+
     it('merges params into a lazy cross-protocol body once per attempt', async () => {
       const convertedBody = { messages: [{ role: 'user', content: 'hi' }] };
       const resolveChatBody = jest.fn().mockResolvedValue(convertedBody);

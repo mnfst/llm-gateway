@@ -341,13 +341,22 @@ describe('Responses adapter', () => {
     expect(plain.reasoning).toEqual({ effort: 'high' });
   });
 
-  it('keeps a caller-supplied reasoning object over a saved reasoning_effort', () => {
+  it('prefers native fields when the caller supplied both names without saved overrides', () => {
     const request = toNativeResponsesRequest(
-      { input: 'hi', reasoning: { effort: 'low' }, reasoning_effort: 'high' },
+      {
+        input: 'hi',
+        reasoning: { effort: 'low' },
+        reasoning_effort: 'high',
+        max_output_tokens: 4096,
+        max_completion_tokens: 512,
+      },
       'gpt-5',
+      { mapMaxOutputTokens: true },
     );
     expect(request.reasoning).toEqual({ effort: 'low' });
+    expect(request.max_output_tokens).toBe(4096);
     expect(request).not.toHaveProperty('reasoning_effort');
+    expect(request).not.toHaveProperty('max_completion_tokens');
   });
 
   it('can add default instructions for native Responses backends that require them', () => {
