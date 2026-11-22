@@ -275,6 +275,7 @@ describe('ProviderModelFetcherService', () => {
             { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
             { inferenceProfileId: 'global.openai.gpt-6-luna', status: 'ACTIVE' },
             { inferenceProfileId: 'global.openai.gpt-6.1-sol', status: 'ACTIVE' },
+            { inferenceProfileId: 'eu.openai.gpt-6.1-sol', status: 'ACTIVE' },
             { inferenceProfileId: 'global.openai.gpt-6-astra', status: 'INACTIVE' },
             { inferenceProfileId: 'global.anthropic.claude-sonnet-4-6', status: 'ACTIVE' },
           ],

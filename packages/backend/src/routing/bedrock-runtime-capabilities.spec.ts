@@ -38,13 +38,24 @@ describe('Bedrock Runtime capability catalog', () => {
     );
   });
 
-  it('marks gpt-6.1-sol as rejecting reasoning effort none', () => {
-    expect(getBedrockRuntimeCapabilities('global.openai.gpt-6.1-sol')).toMatchObject({
-      modelId: 'openai.gpt-6.1-sol',
-      chatTokenParameter: 'max_completion_tokens',
-      rejectsReasoningNone: true,
-    });
-  });
+  it.each(['global.openai.gpt-6.1-sol', 'bedrock/us.openai.gpt-6.1-sol'])(
+    'recognises %s as a GPT-6.1 Sol profile that rejects reasoning effort none',
+    (profile) => {
+      expect(getBedrockRuntimeCapabilities(profile)).toMatchObject({
+        modelId: 'openai.gpt-6.1-sol',
+        chatTokenParameter: 'max_completion_tokens',
+        rejectsReasoningNone: true,
+      });
+    },
+  );
+
+  it.each(['eu.openai.gpt-6.1-sol', 'bedrock/apac.openai.gpt-6.1-sol'])(
+    'rejects the unsupported GPT-6.1 Sol profile %s',
+    (profile) => {
+      expect(getBedrockRuntimeCapabilities(profile)).toBeNull();
+      expect(getBedrockRuntimeSupportedEndpoints(profile)).toEqual([]);
+    },
+  );
 
   it('matches nothing but exact CRIS profiles of catalogued models', () => {
     // Base model IDs are served by Mantle.

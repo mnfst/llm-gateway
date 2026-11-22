@@ -1,3 +1,4 @@
+import { stripVendorPrefix } from '../common/constants/openai-models';
 import { getBedrockInferenceProfileBaseModelId } from './bedrock-region';
 import { hasFunctionTools } from './function-tools';
 
@@ -12,6 +13,8 @@ export type BedrockRuntimeApi = 'chat_completions' | 'responses';
 export interface BedrockRuntimeCapabilities {
   /** Exact base model ID. Lookups are case-sensitive. */
   modelId: string;
+  /** Restrict this model to the listed CRIS scopes when set. */
+  inferenceProfileScopes?: readonly string[];
   /**
    * Every entry must list both APIs: Manifest keeps the agent's API on Runtime,
    * except for the GPT chat requests `bedrockRuntimeChatNeedsResponses` sends to
@@ -57,6 +60,7 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG: readonly BedrockRuntimeCapabili
   },
   {
     modelId: 'openai.gpt-6.1-sol',
+    inferenceProfileScopes: ['us', 'global'],
     apis: CHAT_AND_RESPONSES,
     chatTokenParameter: 'max_completion_tokens',
     rejectsReasoningNone: true,
@@ -135,7 +139,13 @@ const CLAUDE_PROFILE_ENDPOINTS: readonly string[] = ['/v1/chat/completions', '/v
  */
 export function getBedrockRuntimeCapabilities(model: string): BedrockRuntimeCapabilities | null {
   const baseModelId = getBedrockInferenceProfileBaseModelId(model);
-  return baseModelId === null ? null : (CATALOG_BY_MODEL_ID.get(baseModelId) ?? null);
+  if (baseModelId === null) return null;
+  const capabilities = CATALOG_BY_MODEL_ID.get(baseModelId);
+  if (capabilities?.inferenceProfileScopes) {
+    const [scope] = stripVendorPrefix(model).split('.', 1);
+    if (!capabilities.inferenceProfileScopes.includes(scope)) return null;
+  }
+  return capabilities ?? null;
 }
 
 /**
