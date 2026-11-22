@@ -1796,7 +1796,15 @@ describe('Google Adapter', () => {
       expect(choices[0].finish_reason).toBe('content_filter');
     });
 
-    it.each(['BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY'])(
+    it.each([
+      'BLOCKLIST',
+      'PROHIBITED_CONTENT',
+      'SPII',
+      'IMAGE_SAFETY',
+      'LANGUAGE',
+      'IMAGE_PROHIBITED_CONTENT',
+      'IMAGE_RECITATION',
+    ])(
       'maps %s finish reason to content_filter',
       (finishReason) => {
         const google = {
