@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import type { AuthType, ModelRoute } from 'manifest-shared';
-import { applyRequestParamDefaults } from 'manifest-shared';
+import type { AuthType, ModelRoute, RequestParamDefaults } from 'manifest-shared';
+import { applyRequestParamDefaultsWithOverrides } from 'manifest-shared';
 import { AgentModelParamsService } from '../routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from '../routing-core/provider-param-spec.service';
 import { AutofixService, type AutofixAttempt } from '../autofix/autofix.service';
@@ -187,8 +187,8 @@ export class ProxyFallbackService {
     provider: string,
     authType: AuthType | string | undefined,
     model: string,
-  ): Promise<Record<string, unknown>> {
-    if (!ctx || !authType) return body;
+  ): Promise<{ body: Record<string, unknown>; overrides?: RequestParamDefaults }> {
+    if (!ctx || !authType) return { body };
     const modelParams = await this.modelParamsService.get(
       ctx.agentId,
       ctx.scopeKey,
@@ -197,7 +197,7 @@ export class ProxyFallbackService {
       model,
     );
     const specs = await this.providerParamSpecs.getSpecs(provider, authType as AuthType, model);
-    return applyRequestParamDefaults(body, modelParams, specs);
+    return applyRequestParamDefaultsWithOverrides(body, modelParams, specs);
   }
 
   async tryFallbacks(
@@ -990,7 +990,7 @@ export class ProxyFallbackService {
     // new agent_model_params table, so a primary OpenAI route with a
     // DeepSeek fallback no longer needs the old per-provider filter —
     // OpenAI's lookup returns null, DeepSeek's returns its own row.
-    let body = await this.applyParamMerge(
+    const merged = await this.applyParamMerge(
       opts.body,
       opts.paramMergeContext,
       provider,
@@ -1045,27 +1045,25 @@ export class ProxyFallbackService {
     const resolveChatBody = opts.resolveChatBody
       ? () => {
           resolvedChatBody ??= (async () => {
-            let resolved = await opts.resolveChatBody!();
-            resolved = await this.applyParamMerge(
-              resolved,
+            const { body: resolved } = await this.applyParamMerge(
+              await opts.resolveChatBody!(),
               opts.paramMergeContext,
               provider,
               authType,
               opts.model,
             );
-            resolved = await this.reasoningCache.prepareRequest(
+            return this.reasoningCache.prepareRequest(
               resolved,
               opts.reasoningCacheKey ?? opts.sessionKey,
               reasoningEndpointKey,
               forwardModel,
             );
-            return resolved;
           })();
           return resolvedChatBody;
         }
       : undefined;
-    body = await this.reasoningCache.prepareRequest(
-      body,
+    const body = await this.reasoningCache.prepareRequest(
+      merged.body,
       opts.reasoningCacheKey ?? opts.sessionKey,
       reasoningEndpointKey,
       forwardModel,
@@ -1090,6 +1088,9 @@ export class ProxyFallbackService {
         apiKey: effectiveKey,
         model: forwardModel,
         body,
+        ...(opts.apiMode === 'responses' && merged.overrides
+          ? { savedRequestParams: merged.overrides }
+          : {}),
         resolveChatBody,
         stream,
         signal,

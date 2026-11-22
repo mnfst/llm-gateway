@@ -1,4 +1,5 @@
 import type { IncomingHttpHeaders } from 'http';
+import type { RequestParamDefaults } from 'manifest-shared';
 import type { RecordingResponseBody } from './attempt-recording.types';
 import { ProviderEndpoint } from './provider-endpoints';
 import type { AttemptRecordingCapture } from './attempt-recording-capture';
@@ -95,6 +96,8 @@ export interface ForwardOptions {
   apiKey: string;
   model: string;
   body: Record<string, unknown>;
+  /** Saved overrides already merged into the body under their catalog names. */
+  savedRequestParams?: RequestParamDefaults;
   resolveChatBody?: ResolveChatBody;
   apiMode?: ProxyApiMode;
   /** Legacy caller session identifier. Provider cache affinity must use providerCacheKey. */

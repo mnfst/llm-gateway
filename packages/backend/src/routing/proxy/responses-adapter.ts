@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { resolveToolCallIndex } from 'manifest-shared';
+import { resolveToolCallIndex, type RequestParamDefaults } from 'manifest-shared';
 
 import { DEFAULT_INSTRUCTIONS } from './chatgpt-helpers';
 import { OpenAIMessage } from './proxy-types';
@@ -218,9 +218,37 @@ export function toNativeResponsesRequest(
     inputList?: boolean;
     forceStream?: boolean;
     stripCodexUnsupported?: boolean;
+    /** Send `reasoning.summary: 'auto'` with a mapped `reasoning_effort`. */
+    mapReasoningSummary?: boolean;
+    /** Keep a mapped `max_completion_tokens` as `max_output_tokens`; otherwise it is dropped. */
+    mapMaxOutputTokens?: boolean;
+    savedRequestParams?: RequestParamDefaults;
   },
 ): JsonRecord {
   const request: JsonRecord = { ...body, model };
+  // Saved route params are merged under their catalog names. Preserve their
+  // precedence over caller fields when translating them to Responses names.
+  const reasoning = isRecord(request.reasoning) ? request.reasoning : undefined;
+  if (
+    typeof request.reasoning_effort === 'string' &&
+    (!reasoning || typeof opts?.savedRequestParams?.reasoning_effort === 'string')
+  ) {
+    request.reasoning = {
+      ...(opts?.mapReasoningSummary ? { summary: 'auto' } : {}),
+      ...reasoning,
+      effort: request.reasoning_effort,
+    };
+  }
+  delete request.reasoning_effort;
+  if (
+    opts?.mapMaxOutputTokens &&
+    typeof request.max_completion_tokens === 'number' &&
+    (request.max_output_tokens === undefined ||
+      typeof opts.savedRequestParams?.max_completion_tokens === 'number')
+  ) {
+    request.max_output_tokens = request.max_completion_tokens;
+  }
+  delete request.max_completion_tokens;
   if (opts?.stripCodexUnsupported) {
     for (const key of CODEX_SUBSCRIPTION_UNSUPPORTED_PARAMS) {
       delete request[key];

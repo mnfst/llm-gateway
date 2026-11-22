@@ -443,6 +443,7 @@ export class ProviderClient {
       apiKey,
       authType,
       body,
+      savedRequestParams: opts.savedRequestParams,
       chatBody,
       apiMode: opts.apiMode,
       stream,
@@ -705,6 +706,7 @@ export class ProviderClient {
     apiKey: string;
     authType: string | undefined;
     body: Record<string, unknown>;
+    savedRequestParams?: ForwardOptions['savedRequestParams'];
     chatBody?: Record<string, unknown>;
     apiMode?: ForwardOptions['apiMode'];
     stream: boolean;
@@ -817,6 +819,17 @@ export class ProviderClient {
     }
 
     if (endpoint.format === 'chatgpt') {
+      // Only OpenAI infrastructure and Bedrock Runtime are known to accept summaries.
+      const mapReasoningSummary =
+        endpointKey === 'openai-subscription' ||
+        endpointKey === 'openai-responses' ||
+        endpoint.acceptsReasoningSummary;
+      // The ChatGPT subscription backend rejects max_output_tokens.
+      const mapMaxOutputTokens =
+        endpointKey === 'openai-responses' ||
+        endpointKey === 'copilot-responses' ||
+        endpointKey === 'xai-responses' ||
+        endpoint.acceptsMaxOutputTokens;
       const requestBody =
         ctx.apiMode === 'responses'
           ? // ChatGPT subscription tokens hit the Codex Responses backend, which
@@ -829,6 +842,9 @@ export class ProviderClient {
               inputList: endpointKey === 'openai-subscription',
               forceStream: endpointKey === 'openai-subscription',
               stripCodexUnsupported: endpointKey === 'openai-subscription',
+              mapReasoningSummary,
+              mapMaxOutputTokens,
+              savedRequestParams: ctx.savedRequestParams,
             })
           : toResponsesRequest(requestSource, bareModel, {
               // The subscription backend only serves SSE. Manifest buffers it
@@ -841,25 +857,14 @@ export class ProviderClient {
                       endpoint.forwardResponsesStream
                     ? ctx.stream
                     : undefined,
-              // The ChatGPT subscription backend rejects max_output_tokens with
-              // unsupported_parameter; only opt in for the API-key paths.
-              mapMaxOutputTokens:
-                endpointKey === 'openai-responses' ||
-                endpointKey === 'copilot-responses' ||
-                endpointKey === 'xai-responses' ||
-                endpoint.acceptsMaxOutputTokens,
+              mapMaxOutputTokens,
               // OpenAI and xAI /responses endpoints accept prompt_cache_key.
               // Other Responses-shaped backends may 400 on unknown params.
               forwardPromptCacheKey:
                 endpointKey === 'openai-subscription' ||
                 endpointKey === 'openai-responses' ||
                 endpointKey === 'xai-responses',
-              // Only OpenAI infrastructure and Bedrock Runtime are known to
-              // accept reasoning.summary; other Responses backends may 400 on it.
-              mapReasoningEffort:
-                endpointKey === 'openai-subscription' ||
-                endpointKey === 'openai-responses' ||
-                endpoint.acceptsReasoningSummary,
+              mapReasoningEffort: mapReasoningSummary,
             });
       if (endpointKey === 'xai-responses' || endpoint.acceptsPromptCacheKey) {
         applyHashedPromptCacheKey(requestBody, ctx.providerCacheKey);
