@@ -494,6 +494,19 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     color: '#2d2d2d',
     keyPrefix: '',
     minKeyLength: 30,
+  {
+    id: 'crowllm',
+    displayName: 'CrowLLM',
+    aliases: [],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#f59e0b',
+    keyPrefix: 'sk-',
+    minKeyLength: 10,
+    keyPlaceholder: 'sk-...',
+  },
+
     keyPlaceholder: 'API key',
   },
 ] as const;

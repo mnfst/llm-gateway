@@ -353,6 +353,14 @@ export const PROVIDER_ENDPOINTS: Record<string, ProviderEndpoint> = {
     format: 'openai',
     ...openaiStreamUsage,
   },
+  crowllm: {
+    baseUrl: 'https://crowllm.com',
+    buildHeaders: openaiHeaders,
+    buildPath: openaiPath,
+    format: 'openai',
+    ...openaiStreamUsage,
+  },
+
   kilo: {
     baseUrl: KILO_GATEWAY_BASE,
     buildHeaders: openaiHeaders,
