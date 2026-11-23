@@ -521,7 +521,7 @@ describe('Account', () => {
       mockGetBillingStatus.mockResolvedValue(proStatus);
       render(() => <Account />);
       const button = await screen.findByText('Manage subscription');
-      expect(screen.getByText('Pro · $20/mo')).toBeDefined();
+      expect(screen.getByText('Pro · $20/mo + tax')).toBeDefined();
       expect(screen.getByText('Unlimited')).toBeDefined();
       expect(screen.queryByText(/No subscription\./)).toBeNull();
       fireEvent.click(button);
@@ -535,6 +535,24 @@ describe('Account', () => {
       expect(fakeTab.opener).toBeNull();
       await waitFor(() => expect(fakeTab.location.href).toBe('https://billing.stripe.com/session'));
       await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+    });
+
+    it('offers to subscribe again while Pro comes from the former Stripe account', async () => {
+      mockGetBillingStatus.mockResolvedValue({
+        ...proStatus,
+        cancelAtPeriodEnd: true,
+        subscriptionPeriodEnd: '2026-12-15T00:00:00.000Z',
+        legacySubscription: true,
+      });
+
+      render(() => <Account />);
+
+      await screen.findByText(/Manifest moved to a new billing account/);
+      expect(screen.getByText(/You'll keep Pro access until/)).toBeDefined();
+      expect(screen.queryByText('Manage subscription')).toBeNull();
+      const subscribe = screen.getByRole('button', { name: /^Subscribe/ });
+      fireEvent.click(subscribe);
+      expect(mockUpgrade).toHaveBeenCalledWith(expect.objectContaining({ plan: 'pro' }));
     });
 
     it('shows the scheduled cancellation access date for Pro users', async () => {

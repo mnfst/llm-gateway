@@ -21,7 +21,9 @@
     "backfill:message-providers": "ts-node -T src/database/backfills/backfill-message-providers.cli.ts",
     "backfill:message-providers:prod": "node dist/database/backfills/backfill-message-providers.cli.js",
     "backfill:requests": "ts-node -T src/database/backfills/request-backfill.cli.ts",
-    "backfill:requests:prod": "node dist/database/backfills/request-backfill.cli.js"
+    "backfill:requests:prod": "node dist/database/backfills/request-backfill.cli.js",
+    "billing:migrate-stripe-account": "ts-node -T src/billing/stripe-account-migration.cli.ts",
+    "billing:migrate-stripe-account:prod": "node dist/billing/stripe-account-migration.cli.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1127.0",

@@ -17,7 +17,7 @@ import { getLastAuthMethod, setLastAuthMethod } from '../services/last-auth-meth
 import { checkIsSelfHosted, checkSocialProviders } from '../services/setup-status.js';
 import { getBillingStatus } from '../services/api/billing.js';
 import { markPlanChosen } from '../services/plan-selection.js';
-import { formatBillingPrice } from '../services/billing-display.js';
+import { formatBillingPrice, PRICE_TAX_SUFFIX } from '../services/billing-display.js';
 import { toast } from '../services/toast-store.js';
 import { markDiscoveryPending } from '../services/discovery.js';
 
@@ -343,7 +343,7 @@ const Register: Component = () => {
             </h1>
             <p class="auth-header__subtitle">
               {searchParams.context === 'login'
-                ? 'Manifest Cloud is $19/month. The self-hosted gateway is free.'
+                ? `Manifest Cloud is $19/month${PRICE_TAX_SUFFIX}. The self-hosted gateway is free.`
                 : "Monitor your AI harnesses' costs and usage"}
             </p>
           </div>

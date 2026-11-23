@@ -9,7 +9,7 @@ describe('PlanPicker', () => {
 
     expect(screen.getByText('Popular')).toBeDefined();
     expect(screen.getByText('$20')).toBeDefined();
-    expect(screen.getAllByText('/month').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('/month + tax').length).toBeGreaterThan(0);
     expect(screen.getByText('Manifest Cloud')).toBeDefined();
     expect(screen.getByText('Servers, database and uptime handled by us')).toBeDefined();
     expect(screen.queryByText('Read the self-hosting guide')).toBeNull();

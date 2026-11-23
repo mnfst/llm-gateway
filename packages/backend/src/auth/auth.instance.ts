@@ -9,6 +9,7 @@ import { VerifyEmailEmail } from '../notifications/emails/verify-email';
 import { ResetPasswordEmail } from '../notifications/emails/reset-password';
 import { sendEmail } from '../notifications/services/email-providers/send-email';
 import { isBillingEnabled, getStripeClient } from '../billing/billing.config';
+import { getCheckoutSessionParams } from '../billing/checkout-session-params';
 import { optionalPositiveInteger } from '../config/env.util';
 import {
   previousPlanFromEvent,
@@ -195,6 +196,7 @@ function buildPlugins() {
       subscription: {
         enabled: true,
         plans,
+        getCheckoutSessionParams,
         onSubscriptionComplete: async ({ event, subscription }) => {
           await sendSubscriptionConfirmedEmail(database, event, subscription);
         },

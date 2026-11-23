@@ -427,10 +427,12 @@ const Account: Component = () => {
               <span class="billing-footer__note">
                 {billing()!.plan === 'free'
                   ? 'No subscription. Requests are not routed until you subscribe.'
-                  : 'Update your payment method and view invoices.'}
+                  : billing()!.legacySubscription
+                    ? 'Manifest moved to a new billing account. Subscribe again to keep Pro after your current period.'
+                    : 'Update your payment method and view invoices.'}
               </span>
               <Show
-                when={billing()!.plan === 'free'}
+                when={billing()!.plan === 'free' || billing()!.legacySubscription}
                 fallback={
                   <div class="billing-footer__actions">
                     <button

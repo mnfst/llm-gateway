@@ -17,3 +17,13 @@ export const PAID_SUBSCRIPTION_STATUSES = ['active', 'trialing', 'past_due'] as 
 export const PAID_SUBSCRIPTION_STATUS_SQL_LIST = PAID_SUBSCRIPTION_STATUSES.map(
   (status) => `'${status}'`,
 ).join(', ');
+
+/**
+ * Status of a subscription that came from the former Stripe account (MNFST,
+ * Inc.) and was detached by `migrate-stripe-account`. better-auth's Stripe
+ * plugin ignores it (it only reuses active, trialing and incomplete rows), so
+ * the tenant can subscribe again on the current account. `PlanService` keeps
+ * the tenant on Pro until the row's `periodEnd`, the end of the period it
+ * already paid for.
+ */
+export const LEGACY_GRACE_STATUS = 'legacy_grace';

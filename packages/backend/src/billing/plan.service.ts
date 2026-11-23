@@ -27,7 +27,7 @@ import {
   normalizeBillingEmailPreferences,
 } from './billing-email-preferences';
 import { REQUEST_USAGE_CUTOVER_STATE, requestQuotaWindowStartMs } from './request-quota-window';
-import { PAID_SUBSCRIPTION_STATUS_SQL_LIST } from './subscription-status';
+import { LEGACY_GRACE_STATUS, PAID_SUBSCRIPTION_STATUS_SQL_LIST } from './subscription-status';
 
 const PRICE_CACHE_TTL_MS = 60 * 60 * 1000;
 const BILLING_PRICE_UNAVAILABLE: BillingPrice = Object.freeze({
@@ -62,10 +62,12 @@ interface BillingSnapshot {
   billingEmailPreferences: Partial<BillingEmailPreferences> | null;
   cancelAtPeriodEnd: boolean;
   periodEnd: string | null;
+  legacySubscription: boolean;
 }
 
 interface BillingSnapshotRow {
   subscriptionPlan: string | null;
+  subscriptionStatus: string | null;
   cancelAtPeriodEnd: boolean | null;
   periodEnd: string | null;
   limitOverrides: { requestsPerMonth?: number } | null;
@@ -123,6 +125,7 @@ export class PlanService implements OnModuleInit {
         billingEmailPreferences: null,
         cancelAtPeriodEnd: false,
         periodEnd: null,
+        legacySubscription: false,
       };
     }
     const rows: BillingSnapshotRow[] = await this.dataSource.query(
@@ -130,16 +133,18 @@ export class PlanService implements OnModuleInit {
           t."limit_overrides" AS "limitOverrides",
           t."billing_email_preferences" AS "billingEmailPreferences",
           s."plan" AS "subscriptionPlan",
+          s."status" AS "subscriptionStatus",
           s."cancelAtPeriodEnd" AS "cancelAtPeriodEnd",
           s."periodEnd" AS "periodEnd"
          FROM (SELECT 1) seed
     LEFT JOIN "tenants" t
            ON t."id" = $1
     LEFT JOIN LATERAL (
-          SELECT "plan", "cancelAtPeriodEnd", "periodEnd"
+          SELECT "plan", "status", "cancelAtPeriodEnd", "periodEnd"
             FROM "subscription"
            WHERE "referenceId" = COALESCE(t."owner_user_id", $2)
-             AND "status" IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
+             AND ("status" IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
+                  OR ("status" = '${LEGACY_GRACE_STATUS}' AND "periodEnd" > NOW()))
         ORDER BY "periodEnd" DESC NULLS LAST
            LIMIT 1
          ) s
@@ -153,6 +158,7 @@ export class PlanService implements OnModuleInit {
       billingEmailPreferences: row?.billingEmailPreferences ?? null,
       cancelAtPeriodEnd: row?.cancelAtPeriodEnd ?? false,
       periodEnd: row?.periodEnd ?? null,
+      legacySubscription: row?.subscriptionStatus === LEGACY_GRACE_STATUS,
     };
   }
 
@@ -470,6 +476,7 @@ export class PlanService implements OnModuleInit {
         requests: { used: null, limit: null, periodEnd: null },
         cancelAtPeriodEnd: false,
         subscriptionPeriodEnd: null,
+        legacySubscription: false,
       };
     }
     const snapshot = await this.getBillingSnapshot(ctx);
@@ -492,6 +499,7 @@ export class PlanService implements OnModuleInit {
       },
       cancelAtPeriodEnd: snapshot.cancelAtPeriodEnd,
       subscriptionPeriodEnd: snapshot.periodEnd,
+      legacySubscription: snapshot.legacySubscription,
     };
   }
 

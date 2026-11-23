@@ -33,7 +33,7 @@ describe('billing-display', () => {
 
   it('combines price and interval when both are available', () => {
     expect(formatBillingPriceWithInterval({ amount: 20, currency: 'USD', interval: 'month' })).toBe(
-      '$20/mo',
+      '$20/mo + tax',
     );
     expect(
       formatBillingPriceWithInterval({ amount: null, currency: 'USD', interval: 'month' }),

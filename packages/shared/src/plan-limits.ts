@@ -52,4 +52,10 @@ export interface BillingStatus {
   requests: { used: number | null; limit: number | null; periodEnd: string | null };
   cancelAtPeriodEnd: boolean;
   subscriptionPeriodEnd: string | null;
+  /**
+   * True while the tenant is on Pro through a subscription from the former
+   * Stripe account. It has no billing portal on the current account: the
+   * dashboard offers to subscribe again instead of "Manage subscription".
+   */
+  legacySubscription?: boolean;
 }
