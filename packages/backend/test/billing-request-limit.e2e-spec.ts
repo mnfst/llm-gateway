@@ -231,6 +231,44 @@ describe('request limit gate (/v1 proxy)', () => {
     }
   });
 
+  // Subscriptions detached from the former Stripe account keep Pro only until
+  // the end of the period they paid for.
+  it.each([
+    ["NOW() + interval '1 day'", 'pro'],
+    ["NOW() - interval '1 day'", 'free'],
+    ['NULL', 'free'],
+  ])('resolves a legacy_grace subscription ending %s to the %s plan', async (end, expected) => {
+    const tenantRows = await ds.query(`SELECT id FROM tenants WHERE owner_user_id = $1 LIMIT 1`, [
+      TEST_USER_ID,
+    ]);
+    await ds.query(
+      `INSERT INTO "subscription" ("id", "plan", "referenceId", "status", "periodEnd")
+       VALUES ('sub-grace-e2e', 'pro', $1, 'legacy_grace', ${end})`,
+      [TEST_USER_ID],
+    );
+    const plan = await app
+      .get(PlanService)
+      .getPlan({ tenantId: tenantRows[0].id, userId: TEST_USER_ID });
+    expect(plan).toBe(expected);
+  });
+
+  it('prefers a new subscription over a live legacy_grace row', async () => {
+    const tenantRows = await ds.query(`SELECT id FROM tenants WHERE owner_user_id = $1 LIMIT 1`, [
+      TEST_USER_ID,
+    ]);
+    await ds.query(
+      `INSERT INTO "subscription" ("id", "plan", "referenceId", "status", "periodEnd") VALUES
+         ('sub-grace-e2e', 'pro', $1, 'legacy_grace', NOW() + interval '20 days'),
+         ('sub-new-e2e', 'pro', $1, 'active', NOW() + interval '10 days')`,
+      [TEST_USER_ID],
+    );
+    const status = await app
+      .get(PlanService)
+      .getBillingStatus({ tenantId: tenantRows[0].id, userId: TEST_USER_ID });
+    expect(status.plan).toBe('pro');
+    expect(status.legacySubscription).toBe(false);
+  });
+
   it('allows requests once the tenant is on an active pro subscription (unlimited)', async () => {
     await ds.query(
       `INSERT INTO "subscription" ("id", "plan", "referenceId", "status") VALUES ('sub-req-e2e-1', 'pro', $1, 'active')`,

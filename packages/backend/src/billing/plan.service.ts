@@ -145,7 +145,9 @@ export class PlanService implements OnModuleInit {
            WHERE "referenceId" = COALESCE(t."owner_user_id", $2)
              AND ("status" IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
                   OR ("status" = '${LEGACY_GRACE_STATUS}' AND "periodEnd" > NOW()))
-        ORDER BY "periodEnd" DESC NULLS LAST
+        -- A subscription on the current Stripe account wins over a legacy one,
+        -- whatever the dates, so a re-subscribed owner gets the billing portal.
+        ORDER BY ("status" = '${LEGACY_GRACE_STATUS}') ASC, "periodEnd" DESC NULLS LAST
            LIMIT 1
          ) s
            ON COALESCE(t."owner_user_id", $2) IS NOT NULL`,

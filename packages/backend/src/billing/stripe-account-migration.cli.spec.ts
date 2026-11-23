@@ -113,14 +113,36 @@ describe('stripe-account-migration CLI', () => {
   it('falls back to process argv, env and console', async () => {
     const db = fakeDb([[], [{ n: 0 }], [{ n: 0 }]]);
     const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    const argv = jest.replaceProperty(process, 'argv', ['node', 'stripe-account-migration.cli.js']);
     const prev = process.env['DATABASE_URL'];
     process.env['DATABASE_URL'] = 'postgres://env';
     try {
       await main({ connect: db.connect });
       expect(logSpy).toHaveBeenCalledWith('Stripe account migration (DRY RUN)');
+      expect(db.transaction).not.toHaveBeenCalled();
     } finally {
-      process.env['DATABASE_URL'] = prev;
+      if (prev === undefined) delete process.env['DATABASE_URL'];
+      else process.env['DATABASE_URL'] = prev;
+      argv.restore();
       logSpy.mockRestore();
     }
+  });
+
+  it('closes the connection and logs no success line when the write fails', async () => {
+    const db = fakeDb([PAID, [{ n: 1 }], [{ n: 2 }]]);
+    db.transaction.mockRejectedValueOnce(new Error('boom'));
+    const log = jest.fn();
+
+    await expect(
+      main({
+        argv: ['--apply'],
+        env: { DATABASE_URL: 'postgres://x' },
+        logger: { log },
+        connect: db.connect,
+      }),
+    ).rejects.toThrow('boom');
+
+    expect(db.close).toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('Done.'));
   });
 });
