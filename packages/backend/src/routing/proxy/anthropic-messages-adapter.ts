@@ -376,7 +376,9 @@ function toAnthropicUsage(usage: unknown): JsonRecord {
 }
 
 function safeParseJson(value: unknown): unknown {
-  if (typeof value !== 'string') return value ?? {};
+  // Anthropic tool_use.input must be an object. A parsed array, number, or
+  // boolean is not one; null and undefined already collapse to {}.
+  if (typeof value !== 'string') return isRecord(value) ? value : {};
   try {
     // JSON.parse('null') and JSON.parse('[]') succeed, but Anthropic
     // tool_use.input must be an object. A no-arg tool echoed as the string
@@ -387,6 +389,14 @@ function safeParseJson(value: unknown): unknown {
     // Malformed arguments are an empty object, same as a missing payload.
   }
   return {};
+}
+
+// Clients concatenate input_json_delta.partial_json and parse the result as
+// tool_use.input, which must be an object. After optional whitespace, only
+// '{' can grow into one. Hold every other prefix ("null", "[]", "true",
+// numbers, strings) and replace it when the block closes.
+function toolArgsAreNonObject(buffer: string): boolean {
+  return !buffer.trimStart().startsWith('{');
 }
 
 /** chat_completions response → Anthropic Messages response. */
@@ -643,13 +653,15 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
         }
         if (typeof fn.arguments === 'string' && fn.arguments.length > 0) {
           entry.argBuffer += fn.arguments;
-          events.push(
-            formatMessagesEvent('content_block_delta', {
-              type: 'content_block_delta',
-              index: entry.index,
-              delta: { type: 'input_json_delta', partial_json: fn.arguments },
-            }),
-          );
+          if (!toolArgsAreNonObject(entry.argBuffer)) {
+            events.push(
+              formatMessagesEvent('content_block_delta', {
+                type: 'content_block_delta',
+                index: entry.index,
+                delta: { type: 'input_json_delta', partial_json: fn.arguments },
+              }),
+            );
+          }
         }
       }
     }
@@ -705,6 +717,15 @@ function hasOpenToolCall(state: StreamState): boolean {
 function closeOpenToolCalls(state: StreamState, events: string[]): void {
   for (const entry of state.toolCalls.values()) {
     if (!entry.opened) continue;
+    if (entry.argBuffer.length > 0 && toolArgsAreNonObject(entry.argBuffer)) {
+      events.push(
+        formatMessagesEvent('content_block_delta', {
+          type: 'content_block_delta',
+          index: entry.index,
+          delta: { type: 'input_json_delta', partial_json: '{}' },
+        }),
+      );
+    }
     events.push(
       formatMessagesEvent('content_block_stop', {
         type: 'content_block_stop',
