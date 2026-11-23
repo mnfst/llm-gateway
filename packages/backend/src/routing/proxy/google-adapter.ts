@@ -436,6 +436,9 @@ export function toGoogleRequest(
   if (body.temperature !== undefined) genConfig.temperature = body.temperature;
   if (body.top_p !== undefined) genConfig.topP = body.top_p;
   if (body.seed !== undefined) genConfig.seed = body.seed;
+  // Only forwarded when the client set it, so Gemini's own default applies
+  // otherwise.
+  if (body.top_k !== undefined) genConfig.topK = body.top_k;
   // chat_completions `stop` accepts a string or string[]; Gemini
   // `stopSequences` is always an array. An explicit empty `stop` ([] or '')
   // means "no stop sequences", so it also clears native ones.
