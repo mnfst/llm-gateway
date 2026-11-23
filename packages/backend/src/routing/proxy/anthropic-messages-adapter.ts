@@ -391,12 +391,28 @@ function safeParseJson(value: unknown): unknown {
   return {};
 }
 
+type ToolArgsKind = 'pending' | 'object' | 'other';
+
 // Clients concatenate input_json_delta.partial_json and parse the result as
 // tool_use.input, which must be an object. After optional whitespace, only
 // '{' can grow into one. Hold every other prefix ("null", "[]", "true",
-// numbers, strings) and replace it when the block closes.
-function toolArgsAreNonObject(buffer: string): boolean {
-  return !buffer.trimStart().startsWith('{');
+// numbers, strings) and replace it when the block closes. The kind is decided
+// once, from the first non-whitespace character, so each delta is O(fragment).
+function classifyToolArgs(fragment: string): ToolArgsKind {
+  for (let i = 0; i < fragment.length; i++) {
+    const ch = fragment.charCodeAt(i);
+    if (ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d) continue;
+    return ch === 0x7b ? 'object' : 'other';
+  }
+  return 'pending';
+}
+
+function isJsonObjectText(text: string): boolean {
+  try {
+    return isRecord(JSON.parse(text));
+  } catch {
+    return false;
+  }
 }
 
 /** chat_completions response → Anthropic Messages response. */
@@ -471,7 +487,14 @@ interface StreamState {
   textOpened: boolean;
   toolCalls: Map<
     number,
-    { id: string; upstreamId?: string; index: number; argBuffer: string; opened: boolean }
+    {
+      id: string;
+      upstreamId?: string;
+      index: number;
+      argBuffer: string;
+      argKind: ToolArgsKind;
+      opened: boolean;
+    }
   >;
   // Upstream index of the latest tool call delta, used to place deltas that carry no index.
   latestToolCallIndex?: number;
@@ -586,7 +609,7 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
 
     if (typeof delta.content === 'string' && delta.content.length > 0) {
       closeThinkingBlock(state, events);
-      closeOpenToolCalls(state, events);
+      if (closeOpenToolCalls(state, events, true)) return events.join('');
       if (!state.textOpened) {
         state.textIndex = nextBlockIndex(state);
         events.push(
@@ -631,6 +654,7 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
             upstreamId,
             index: nextBlockIndex(state),
             argBuffer: '',
+            argKind: 'pending',
             opened: false,
           };
           state.toolCalls.set(callIndex, entry);
@@ -652,8 +676,9 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
           entry.opened = true;
         }
         if (typeof fn.arguments === 'string' && fn.arguments.length > 0) {
+          if (entry.argKind === 'pending') entry.argKind = classifyToolArgs(fn.arguments);
           entry.argBuffer += fn.arguments;
-          if (!toolArgsAreNonObject(entry.argBuffer)) {
+          if (entry.argKind === 'object') {
             events.push(
               formatMessagesEvent('content_block_delta', {
                 type: 'content_block_delta',
@@ -714,10 +739,21 @@ function hasOpenToolCall(state: StreamState): boolean {
   return false;
 }
 
-function closeOpenToolCalls(state: StreamState, events: string[]): void {
+// Returns true when a finished tool call carried malformed arguments that were
+// already streamed to the client: they cannot be repaired, so the stream ends
+// with an error event instead of a block that clients cannot parse.
+function closeOpenToolCalls(state: StreamState, events: string[], validate: boolean): boolean {
   for (const entry of state.toolCalls.values()) {
     if (!entry.opened) continue;
-    if (entry.argBuffer.length > 0 && toolArgsAreNonObject(entry.argBuffer)) {
+    if (validate && entry.argKind === 'object' && !isJsonObjectText(entry.argBuffer)) {
+      events.push(
+        buildStreamErrorEvent(state, {
+          message: 'Upstream provider sent malformed tool call arguments',
+        }),
+      );
+      return true;
+    }
+    if (entry.argKind === 'other') {
       events.push(
         formatMessagesEvent('content_block_delta', {
           type: 'content_block_delta',
@@ -733,7 +769,11 @@ function closeOpenToolCalls(state: StreamState, events: string[]): void {
       }),
     );
     entry.opened = false;
+    // A later delta on the same upstream index starts a fresh argument payload.
+    entry.argBuffer = '';
+    entry.argKind = 'pending';
   }
+  return false;
 }
 
 function buildMessageStartEvent(state: StreamState, data: JsonRecord): string {
@@ -785,7 +825,8 @@ function closeStream(state: StreamState): string[] {
 
   closeThinkingBlock(state, events);
   closeTextBlock(state, events);
-  closeOpenToolCalls(state, events);
+  // Without a finish_reason the upstream was cut off; close the block as before.
+  if (closeOpenToolCalls(state, events, state.stopReason !== null)) return events;
 
   events.push(
     formatMessagesEvent('message_delta', {
