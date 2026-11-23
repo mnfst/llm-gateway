@@ -378,10 +378,15 @@ function toAnthropicUsage(usage: unknown): JsonRecord {
 function safeParseJson(value: unknown): unknown {
   if (typeof value !== 'string') return value ?? {};
   try {
-    return JSON.parse(value);
+    // JSON.parse('null') and JSON.parse('[]') succeed, but Anthropic
+    // tool_use.input must be an object. A no-arg tool echoed as the string
+    // "null" would otherwise be forwarded as input: null and rejected.
+    const parsed: unknown = JSON.parse(value);
+    if (isRecord(parsed)) return parsed;
   } catch {
-    return {};
+    // Malformed arguments are an empty object, same as a missing payload.
   }
+  return {};
 }
 
 /** chat_completions response → Anthropic Messages response. */

@@ -912,6 +912,42 @@ describe('Anthropic Messages adapter', () => {
       const synthesized = (result.content as Array<Record<string, unknown>>)[1];
       expect(synthesized.id).toMatch(/^toolu_[0-9a-f]{32}$/);
     });
+
+    it.each([
+      ['null', 'null'],
+      ['an array', '[]'],
+    ])('treats %s JSON arguments as an empty tool_use input', (_label, args) => {
+      const result = chatCompletionsResponseToMessages(
+        {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'noop', arguments: args },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        },
+        'claude-sonnet-4-20250514',
+      );
+      // Anthropic rejects tool_use.input unless it is an object. JSON.parse
+      // accepts "null" and "[]", so those strings must not be forwarded as-is.
+      expect(result.content).toEqual([
+        {
+          type: 'tool_use',
+          id: 'call_1',
+          name: 'noop',
+          input: {},
+        },
+      ]);
+    });
   });
 
   describe('createMessagesStreamTransformer', () => {
