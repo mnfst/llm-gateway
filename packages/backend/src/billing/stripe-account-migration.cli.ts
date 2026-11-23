@@ -9,7 +9,9 @@ import {
 } from './stripe-account-migration';
 
 /**
- * Detach every subscription from the former Stripe account (MNFST, Inc.).
+ * Preview (or, as a fallback, apply) the detach of every subscription from the
+ * former Stripe account (MNFST, Inc.). The deploy runs it as migration
+ * 1803200000000; this CLI shows what that migration changes.
  *
  *   npm run billing:migrate-stripe-account --workspace=packages/backend            # dry run
  *   npm run billing:migrate-stripe-account --workspace=packages/backend -- --apply # writes

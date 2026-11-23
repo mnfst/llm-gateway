@@ -2,8 +2,10 @@ import { LEGACY_GRACE_STATUS, PAID_SUBSCRIPTION_STATUS_SQL_LIST } from './subscr
 
 /**
  * One-time switch from the former Stripe account (MNFST, Inc.) to the current
- * one (Buddyweb). Run by hand once the new STRIPE_* variables are live; see
- * `stripe-account-migration.cli.ts`.
+ * one (Buddyweb). The TypeORM migration 1803200000000 runs the same statements
+ * during the deploy that switches the keys; this module and its CLI
+ * (`stripe-account-migration.cli.ts`) preview them, and can apply them again
+ * by hand if needed.
  *
  * Every Stripe id in the database belongs to the former account, where the
  * current keys cannot see it. The migration:

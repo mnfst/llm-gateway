@@ -7,6 +7,7 @@ import {
   type SqlRunner,
   type TransactionalSqlRunner,
 } from '../src/billing/stripe-account-migration';
+import { DetachFormerStripeAccount1803200000000 } from '../src/database/migrations/1803200000000-DetachFormerStripeAccount';
 
 /**
  * Runs the one-time Stripe account migration against real PostgreSQL, inside a
@@ -123,5 +124,36 @@ describe('Stripe account migration (PostgreSQL)', () => {
     await applyStripeAccountMigration(runner());
     const again = await qr.query(`SELECT "status" FROM "subscription" WHERE "id" = 'mig-s1'`);
     expect(again[0].status).toBe('legacy_grace');
+  });
+
+  it('the TypeORM migration writes the same result as the CLI', async () => {
+    const prev = process.env['MANIFEST_MODE'];
+    process.env['MANIFEST_MODE'] = 'cloud';
+    try {
+      await new DetachFormerStripeAccount1803200000000().up(qr);
+    } finally {
+      if (prev === undefined) delete process.env['MANIFEST_MODE'];
+      else process.env['MANIFEST_MODE'] = prev;
+    }
+
+    const rows = await qr.query(
+      `SELECT "id", "status", "cancelAtPeriodEnd", "stripeCustomerId", "stripeSubscriptionId", "periodEnd"
+         FROM "subscription" ORDER BY "id"`,
+    );
+    expect(rows.map((r: { id: string; status: string }) => [r.id, r.status])).toEqual([
+      ['mig-s1', 'legacy_grace'],
+      ['mig-s2', 'canceled'],
+      ['mig-s3', 'incomplete'],
+    ]);
+    expect(rows[0].periodEnd).toEqual(new Date('2099-01-15T00:00:00Z'));
+    expect(rows[0].cancelAtPeriodEnd).toBe(true);
+    expect(rows.every((r: { stripeCustomerId: unknown }) => r.stripeCustomerId === null)).toBe(
+      true,
+    );
+    expect(await planStripeAccountMigration(runner())).toEqual({
+      paidSubscriptions: [],
+      otherSubscriptionRows: 0,
+      usersWithCustomerId: 0,
+    });
   });
 });
