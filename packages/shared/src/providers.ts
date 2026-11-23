@@ -494,6 +494,8 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     color: '#2d2d2d',
     keyPrefix: '',
     minKeyLength: 30,
+    keyPlaceholder: 'API key',
+  },
   {
     id: 'crowllm',
     displayName: 'CrowLLM',
@@ -505,9 +507,6 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: 'sk-',
     minKeyLength: 10,
     keyPlaceholder: 'sk-...',
-  },
-
-    keyPlaceholder: 'API key',
   },
 ] as const;
 
