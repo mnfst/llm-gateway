@@ -12,7 +12,7 @@ import {
 import { authClient } from '../services/auth-client.js';
 import { getBillingStatus } from '../services/api/billing.js';
 import { toast } from '../services/toast-store.js';
-import { formatBillingPrice } from '../services/billing-display.js';
+import { formatBillingPrice, PRICE_TAX_SUFFIX, TAX_NOTE } from '../services/billing-display.js';
 import { markPlanChosen } from '../services/plan-selection.js';
 
 const Upgrade: Component = () => {
@@ -102,7 +102,7 @@ const Upgrade: Component = () => {
         <div class="page-header upgrade-page-header upgrade-page-header--centered">
           <div class="upgrade-page-header__copy">
             <h1>Full control over your AI routing</h1>
-            <p>Self-host for free, or let us run it for $19/month.</p>
+            <p>Self-host for free, or let us run it for $19/month{PRICE_TAX_SUFFIX}.</p>
           </div>
         </div>
 
@@ -194,7 +194,7 @@ const Upgrade: Component = () => {
                     </div>
                     <div class="upgrade-plan-card__price">
                       <span class="upgrade-plan-card__amount">{proPrice()}</span>
-                      <span class="upgrade-plan-card__period">/month</span>
+                      <span class="upgrade-plan-card__period">/month{PRICE_TAX_SUFFIX}</span>
                     </div>
                     <p class="upgrade-plan-card__desc">
                       The gateway hosted and run by us. No server to install, update or watch.
@@ -208,7 +208,7 @@ const Upgrade: Component = () => {
                         {billingBusy() ? <span class="spinner" /> : 'Subscribe'}
                       </button>
                       <span class="upgrade-plan-card__no-commitment">
-                        No commitment, cancel anytime
+                        No commitment, cancel anytime. {TAX_NOTE}
                       </span>
                     </div>
                     <div class="upgrade-plan-card__bottom">

@@ -1,4 +1,5 @@
 import { For, Show, createSignal, type Component } from 'solid-js';
+import { PRICE_TAX_SUFFIX } from '../services/billing-display.js';
 
 export const SELF_HOSTING_GUIDE_URL = 'https://manifest.build/llm-gateway/docs/self-hosted';
 
@@ -80,7 +81,7 @@ const PlanPicker: Component<PlanPickerProps> = (props) => {
       id: 'pro',
       name: 'Manifest Cloud',
       price: props.proPrice ?? FALLBACK_PRO_PRICE,
-      period: '/month',
+      period: `/month${PRICE_TAX_SUFFIX}`,
       desc: 'The gateway hosted and run by us. No server to install, update or watch.',
       features: proFeatures,
       popular: true,

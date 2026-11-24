@@ -3,7 +3,7 @@ import { Show, createEffect, createResource, createSignal, type Component } from
 import { Portal } from 'solid-js/web';
 import { getBillingStatus } from '../services/api/billing.js';
 import { authClient } from '../services/auth-client.js';
-import { formatBillingPrice } from '../services/billing-display.js';
+import { formatBillingPrice, PRICE_TAX_SUFFIX } from '../services/billing-display.js';
 import { FALLBACK_PRO_PRICE, SELF_HOSTING_GUIDE_URL } from './PlanPicker.jsx';
 
 const DISMISS_KEY = 'manifest_subscription_modal_dismissed';
@@ -93,8 +93,8 @@ const SubscriptionRequiredModal: Component = () => {
                 Your requests are paused
               </h2>
               <p class="subscription-required-modal__text">
-                Manifest Cloud is {price()}/month since November 2, 2026. Your agents' requests are
-                not routed until you subscribe.
+                Manifest Cloud is {price()}/month{PRICE_TAX_SUFFIX} since November 2, 2026. Your
+                agents' requests are not routed until you subscribe.
               </p>
               <p class="subscription-required-modal__text">
                 Your harnesses, routing rules and provider keys are kept. You can also run the same

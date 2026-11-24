@@ -219,6 +219,33 @@ describe('PlanService', () => {
       expect(status.requests.limit).toBeNull();
     });
 
+    it('keeps a subscription from the former Stripe account on Pro until its period ends', async () => {
+      enableBilling();
+      mockQuery.mockImplementation((sql: string) =>
+        sql.includes('FROM "tenant_request_usage"')
+          ? Promise.resolve([{ n: 0, baseline_counted: true }])
+          : Promise.resolve([
+              {
+                subscriptionPlan: 'pro',
+                subscriptionStatus: 'legacy_grace',
+                cancelAtPeriodEnd: true,
+                periodEnd: '2026-12-15T00:00:00.000Z',
+              },
+            ]),
+      );
+      const status = await service.getBillingStatus(CTX);
+      expect(status).toMatchObject({
+        plan: 'pro',
+        cancelAtPeriodEnd: true,
+        subscriptionPeriodEnd: '2026-12-15T00:00:00.000Z',
+        legacySubscription: true,
+      });
+      const snapshotSql = mockQuery.mock.calls
+        .map(([sql]) => sql as string)
+        .find((sql) => sql.includes('FROM "subscription"'));
+      expect(snapshotSql).toContain(`"status" = 'legacy_grace' AND "periodEnd" > NOW()`);
+    });
+
     it('reports plan, usage and limits when enabled', async () => {
       enableBilling();
       mockQuery.mockImplementation((sql: string) =>

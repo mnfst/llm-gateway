@@ -104,6 +104,11 @@ describe('Upgrade', () => {
     expect(screen.getByText("Let's Talk")).toBeDefined();
     expect(screen.getByText('Talk to sales')).toBeDefined();
     expect(screen.getByText('Subscribe')).toBeDefined();
+    expect(screen.getByText('/month + tax')).toBeDefined();
+    expect(screen.getByText(/Tax is added based on your country\./)).toBeDefined();
+    expect(
+      screen.getByText('Self-host for free, or let us run it for $19/month + tax.'),
+    ).toBeDefined();
   });
 
   it('shows the subscription-required entry message when the tenant has no allowance', async () => {

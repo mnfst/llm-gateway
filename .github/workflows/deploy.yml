@@ -4,7 +4,8 @@ name: Deploy
 # through Workload Identity Federation, which only accepts mnfst/* on refs/heads/main.
 # Order mirrors the old Railway preDeployCommand: migrate once (manifest-migrate job, direct
 # connection, advisory lock in migrate.js), then roll out. The service keeps its own config
-# (env, secrets, scaling, ingress); this workflow only swaps the image.
+# (env, secrets, scaling, ingress); this workflow swaps the image and pins the three Stripe
+# variables (see the Deploy step).
 permissions:
   contents: read
   id-token: write
@@ -52,5 +53,11 @@ jobs:
           gcloud run jobs update manifest-migrate --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" --quiet
           gcloud run jobs execute manifest-migrate --region "$REGION" --project "$PROJECT_ID" --wait
 
+      # Billing runs on the Buddyweb Stripe account since 2026-11-30. These flags point
+      # the service at that account's key, webhook secret and Pro price, so merging the
+      # switch PR is the switch. Both secrets are readable by manifest-runtime.
       - name: Deploy
-        run: gcloud run deploy manifest --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" --quiet
+        run: |
+          gcloud run deploy manifest --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" --quiet \
+            --update-secrets "STRIPE_SECRET_KEY=manifest-stripe-secret-key-buddyweb:latest,STRIPE_WEBHOOK_SECRET=manifest-stripe-webhook-secret-buddyweb:latest" \
+            --update-env-vars "STRIPE_PRO_PRICE_ID=price_1UeyehGkUFLh6NpIEjVJxwzv"

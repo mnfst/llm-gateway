@@ -542,7 +542,7 @@ describe('Register', () => {
     await vi.waitFor(() => {
       expect(screen.getByText('Choose your plan')).toBeDefined();
     });
-    expect(screen.getByText(/Manifest Cloud is \$19\/month/)).toBeDefined();
+    expect(screen.getByText(/Manifest Cloud is \$19\/month \+ tax\./)).toBeDefined();
   });
 
   it('shows "Create an account" title without context=login (email signup)', async () => {
