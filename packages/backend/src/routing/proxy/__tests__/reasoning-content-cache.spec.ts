@@ -209,34 +209,54 @@ describe('ReasoningContentCache', () => {
     expect(state.pendingPersists.size).toBe(MAX_PENDING_PERSIST_WRITES - 1);
   });
 
-  it('discards a shared read that returns while its session is clearing', async () => {
+  it('discards pre-clear local and shared values even after deletion finishes', async () => {
     const repo = makeRepo();
-    let finishRead!: () => void;
-    repo.find.mockImplementationOnce(
+    const settleReads: Array<(content: string) => void> = [];
+    repo.find.mockImplementation(
       () =>
         new Promise((resolve) => {
-          finishRead = () =>
+          settleReads.push((content) =>
             resolve([
               {
                 session_key: 'session-1',
-                first_tool_call_id: 'call_1',
-                content: 'old value',
+                first_tool_call_id: 'shared',
+                content,
                 expires_at: new Date(Date.now() + 60_000).toISOString(),
                 created_at: new Date().toISOString(),
                 updated_at: new Date().toISOString(),
               },
-            ]);
+            ]),
+          );
         }),
     );
-    repo.delete.mockImplementationOnce(() => new Promise(() => undefined));
     const sharedCache = new ReasoningContentCache(repo);
 
-    const reading = sharedCache.retrieveMany('session-1', ['call_1']);
+    sharedCache.store('session-1', 'local', 'old local value');
+    const beforeClear = sharedCache.retrieveMany('session-1', ['local', 'shared']);
     sharedCache.clearSession('session-1');
-    finishRead();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(repo.delete).toHaveBeenCalledWith({ session_key: 'session-1' });
 
-    expect(await reading).toEqual(new Map());
-    expect(sharedCache.retrieve('session-1', 'call_1')).toBeNull();
+    const afterClear = sharedCache.retrieveMany('session-1', ['shared']);
+    expect(repo.find).toHaveBeenCalledTimes(2);
+    settleReads[0]('stale shared value');
+    expect(await beforeClear).toEqual(new Map());
+
+    settleReads[1]('fresh shared value');
+    expect(await afterClear).toEqual(new Map([['shared', 'fresh shared value']]));
+    expect(sharedCache.retrieve('session-1', 'local')).toBeNull();
+  });
+
+  it('keeps local hits when a shared lookup fails without a session clear', async () => {
+    const repo = makeRepo();
+    repo.find.mockRejectedValueOnce(new Error('read failed'));
+    const sharedCache = new ReasoningContentCache(repo);
+    sharedCache.store('session-1', 'local', 'kept value');
+
+    expect(await sharedCache.retrieveMany('session-1', ['local', 'missing'])).toEqual(
+      new Map([['local', 'kept value']]),
+    );
   });
 
   it('excludes and cleans up expired shared rows', async () => {

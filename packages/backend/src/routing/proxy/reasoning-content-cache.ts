@@ -63,6 +63,7 @@ export class ReasoningContentCache {
     { sessionKey: string; completion: Promise<void> }
   >();
   private readonly clearingSessions = new Set<string>();
+  private readonly activeReads = new Map<string, Set<{ invalidated: boolean }>>();
   private warnedPersistenceQueueFull = false;
 
   constructor(
@@ -118,30 +119,40 @@ export class ReasoningContentCache {
 
     if (missing.length === 0 || !this.repo || this.clearingSessions.has(sessionKey)) return result;
 
+    const read = { invalidated: false };
+    const reads = this.activeReads.get(sessionKey) ?? new Set();
+    this.activeReads.set(sessionKey, reads);
+    reads.add(read);
+
+    let rows: ReasoningContentCacheEntry[] = [];
     try {
-      const rows = await this.repo.find({
+      rows = await this.repo.find({
         where: {
           session_key: sessionKey,
           first_tool_call_id: In(missing),
         },
       });
-      if (this.clearingSessions.has(sessionKey)) return result;
-      const now = Date.now();
-      const expired: string[] = [];
-      for (const row of rows) {
-        const expiresAt = new Date(row.expires_at).getTime();
-        if (expiresAt <= now) {
-          expired.push(row.first_tool_call_id);
-          continue;
-        }
-        // The memory limit does not invalidate an existing shared value.
-        result.set(row.first_tool_call_id, row.content);
-        this.storeLocal(sessionKey, row.first_tool_call_id, row.content, expiresAt);
-      }
-      if (expired.length > 0) void this.deleteExpired(sessionKey, expired);
     } catch (err) {
       this.logger.warn(`Failed to read shared reasoning_content cache: ${String(err)}`);
+    } finally {
+      reads.delete(read);
+      if (reads.size === 0) this.activeReads.delete(sessionKey);
     }
+
+    if (read.invalidated) return new Map();
+    const now = Date.now();
+    const expired: string[] = [];
+    for (const row of rows) {
+      const expiresAt = new Date(row.expires_at).getTime();
+      if (expiresAt <= now) {
+        expired.push(row.first_tool_call_id);
+        continue;
+      }
+      // The memory limit does not invalidate an existing shared value.
+      result.set(row.first_tool_call_id, row.content);
+      this.storeLocal(sessionKey, row.first_tool_call_id, row.content, expiresAt);
+    }
+    if (expired.length > 0) void this.deleteExpired(sessionKey, expired);
 
     return result;
   }
@@ -198,6 +209,7 @@ export class ReasoningContentCache {
 
   /** Clear all cached reasoning_content for a session. */
   clearSession(sessionKey: string): void {
+    for (const read of this.activeReads.get(sessionKey) ?? []) read.invalidated = true;
     const prefix = `${sessionKey}:`;
     for (const key of this.cache.keys()) {
       if (key.startsWith(prefix)) this.deleteLocal(key);
@@ -286,7 +298,6 @@ export class ReasoningContentCache {
   }
 
   private drainPersistQueue(): void {
-    if (!this.repo) return;
     for (const [queueKey, entry] of this.pendingPersists) {
       if (this.activePersists.size >= MAX_PERSIST_CONCURRENCY) break;
       if (this.activePersists.has(queueKey) || this.clearingSessions.has(entry.sessionKey))
