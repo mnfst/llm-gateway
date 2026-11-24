@@ -376,6 +376,17 @@ describe('Header - docs link', () => {
     );
   });
 
+  it.each([
+    ['/integrations/mcp', 'integrations/mcp'],
+    ['/integrations/mcp/', 'integrations/mcp'],
+    ['/integrations/cli', 'cli'],
+    ['/integrations/cli/', 'cli'],
+  ])('links %s to its documentation', (pathname, docsPath) => {
+    mockPathname = pathname;
+    const { container } = render(() => <Header />);
+    expect(docsHref(container)).toBe(`https://manifest.build/llm-gateway/docs/${docsPath}/`);
+  });
+
   it('falls back to introduction docs for unmapped pages', () => {
     mockPathname = '/messages';
     const { container } = render(() => <Header />);

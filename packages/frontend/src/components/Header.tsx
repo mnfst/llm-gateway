@@ -96,7 +96,9 @@ const Header: Component<HeaderProps> = (props) => {
   const user = () => session()?.data?.user;
   const effectiveName = () => user()?.name ?? 'User';
   const docsUrl = () => {
-    const p = location.pathname;
+    const p = location.pathname.replace(/\/$/, '');
+    if (p === '/integrations/mcp') return `${DOCS_BASE_URL}/integrations/mcp/`;
+    if (p === '/integrations/cli') return `${DOCS_BASE_URL}/cli/`;
     if (p.includes('/guardrails') || p.includes('/limits'))
       return `${DOCS_BASE_URL}/observability/`;
     if (p.includes('/routing')) return `${DOCS_BASE_URL}/llm-gateway/`;
