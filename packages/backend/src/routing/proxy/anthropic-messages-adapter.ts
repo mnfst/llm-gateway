@@ -376,11 +376,42 @@ function toAnthropicUsage(usage: unknown): JsonRecord {
 }
 
 function safeParseJson(value: unknown): unknown {
-  if (typeof value !== 'string') return value ?? {};
+  // Anthropic tool_use.input must be an object. A parsed array, number, or
+  // boolean is not one; null and undefined already collapse to {}.
+  if (typeof value !== 'string') return isRecord(value) ? value : {};
   try {
-    return JSON.parse(value);
+    // JSON.parse('null') and JSON.parse('[]') succeed, but Anthropic
+    // tool_use.input must be an object. A no-arg tool echoed as the string
+    // "null" would otherwise be forwarded as input: null and rejected.
+    const parsed: unknown = JSON.parse(value);
+    if (isRecord(parsed)) return parsed;
   } catch {
-    return {};
+    // Malformed arguments are an empty object, same as a missing payload.
+  }
+  return {};
+}
+
+type ToolArgsKind = 'pending' | 'object' | 'other';
+
+// Clients concatenate input_json_delta.partial_json and parse the result as
+// tool_use.input, which must be an object. After optional whitespace, only
+// '{' can grow into one. Hold every other prefix ("null", "[]", "true",
+// numbers, strings) and replace it when the block closes. The kind is decided
+// once, from the first non-whitespace character, so each delta is O(fragment).
+function classifyToolArgs(fragment: string): ToolArgsKind {
+  for (let i = 0; i < fragment.length; i++) {
+    const ch = fragment.charCodeAt(i);
+    if (ch === 0x20 || ch === 0x09 || ch === 0x0a || ch === 0x0d) continue;
+    return ch === 0x7b ? 'object' : 'other';
+  }
+  return 'pending';
+}
+
+function isJsonObjectText(text: string): boolean {
+  try {
+    return isRecord(JSON.parse(text));
+  } catch {
+    return false;
   }
 }
 
@@ -456,8 +487,16 @@ interface StreamState {
   textOpened: boolean;
   toolCalls: Map<
     number,
-    { id: string; upstreamId?: string; index: number; argBuffer: string; opened: boolean }
+    {
+      id: string;
+      upstreamId?: string;
+      index: number;
+      argBuffer: string;
+      argKind: ToolArgsKind;
+      opened: boolean;
+    }
   >;
+  usedToolIds: Set<string>;
   // Upstream index of the latest tool call delta, used to place deltas that carry no index.
   latestToolCallIndex?: number;
   // Monotonic counter — block indices must keep increasing across the whole
@@ -465,6 +504,7 @@ interface StreamState {
   nextBlockIndexCounter: number;
   finalUsage: JsonRecord | null;
   stopReason: string | null;
+  receivedDone: boolean;
   endedMessage: boolean;
 }
 
@@ -483,9 +523,11 @@ export function createMessagesStreamTransformer(model: string): MessagesStreamTr
     textIndex: null,
     textOpened: false,
     toolCalls: new Map(),
+    usedToolIds: new Set(),
     nextBlockIndexCounter: 0,
     finalUsage: null,
     stopReason: null,
+    receivedDone: false,
     endedMessage: false,
   };
 
@@ -502,7 +544,10 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
   const events: string[] = [];
   for (const payload of extractDataPayloads(chunk)) {
     if (state.endedMessage) break;
-    if (payload === '[DONE]') continue;
+    if (payload === '[DONE]') {
+      state.receivedDone = true;
+      continue;
+    }
     const data = safeParse(payload);
     if (!data) continue;
 
@@ -571,7 +616,9 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
 
     if (typeof delta.content === 'string' && delta.content.length > 0) {
       closeThinkingBlock(state, events);
-      closeOpenToolCalls(state, events);
+      const interrupted =
+        choice.finish_reason === 'length' || choice.finish_reason === 'content_filter';
+      if (closeOpenToolCalls(state, events, !interrupted)) return events.join('');
       if (!state.textOpened) {
         state.textIndex = nextBlockIndex(state);
         events.push(
@@ -607,21 +654,23 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
               };
         const callIndex = resolveToolCallIndex(call, latest);
         state.latestToolCallIndex = callIndex;
+        const fn = isRecord(call.function) ? call.function : {};
         let entry = state.toolCalls.get(callIndex);
-        if (!entry) {
+        if (!entry?.opened) {
+          const requestedId = upstreamId ? sanitizeToolUseId(upstreamId) : undefined;
           entry = {
-            id: upstreamId
-              ? sanitizeToolUseId(upstreamId)
-              : `toolu_${randomUUID().replace(/-/g, '')}`,
+            id:
+              requestedId && !state.usedToolIds.has(requestedId)
+                ? requestedId
+                : `toolu_${randomUUID().replace(/-/g, '')}`,
             upstreamId,
             index: nextBlockIndex(state),
             argBuffer: '',
-            opened: false,
+            argKind: 'pending',
+            opened: true,
           };
           state.toolCalls.set(callIndex, entry);
-        }
-        const fn = isRecord(call.function) ? call.function : {};
-        if (!entry.opened) {
+          state.usedToolIds.add(entry.id);
           events.push(
             formatMessagesEvent('content_block_start', {
               type: 'content_block_start',
@@ -634,17 +683,19 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
               },
             }),
           );
-          entry.opened = true;
         }
         if (typeof fn.arguments === 'string' && fn.arguments.length > 0) {
+          if (entry.argKind === 'pending') entry.argKind = classifyToolArgs(fn.arguments);
           entry.argBuffer += fn.arguments;
-          events.push(
-            formatMessagesEvent('content_block_delta', {
-              type: 'content_block_delta',
-              index: entry.index,
-              delta: { type: 'input_json_delta', partial_json: fn.arguments },
-            }),
-          );
+          if (entry.argKind === 'object') {
+            events.push(
+              formatMessagesEvent('content_block_delta', {
+                type: 'content_block_delta',
+                index: entry.index,
+                delta: { type: 'input_json_delta', partial_json: fn.arguments },
+              }),
+            );
+          }
         }
       }
     }
@@ -697,9 +748,29 @@ function hasOpenToolCall(state: StreamState): boolean {
   return false;
 }
 
-function closeOpenToolCalls(state: StreamState, events: string[]): void {
+// Returns true when a finished tool call carried malformed arguments that were
+// already streamed to the client: they cannot be repaired, so the stream ends
+// with an error event instead of a block that clients cannot parse.
+function closeOpenToolCalls(state: StreamState, events: string[], validate: boolean): boolean {
   for (const entry of state.toolCalls.values()) {
     if (!entry.opened) continue;
+    if (validate && entry.argKind === 'object' && !isJsonObjectText(entry.argBuffer)) {
+      events.push(
+        buildStreamErrorEvent(state, {
+          message: 'Upstream provider sent malformed tool call arguments',
+        }),
+      );
+      return true;
+    }
+    if (entry.argKind === 'other') {
+      events.push(
+        formatMessagesEvent('content_block_delta', {
+          type: 'content_block_delta',
+          index: entry.index,
+          delta: { type: 'input_json_delta', partial_json: '{}' },
+        }),
+      );
+    }
     events.push(
       formatMessagesEvent('content_block_stop', {
         type: 'content_block_stop',
@@ -707,7 +778,9 @@ function closeOpenToolCalls(state: StreamState, events: string[]): void {
       }),
     );
     entry.opened = false;
+    entry.argBuffer = '';
   }
+  return false;
 }
 
 function buildMessageStartEvent(state: StreamState, data: JsonRecord): string {
@@ -759,7 +832,9 @@ function closeStream(state: StreamState): string[] {
 
   closeThinkingBlock(state, events);
   closeTextBlock(state, events);
-  closeOpenToolCalls(state, events);
+  const completed = state.stopReason !== null || state.receivedDone;
+  const interrupted = state.stopReason === 'max_tokens' || state.stopReason === 'refusal';
+  if (closeOpenToolCalls(state, events, completed && !interrupted)) return events;
 
   events.push(
     formatMessagesEvent('message_delta', {

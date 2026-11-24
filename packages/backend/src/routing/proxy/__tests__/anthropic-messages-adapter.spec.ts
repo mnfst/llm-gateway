@@ -912,6 +912,72 @@ describe('Anthropic Messages adapter', () => {
       const synthesized = (result.content as Array<Record<string, unknown>>)[1];
       expect(synthesized.id).toMatch(/^toolu_[0-9a-f]{32}$/);
     });
+
+    it.each([
+      ['null', 'null'],
+      ['an array', '[]'],
+      ['a parsed array', []],
+      ['a parsed number', 1],
+      ['a parsed boolean', false],
+      ['a json string', '"hi"'],
+    ])('treats %s arguments as an empty tool_use input', (_label, args) => {
+      const result = chatCompletionsResponseToMessages(
+        {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'noop', arguments: args },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        },
+        'claude-sonnet-4-20250514',
+      );
+      // Anthropic rejects tool_use.input unless it is an object. JSON.parse
+      // accepts "null" and "[]", so those strings must not be forwarded as-is.
+      expect(result.content).toEqual([
+        {
+          type: 'tool_use',
+          id: 'call_1',
+          name: 'noop',
+          input: {},
+        },
+      ]);
+    });
+
+    it('keeps a parsed object as tool_use input', () => {
+      const result = chatCompletionsResponseToMessages(
+        {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'ok', arguments: { a: 1 } },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        },
+        'claude-sonnet-4-20250514',
+      );
+      expect(result.content).toEqual([
+        { type: 'tool_use', id: 'call_1', name: 'ok', input: { a: 1 } },
+      ]);
+    });
   });
 
   describe('createMessagesStreamTransformer', () => {
@@ -1058,6 +1124,185 @@ describe('Anthropic Messages adapter', () => {
       expect(sse).toContain('"stop_reason":"tool_use"');
     });
 
+    it.each([
+      ['null', 'null'],
+      ['an array', '[]'],
+      ['padded null', ' null'],
+      ['padded array', ' []'],
+      ['true', 'true'],
+      ['false', 'false'],
+      ['a number', '0'],
+      ['a negative number', '-1'],
+      ['a json string', '"hi"'],
+    ])('streams %s tool arguments as an empty object', (_label, args) => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        `data: ${JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [{ index: 0, id: 'tc_a', function: { name: 'noop', arguments: args } }],
+              },
+            },
+          ],
+        })}\n\n`,
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]);
+
+      const events = sse
+        .split('\n\n')
+        .filter(Boolean)
+        .map((block) => JSON.parse(block.split('\n')[1]!.replace('data: ', '')));
+      const partials = events
+        .filter((e) => e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta')
+        .map((e) => e.delta.partial_json);
+      // The client concatenates partial_json. "null" / "[]" would parse as a
+      // non-object and Anthropic rejects that tool_use.input.
+      expect(partials).toEqual(['{}']);
+    });
+
+    it('holds chunked null tool arguments and emits {} when the block closes', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const first = t.transform(
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"noop","arguments":"n"}}]}}]}\n\n',
+      );
+      expect(first ?? '').not.toContain('"partial_json":"n"');
+
+      const sse = `${first ?? ''}${
+        t.transform(
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"ull"}}]}}]}\n\n',
+        ) ?? ''
+      }${t.transform('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n') ?? ''}${
+        t.finalize() ?? ''
+      }`;
+      expect(sse).not.toContain('"partial_json":"ull"');
+
+      const events = sse
+        .split('\n\n')
+        .filter(Boolean)
+        .map((block) => JSON.parse(block.split('\n')[1]!.replace('data: ', '')));
+      const partials = events
+        .filter((e) => e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta')
+        .map((e) => e.delta.partial_json);
+      expect(partials).toEqual(['{}']);
+    });
+
+    it('holds chunked non-object tool arguments other than null', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const first = t.transform(
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"noop","arguments":"t"}}]}}]}\n\n',
+      );
+      expect(first ?? '').not.toContain('"partial_json":"t"');
+
+      const sse = `${first ?? ''}${
+        t.transform(
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"rue"}}]}}]}\n\n',
+        ) ?? ''
+      }${t.transform('data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n') ?? ''}${
+        t.finalize() ?? ''
+      }`;
+      expect(sse).not.toContain('"partial_json":"rue"');
+
+      const events = sse
+        .split('\n\n')
+        .filter(Boolean)
+        .map((block) => JSON.parse(block.split('\n')[1]!.replace('data: ', '')));
+      const partials = events
+        .filter((e) => e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta')
+        .map((e) => e.delta.partial_json);
+      expect(partials).toEqual(['{}']);
+    });
+
+    it('still streams an object when an earlier argument chunk is only whitespace', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"ok","arguments":" "}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\":1}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]);
+      const events = sse
+        .split('\n\n')
+        .filter(Boolean)
+        .map((block) => JSON.parse(block.split('\n')[1]!.replace('data: ', '')));
+      const partials = events
+        .filter((e) => e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta')
+        .map((e) => e.delta.partial_json);
+      expect(JSON.parse(partials.join(''))).toEqual({ a: 1 });
+    });
+
+    it('ends the stream with an error when a finished tool call carries malformed JSON', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"noop","arguments":"{"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]);
+      expect(sse).toContain('event: error');
+      expect(sse).toContain('malformed tool call arguments');
+      expect(sse).not.toContain('event: content_block_stop');
+      expect(sse).not.toContain('event: message_stop');
+    });
+
+    it('rejects incomplete object arguments when DONE is the only terminal signal', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{"}}]}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]);
+
+      expect(sse).toContain('event: error');
+      expect(sse).not.toContain('event: message_stop');
+    });
+
+    it('classifies tool arguments once instead of rescanning the buffer per delta', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const fragments = 4000;
+      const frag = 'a'.repeat(64);
+      const chunks = [
+        `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"big","arguments":"{\\"k\\":\\""}}]}}]}\n\n`,
+      ];
+      for (let i = 0; i < fragments; i++) {
+        chunks.push(
+          `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"${frag}"}}]}}]}\n\n`,
+        );
+      }
+      chunks.push(
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      );
+      const trimSpy = jest.spyOn(String.prototype, 'trimStart');
+      try {
+        const sse = flushChunks(t, chunks);
+        expect(sse).not.toContain('event: error');
+        expect(trimSpy).not.toHaveBeenCalled();
+      } finally {
+        trimSpy.mockRestore();
+      }
+    });
+
+    it('does not carry a closed null argument into a later call on the same upstream index', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"noop","arguments":"null"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\\"a\\":1}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]);
+      const events = sse
+        .split('\n\n')
+        .filter(Boolean)
+        .map((block) => JSON.parse(block.split('\n')[1]!.replace('data: ', '')));
+      const partials = events
+        .filter((e) => e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta')
+        .map((e) => e.delta.partial_json);
+      expect(partials).toEqual(['{}', '{"a":1}']);
+      const starts = events.filter((e) => e.content_block?.type === 'tool_use');
+      expect(starts.map((e) => e.index)).toEqual([0, 2]);
+      expect(starts[1].content_block.id).not.toBe(starts[0].content_block.id);
+      expect(events.filter((e) => e.type === 'content_block_stop').map((e) => e.index)).toEqual([
+        0, 1, 2,
+      ]);
+    });
+
     it('streams tool_use stop_reason when tool calls finish with "stop"', () => {
       const t = createMessagesStreamTransformer('claude-sonnet-4');
       const sse = flushChunks(t, [
@@ -1091,6 +1336,19 @@ describe('Anthropic Messages adapter', () => {
         'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{}"}}]}}]}\n\n',
         `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
       ]);
+      expect(sse).toContain(`"stop_reason":"${stopReason}"`);
+    });
+
+    it.each([
+      ['length', 'max_tokens'],
+      ['content_filter', 'refusal'],
+    ])('preserves %s when tool arguments are partial', (finishReason, stopReason) => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{"}}]}}]}\n\n',
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
+      ]);
+      expect(sse).not.toContain('event: error');
       expect(sse).toContain(`"stop_reason":"${stopReason}"`);
     });
 
