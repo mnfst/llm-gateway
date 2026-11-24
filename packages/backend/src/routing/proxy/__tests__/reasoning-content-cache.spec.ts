@@ -158,10 +158,10 @@ describe('ReasoningContentCache', () => {
     await flushMicrotasks();
 
     expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY + 1);
-    expect(repo.upsert).toHaveBeenLastCalledWith(
-      expect.objectContaining({ content: 'latest' }),
-      ['session_key', 'first_tool_call_id'],
-    );
+    expect(repo.upsert).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'latest' }), [
+      'session_key',
+      'first_tool_call_id',
+    ]);
   });
 
   it('bounds active and queued shared-cache writes during repository stalls', () => {
@@ -174,12 +174,59 @@ describe('ReasoningContentCache', () => {
     }
 
     const state = sharedCache as unknown as {
-      activePersistWrites: number;
       pendingPersists: Map<string, unknown>;
     };
     expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY);
-    expect(state.activePersistWrites).toBe(MAX_PERSIST_CONCURRENCY);
     expect(state.pendingPersists.size).toBe(MAX_PENDING_PERSIST_WRITES);
+  });
+
+  it('replays an unexpired shared value that exceeds the local cache limit', async () => {
+    const content = 'x'.repeat(MAX_REASONING_CONTENT_BYTES + 1);
+    const repo = makeRepo();
+    repo.find.mockResolvedValueOnce([
+      {
+        session_key: 'session-1',
+        first_tool_call_id: 'call_1',
+        content,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    const sharedCache = new ReasoningContentCache(repo);
+
+    const result = await sharedCache.retrieveMany('session-1', ['call_1']);
+
+    expect(result.get('call_1')).toBe(content);
+    expect(sharedCache.retrieve('session-1', 'call_1')).toBeNull();
+  });
+
+  it('defers an update to a key with an active shared-cache write', async () => {
+    const repo = makeRepo();
+    let finishFirstWrite!: () => void;
+    repo.upsert.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishFirstWrite = () => resolve({} as never);
+        }),
+    );
+    const sharedCache = new ReasoningContentCache(repo);
+
+    sharedCache.store('session-1', 'call_1', 'first');
+    sharedCache.store('session-1', 'call_1', 'latest');
+    sharedCache.store('session-1', 'call_2', 'independent');
+
+    expect(repo.upsert.mock.calls.map(([row]) => row)).toEqual([
+      expect.objectContaining({ content: 'first' }),
+      expect.objectContaining({ content: 'independent' }),
+    ]);
+    finishFirstWrite();
+    await flushMicrotasks();
+    expect(repo.upsert).toHaveBeenCalledTimes(3);
+    expect(repo.upsert).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'latest' }), [
+      'session_key',
+      'first_tool_call_id',
+    ]);
   });
 
   it('retrieves shared reasoning_content and warms the local cache', async () => {

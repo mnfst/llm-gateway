@@ -57,7 +57,7 @@ export class ReasoningContentCache {
   private cacheBytes = 0;
   private lastCleanup = Date.now();
   private readonly pendingPersists = new Map<string, PendingPersistence>();
-  private activePersistWrites = 0;
+  private readonly activePersistKeys = new Set<string>();
   private warnedPersistenceQueueFull = false;
 
   constructor(
@@ -123,13 +123,14 @@ export class ReasoningContentCache {
       const now = Date.now();
       const expired: string[] = [];
       for (const row of rows) {
-        if (new Date(row.expires_at).getTime() <= now) {
+        const expiresAt = new Date(row.expires_at).getTime();
+        if (expiresAt <= now) {
           expired.push(row.first_tool_call_id);
           continue;
         }
-        const expiresAt = new Date(row.expires_at).getTime();
-        if (!this.storeLocal(sessionKey, row.first_tool_call_id, row.content, expiresAt)) continue;
+        // The memory limit does not invalidate an existing shared value.
         result.set(row.first_tool_call_id, row.content);
+        this.storeLocal(sessionKey, row.first_tool_call_id, row.content, expiresAt);
       }
       if (expired.length > 0) void this.deleteExpired(sessionKey, expired);
     } catch (err) {
@@ -257,7 +258,9 @@ export class ReasoningContentCache {
     ) {
       if (!this.warnedPersistenceQueueFull) {
         this.warnedPersistenceQueueFull = true;
-        this.logger.warn('Reasoning_content persistence queue is full; dropping shared-cache write');
+        this.logger.warn(
+          'Reasoning_content persistence queue is full; dropping shared-cache write',
+        );
       }
       return;
     }
@@ -268,19 +271,14 @@ export class ReasoningContentCache {
 
   private drainPersistQueue(): void {
     if (!this.repo) return;
-    while (
-      this.activePersistWrites < MAX_PERSIST_CONCURRENCY &&
-      this.pendingPersists.size > 0
-    ) {
-      const next = this.pendingPersists.entries().next().value as
-        | [string, PendingPersistence]
-        | undefined;
-      if (!next) return;
-      const [queueKey, entry] = next;
+    for (const [queueKey, entry] of this.pendingPersists) {
+      if (this.activePersistKeys.size >= MAX_PERSIST_CONCURRENCY) break;
+      if (this.activePersistKeys.has(queueKey)) continue;
+
       this.pendingPersists.delete(queueKey);
-      this.activePersistWrites++;
+      this.activePersistKeys.add(queueKey);
       void this.persist(entry).finally(() => {
-        this.activePersistWrites--;
+        this.activePersistKeys.delete(queueKey);
         if (this.pendingPersists.size < MAX_PENDING_PERSIST_WRITES) {
           this.warnedPersistenceQueueFull = false;
         }
