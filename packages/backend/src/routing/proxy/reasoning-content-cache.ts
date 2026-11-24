@@ -8,10 +8,19 @@ import { ModelsDevReasoningCatalog } from './reasoning-model-catalog';
 interface CachedReasoningContent {
   content: string;
   expiresAt: number;
+  bytes: number;
+}
+
+interface PendingPersistence {
+  sessionKey: string;
+  cacheKey: string;
+  content: string;
+  expiresAt: number;
 }
 
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const SHARED_WRITE_STATEMENT_TIMEOUT_MS = 5_000;
 /**
  * Hard ceiling on turns held in the in-memory layer. The key embeds an
  * upstream-generated tool call id, so the in-memory keyspace is unbounded and
@@ -20,6 +29,13 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
  * `expires_at`.
  */
 export const MAX_CACHE_ENTRIES = 10_000;
+/** Skip pathological single values rather than retaining or persisting them. */
+export const MAX_REASONING_CONTENT_BYTES = 256 * 1024;
+/** Bound reasoning strings in the local replay cache. The write queue has its own limit. */
+export const MAX_REASONING_CACHE_BYTES = 64 * 1024 * 1024;
+/** Bound pending writes separately by entry count and the per-entry size limit. */
+export const MAX_PENDING_PERSIST_WRITES = 256;
+export const MAX_PERSIST_CONCURRENCY = 4;
 
 /**
  * In-memory cache for OpenAI-compatible `reasoning_content` strings.
@@ -39,7 +55,16 @@ export const MAX_CACHE_ENTRIES = 10_000;
 export class ReasoningContentCache {
   private readonly logger = new Logger(ReasoningContentCache.name);
   private cache = new Map<string, CachedReasoningContent>();
+  private cacheBytes = 0;
   private lastCleanup = Date.now();
+  private readonly pendingPersists = new Map<string, PendingPersistence>();
+  private readonly activePersists = new Map<
+    string,
+    { sessionKey: string; completion: Promise<void> }
+  >();
+  private readonly clearingSessions = new Set<string>();
+  private readonly activeReads = new Map<string, Set<{ invalidated: boolean }>>();
+  private warnedPersistenceQueueFull = false;
 
   constructor(
     @Optional()
@@ -63,9 +88,8 @@ export class ReasoningContentCache {
     if (!content) return;
     this.maybeCleanup();
     const expiresAt = Date.now() + TTL_MS;
-    this.cache.set(`${sessionKey}:${cacheKey}`, { content, expiresAt });
-    this.evictOverflow();
-    void this.persist(sessionKey, cacheKey, content, expiresAt);
+    if (!this.storeLocal(sessionKey, cacheKey, content, expiresAt)) return;
+    this.enqueuePersist({ sessionKey, cacheKey, content, expiresAt });
   }
 
   /** Retrieve cached reasoning_content, or null if not found/expired. */
@@ -73,7 +97,7 @@ export class ReasoningContentCache {
     const entry = this.cache.get(`${sessionKey}:${firstToolCallId}`);
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) {
-      this.cache.delete(`${sessionKey}:${firstToolCallId}`);
+      this.deleteLocal(`${sessionKey}:${firstToolCallId}`);
       return null;
     }
     return entry.content;
@@ -93,33 +117,42 @@ export class ReasoningContentCache {
       }
     }
 
-    if (missing.length === 0 || !this.repo) return result;
+    if (missing.length === 0 || !this.repo || this.clearingSessions.has(sessionKey)) return result;
 
+    const read = { invalidated: false };
+    const reads = this.activeReads.get(sessionKey) ?? new Set();
+    this.activeReads.set(sessionKey, reads);
+    reads.add(read);
+
+    let rows: ReasoningContentCacheEntry[] = [];
     try {
-      const rows = await this.repo.find({
+      rows = await this.repo.find({
         where: {
           session_key: sessionKey,
           first_tool_call_id: In(missing),
         },
       });
-      const now = Date.now();
-      const expired: string[] = [];
-      for (const row of rows) {
-        if (new Date(row.expires_at).getTime() <= now) {
-          expired.push(row.first_tool_call_id);
-          continue;
-        }
-        result.set(row.first_tool_call_id, row.content);
-        this.cache.set(`${sessionKey}:${row.first_tool_call_id}`, {
-          content: row.content,
-          expiresAt: new Date(row.expires_at).getTime(),
-        });
-      }
-      this.evictOverflow();
-      if (expired.length > 0) void this.deleteExpired(sessionKey, expired);
     } catch (err) {
       this.logger.warn(`Failed to read shared reasoning_content cache: ${String(err)}`);
+    } finally {
+      reads.delete(read);
+      if (reads.size === 0) this.activeReads.delete(sessionKey);
     }
+
+    if (read.invalidated) return new Map();
+    const now = Date.now();
+    const expired: string[] = [];
+    for (const row of rows) {
+      const expiresAt = new Date(row.expires_at).getTime();
+      if (expiresAt <= now) {
+        expired.push(row.first_tool_call_id);
+        continue;
+      }
+      // The memory limit does not invalidate an existing shared value.
+      result.set(row.first_tool_call_id, row.content);
+      this.storeLocal(sessionKey, row.first_tool_call_id, row.content, expiresAt);
+    }
+    if (expired.length > 0) void this.deleteExpired(sessionKey, expired);
 
     return result;
   }
@@ -176,23 +209,60 @@ export class ReasoningContentCache {
 
   /** Clear all cached reasoning_content for a session. */
   clearSession(sessionKey: string): void {
+    for (const read of this.activeReads.get(sessionKey) ?? []) read.invalidated = true;
     const prefix = `${sessionKey}:`;
     for (const key of this.cache.keys()) {
-      if (key.startsWith(prefix)) this.cache.delete(key);
+      if (key.startsWith(prefix)) this.deleteLocal(key);
     }
-    if (this.repo) {
-      void this.repo.delete({ session_key: sessionKey }).catch((err) => {
+    for (const [key, pending] of this.pendingPersists) {
+      if (pending.sessionKey === sessionKey) this.pendingPersists.delete(key);
+    }
+    if (!this.repo || this.clearingSessions.has(sessionKey)) return;
+    // Flush in-flight writes before deletion and defer new writes until it finishes.
+    this.clearingSessions.add(sessionKey);
+    const active = [...this.activePersists.values()]
+      .filter((write) => write.sessionKey === sessionKey)
+      .map((write) => write.completion);
+    void Promise.all(active)
+      .then(() => this.writeShared((repo) => repo.delete({ session_key: sessionKey })))
+      .catch((err) => {
         this.logger.warn(`Failed to clear shared reasoning_content cache: ${String(err)}`);
+      })
+      .finally(() => {
+        this.clearingSessions.delete(sessionKey);
+        this.drainPersistQueue();
       });
-    }
   }
 
-  /** Bound the in-memory cache to MAX_CACHE_ENTRIES, evicting oldest (FIFO) first. */
+  private storeLocal(
+    sessionKey: string,
+    cacheKey: string,
+    content: string,
+    expiresAt: number,
+  ): boolean {
+    const bytes = Buffer.byteLength(content, 'utf8');
+    if (bytes > MAX_REASONING_CONTENT_BYTES) return false;
+
+    const key = `${sessionKey}:${cacheKey}`;
+    this.deleteLocal(key);
+    this.cache.set(key, { content, expiresAt, bytes });
+    this.cacheBytes += bytes;
+    this.evictOverflow();
+    return true;
+  }
+
+  private deleteLocal(key: string): void {
+    const existing = this.cache.get(key);
+    if (!existing) return;
+    this.cache.delete(key);
+    this.cacheBytes -= existing.bytes;
+  }
+
+  /** Bound local entry count and bytes, evicting oldest (FIFO) first. */
   private evictOverflow(): void {
-    while (this.cache.size > MAX_CACHE_ENTRIES) {
-      // size > cap (> 0) guarantees a first key exists.
+    while (this.cache.size > MAX_CACHE_ENTRIES || this.cacheBytes > MAX_REASONING_CACHE_BYTES) {
       const oldest = this.cache.keys().next().value as string;
-      this.cache.delete(oldest);
+      this.deleteLocal(oldest);
     }
   }
 
@@ -202,30 +272,75 @@ export class ReasoningContentCache {
     if (now - this.lastCleanup < CLEANUP_INTERVAL_MS) return;
     this.lastCleanup = now;
     for (const [key, entry] of this.cache) {
-      if (now > entry.expiresAt) this.cache.delete(key);
+      if (now > entry.expiresAt) this.deleteLocal(key);
     }
     if (this.repo) void this.cleanupSharedExpired(now);
   }
 
-  private async persist(
-    sessionKey: string,
-    firstToolCallId: string,
-    content: string,
-    expiresAt: number,
-  ): Promise<void> {
+  private enqueuePersist(entry: PendingPersistence): void {
     if (!this.repo) return;
+    const queueKey = JSON.stringify([entry.sessionKey, entry.cacheKey]);
+    if (
+      !this.pendingPersists.has(queueKey) &&
+      this.pendingPersists.size >= MAX_PENDING_PERSIST_WRITES
+    ) {
+      if (!this.warnedPersistenceQueueFull) {
+        this.warnedPersistenceQueueFull = true;
+        this.logger.warn(
+          'Reasoning_content persistence queue is full; dropping shared-cache write',
+        );
+      }
+      return;
+    }
+
+    this.pendingPersists.set(queueKey, entry);
+    this.drainPersistQueue();
+  }
+
+  private drainPersistQueue(): void {
+    for (const [queueKey, entry] of this.pendingPersists) {
+      if (this.activePersists.size >= MAX_PERSIST_CONCURRENCY) break;
+      if (this.activePersists.has(queueKey) || this.clearingSessions.has(entry.sessionKey))
+        continue;
+
+      this.pendingPersists.delete(queueKey);
+      const completion = this.persist(entry);
+      this.activePersists.set(queueKey, { sessionKey: entry.sessionKey, completion });
+      void completion.finally(() => {
+        this.activePersists.delete(queueKey);
+        if (this.pendingPersists.size < MAX_PENDING_PERSIST_WRITES) {
+          this.warnedPersistenceQueueFull = false;
+        }
+        this.drainPersistQueue();
+      });
+    }
+  }
+
+  private async writeShared(
+    write: (repo: Repository<ReasoningContentCacheEntry>) => Promise<unknown>,
+  ): Promise<void> {
+    await this.repo?.manager.transaction(async (manager) => {
+      // Use a server-side timeout so a rejected write is no longer running.
+      await manager.query(`SET LOCAL statement_timeout = '${SHARED_WRITE_STATEMENT_TIMEOUT_MS}ms'`);
+      await write(manager.getRepository(ReasoningContentCacheEntry));
+    });
+  }
+
+  private async persist(entry: PendingPersistence): Promise<void> {
     const now = new Date().toISOString();
     try {
-      await this.repo.upsert(
-        {
-          session_key: sessionKey,
-          first_tool_call_id: firstToolCallId,
-          content,
-          expires_at: new Date(expiresAt).toISOString(),
-          created_at: now,
-          updated_at: now,
-        },
-        ['session_key', 'first_tool_call_id'],
+      await this.writeShared((repo) =>
+        repo.upsert(
+          {
+            session_key: entry.sessionKey,
+            first_tool_call_id: entry.cacheKey,
+            content: entry.content,
+            expires_at: new Date(entry.expiresAt).toISOString(),
+            created_at: now,
+            updated_at: now,
+          },
+          ['session_key', 'first_tool_call_id'],
+        ),
       );
     } catch (err) {
       this.logger.warn(`Failed to persist reasoning_content cache: ${String(err)}`);
