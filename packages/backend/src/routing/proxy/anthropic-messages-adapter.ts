@@ -496,6 +496,7 @@ interface StreamState {
       opened: boolean;
     }
   >;
+  usedToolIds: Set<string>;
   // Upstream index of the latest tool call delta, used to place deltas that carry no index.
   latestToolCallIndex?: number;
   // Monotonic counter — block indices must keep increasing across the whole
@@ -503,6 +504,7 @@ interface StreamState {
   nextBlockIndexCounter: number;
   finalUsage: JsonRecord | null;
   stopReason: string | null;
+  receivedDone: boolean;
   endedMessage: boolean;
 }
 
@@ -521,9 +523,11 @@ export function createMessagesStreamTransformer(model: string): MessagesStreamTr
     textIndex: null,
     textOpened: false,
     toolCalls: new Map(),
+    usedToolIds: new Set(),
     nextBlockIndexCounter: 0,
     finalUsage: null,
     stopReason: null,
+    receivedDone: false,
     endedMessage: false,
   };
 
@@ -540,7 +544,10 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
   const events: string[] = [];
   for (const payload of extractDataPayloads(chunk)) {
     if (state.endedMessage) break;
-    if (payload === '[DONE]') continue;
+    if (payload === '[DONE]') {
+      state.receivedDone = true;
+      continue;
+    }
     const data = safeParse(payload);
     if (!data) continue;
 
@@ -609,7 +616,9 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
 
     if (typeof delta.content === 'string' && delta.content.length > 0) {
       closeThinkingBlock(state, events);
-      if (closeOpenToolCalls(state, events, true)) return events.join('');
+      const interrupted =
+        choice.finish_reason === 'length' || choice.finish_reason === 'content_filter';
+      if (closeOpenToolCalls(state, events, !interrupted)) return events.join('');
       if (!state.textOpened) {
         state.textIndex = nextBlockIndex(state);
         events.push(
@@ -645,22 +654,23 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
               };
         const callIndex = resolveToolCallIndex(call, latest);
         state.latestToolCallIndex = callIndex;
+        const fn = isRecord(call.function) ? call.function : {};
         let entry = state.toolCalls.get(callIndex);
-        if (!entry) {
+        if (!entry?.opened) {
+          const requestedId = upstreamId ? sanitizeToolUseId(upstreamId) : undefined;
           entry = {
-            id: upstreamId
-              ? sanitizeToolUseId(upstreamId)
-              : `toolu_${randomUUID().replace(/-/g, '')}`,
+            id:
+              requestedId && !state.usedToolIds.has(requestedId)
+                ? requestedId
+                : `toolu_${randomUUID().replace(/-/g, '')}`,
             upstreamId,
             index: nextBlockIndex(state),
             argBuffer: '',
             argKind: 'pending',
-            opened: false,
+            opened: true,
           };
           state.toolCalls.set(callIndex, entry);
-        }
-        const fn = isRecord(call.function) ? call.function : {};
-        if (!entry.opened) {
+          state.usedToolIds.add(entry.id);
           events.push(
             formatMessagesEvent('content_block_start', {
               type: 'content_block_start',
@@ -673,7 +683,6 @@ function transformStreamChunk(chunk: string, state: StreamState): string | null 
               },
             }),
           );
-          entry.opened = true;
         }
         if (typeof fn.arguments === 'string' && fn.arguments.length > 0) {
           if (entry.argKind === 'pending') entry.argKind = classifyToolArgs(fn.arguments);
@@ -769,9 +778,7 @@ function closeOpenToolCalls(state: StreamState, events: string[], validate: bool
       }),
     );
     entry.opened = false;
-    // A later delta on the same upstream index starts a fresh argument payload.
     entry.argBuffer = '';
-    entry.argKind = 'pending';
   }
   return false;
 }
@@ -825,8 +832,9 @@ function closeStream(state: StreamState): string[] {
 
   closeThinkingBlock(state, events);
   closeTextBlock(state, events);
-  // Without a finish_reason the upstream was cut off; close the block as before.
-  if (closeOpenToolCalls(state, events, state.stopReason !== null)) return events;
+  const completed = state.stopReason !== null || state.receivedDone;
+  const interrupted = state.stopReason === 'max_tokens' || state.stopReason === 'refusal';
+  if (closeOpenToolCalls(state, events, completed && !interrupted)) return events;
 
   events.push(
     formatMessagesEvent('message_delta', {

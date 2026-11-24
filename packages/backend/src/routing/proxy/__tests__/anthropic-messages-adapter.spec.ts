@@ -1242,6 +1242,17 @@ describe('Anthropic Messages adapter', () => {
       expect(sse).not.toContain('event: message_stop');
     });
 
+    it('rejects incomplete object arguments when DONE is the only terminal signal', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{"}}]}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]);
+
+      expect(sse).toContain('event: error');
+      expect(sse).not.toContain('event: message_stop');
+    });
+
     it('classifies tool arguments once instead of rescanning the buffer per delta', () => {
       const t = createMessagesStreamTransformer('claude-sonnet-4');
       const fragments = 4000;
@@ -1284,6 +1295,12 @@ describe('Anthropic Messages adapter', () => {
         .filter((e) => e.type === 'content_block_delta' && e.delta?.type === 'input_json_delta')
         .map((e) => e.delta.partial_json);
       expect(partials).toEqual(['{}', '{"a":1}']);
+      const starts = events.filter((e) => e.content_block?.type === 'tool_use');
+      expect(starts.map((e) => e.index)).toEqual([0, 2]);
+      expect(starts[1].content_block.id).not.toBe(starts[0].content_block.id);
+      expect(events.filter((e) => e.type === 'content_block_stop').map((e) => e.index)).toEqual([
+        0, 1, 2,
+      ]);
     });
 
     it('streams tool_use stop_reason when tool calls finish with "stop"', () => {
@@ -1319,6 +1336,19 @@ describe('Anthropic Messages adapter', () => {
         'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{}"}}]}}]}\n\n',
         `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
       ]);
+      expect(sse).toContain(`"stop_reason":"${stopReason}"`);
+    });
+
+    it.each([
+      ['length', 'max_tokens'],
+      ['content_filter', 'refusal'],
+    ])('preserves %s when tool arguments are partial', (finishReason, stopReason) => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{"}}]}}]}\n\n',
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
+      ]);
+      expect(sse).not.toContain('event: error');
       expect(sse).toContain(`"stop_reason":"${stopReason}"`);
     });
 
