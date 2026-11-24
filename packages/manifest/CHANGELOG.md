@@ -1,5 +1,19 @@
 # manifest
 
+## 6.29.4
+
+### Patch Changes
+
+- 809861b: Anthropic Messages responses whose tool arguments are JSON null or another non-object now send `tool_use.input` as `{}`, including streamed `input_json_delta` chunks. A missing payload was already empty; `"null"` and `"[]"` were forwarded and rejected.
+- 2299cec: Add claude-fable-5-2 to the Anthropic subscription model catalog so Claude Max / Pro connections can serve it instead of silently falling through to an API key
+- 3553466: Bedrock discovery now lists the `us.` and `global.` Runtime inference profiles of GPT-6.1 Sol. By default, Chat Completions requests with function tools to these profiles are served through Runtime Responses, which drops sampling parameters such as `temperature` and `top_p`, as for the other Bedrock Runtime GPT profiles. Set `BEDROCK_RUNTIME_CHAT_VIA_RESPONSES=false` to keep them on Runtime Chat Completions.
+- c56519a: Bedrock discovery now lists the US and Global Runtime inference profiles for GPT-6.1 Terra, GPT-6.2 Sol, and GPT-6.2 Astra.
+- d22f58d: Bound and coalesce shared reasoning-cache writes during database stalls.
+- 34bb5b5: Show GPT-6.2 Sol and Astra in ChatGPT subscription model discovery by updating the client version to `0.170.0`.
+- edbe1a2: Open the matching guide from the dashboard's Docs link on the MCP and CLI pages.
+- fa933f5: Fix OAuth discovery for MCP clients that probe with GET. Set `MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION=true` to enable dynamic client registration before users sign in and grant access.
+- 459f03f: Fix saved `reasoning_effort` and `max_completion_tokens` being sent as-is on Responses API routes, where the provider rejected them and the setting never applied
+
 ## 6.29.3
 
 ### Patch Changes
