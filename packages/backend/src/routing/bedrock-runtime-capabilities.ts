@@ -5,11 +5,7 @@ import { hasFunctionTools } from './function-tools';
 /** A Manifest API that a model serves on Bedrock Runtime. */
 export type BedrockRuntimeApi = 'chat_completions' | 'responses';
 
-/**
- * A model verified on Bedrock Runtime. Bedrock does not publish which APIs a
- * model serves there, so each entry is checked against its AWS model card and a
- * live call before it is added.
- */
+/** A model with documented Runtime API support and live Bedrock verification. */
 export interface BedrockRuntimeCapabilities {
   /** Exact base model ID. Lookups are case-sensitive. */
   modelId: string;
@@ -27,7 +23,7 @@ export interface BedrockRuntimeCapabilities {
   rejectsReasoningNone?: true;
   /** AWS model card listing the model's Runtime APIs. */
   sourceUrl: string;
-  /** Date the entry was checked live on Runtime. */
+  /** Date the profile status or inference behavior was checked live with Bedrock. */
   verifiedAt: string;
 }
 
@@ -66,6 +62,34 @@ export const BEDROCK_RUNTIME_CAPABILITY_CATALOG: readonly BedrockRuntimeCapabili
     rejectsReasoningNone: true,
     sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-1-sol.html`,
     verifiedAt: '2026-11-05',
+  },
+  // The AWS model cards list both APIs and the US and Global profiles.
+  // GetInferenceProfile returned ACTIVE for all six profiles.
+  {
+    modelId: 'openai.gpt-6.1-terra',
+    inferenceProfileScopes: ['us', 'global'],
+    apis: CHAT_AND_RESPONSES,
+    chatTokenParameter: 'max_completion_tokens',
+    sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-1-terra.html`,
+    verifiedAt: '2026-11-24',
+  },
+  {
+    modelId: 'openai.gpt-6.2-sol',
+    inferenceProfileScopes: ['us', 'global'],
+    apis: CHAT_AND_RESPONSES,
+    chatTokenParameter: 'max_completion_tokens',
+    rejectsReasoningNone: true,
+    sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-2-sol.html`,
+    verifiedAt: '2026-11-24',
+  },
+  {
+    modelId: 'openai.gpt-6.2-astra',
+    inferenceProfileScopes: ['us', 'global'],
+    apis: CHAT_AND_RESPONSES,
+    chatTokenParameter: 'max_completion_tokens',
+    rejectsReasoningNone: true,
+    sourceUrl: `${AWS_MODEL_CARDS}/model-card-openai-gpt-6-2-astra.html`,
+    verifiedAt: '2026-11-24',
   },
   {
     modelId: 'openai.gpt-6-luna',

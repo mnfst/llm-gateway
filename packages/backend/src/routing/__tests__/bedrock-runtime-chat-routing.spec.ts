@@ -9,7 +9,12 @@ const webSearchTool = { type: 'web_search' };
 
 // The CRIS prefix is resolved by getBedrockInferenceProfileBaseModelId, which has
 // its own tests; one prefix per base model is enough here.
-const LUNA_FAMILY = ['us.openai.gpt-6-luna', 'us.openai.gpt-6-sol', 'us.openai.gpt-5.6-luna'];
+const ACCEPTS_REASONING_NONE = [
+  'us.openai.gpt-6-luna',
+  'us.openai.gpt-6-sol',
+  'us.openai.gpt-5.6-luna',
+  'global.openai.gpt-6.1-terra',
+];
 const ASTRA = 'us.openai.gpt-6-astra';
 const NOT_ROUTED = [
   'us.moonshotai.kimi-k3',
@@ -23,7 +28,7 @@ const NOT_ROUTED = [
 ];
 
 describe('bedrockRuntimeChatNeedsResponses', () => {
-  describe.each(LUNA_FAMILY)('%s (accepts effort none)', (model) => {
+  describe.each(ACCEPTS_REASONING_NONE)('%s (accepts effort none)', (model) => {
     it.each([
       ['absent', undefined, false],
       ['none', 'none', false],
@@ -102,17 +107,24 @@ describe('bedrockRuntimeChatNeedsResponses', () => {
     });
   });
 
-  it('routes us.openai.gpt-6.1-sol with function tools to Responses, with or without effort', () => {
-    const model = 'us.openai.gpt-6.1-sol';
-
-    expect(bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool] })).toBe(true);
-    expect(
-      bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool], reasoning_effort: 'high' }),
-    ).toBe(true);
-    expect(
-      bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool], reasoning_effort: 'none' }),
-    ).toBe(true);
-  });
+  it.each(['us.openai.gpt-6.1-sol', 'us.openai.gpt-6.2-sol', 'global.openai.gpt-6.2-astra'])(
+    'routes %s with function tools to Responses, with or without effort',
+    (model) => {
+      expect(bedrockRuntimeChatNeedsResponses(model, { tools: [functionTool] })).toBe(true);
+      expect(
+        bedrockRuntimeChatNeedsResponses(model, {
+          tools: [functionTool],
+          reasoning_effort: 'high',
+        }),
+      ).toBe(true);
+      expect(
+        bedrockRuntimeChatNeedsResponses(model, {
+          tools: [functionTool],
+          reasoning_effort: 'none',
+        }),
+      ).toBe(true);
+    },
+  );
 
   describe.each(NOT_ROUTED)('%s', (model) => {
     it.each([undefined, 'none', 'low', 'high', 'max'])(
