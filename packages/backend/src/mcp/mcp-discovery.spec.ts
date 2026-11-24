@@ -4,6 +4,7 @@ import { mountMcpDiscovery, mountMcpUnavailable } from './mcp-discovery';
 
 jest.mock('../auth/auth.instance', () => ({
   authInstance: {},
+  mcpAnonymousClientRegistration: false,
   authOrigin: 'http://localhost:3001',
   authIssuer: 'http://localhost:3001/api/auth',
   mcpResource: 'http://localhost:3001/api/v1/mcp',
@@ -24,6 +25,10 @@ jest.mock('@better-auth/oauth-provider', () => ({
 }));
 jest.mock('better-auth/node', () => ({ fromNodeHeaders: jest.fn(() => new Headers()) }));
 
+const authConfig = jest.requireMock('../auth/auth.instance') as {
+  mcpAnonymousClientRegistration: boolean;
+};
+
 const { oauthProviderAuthServerMetadata } = jest.requireMock('@better-auth/oauth-provider') as {
   oauthProviderAuthServerMetadata: jest.Mock;
 };
@@ -38,6 +43,7 @@ function makeApp(): express.Express {
 
 describe('mountMcpDiscovery', () => {
   beforeEach(() => {
+    authConfig.mcpAnonymousClientRegistration = false;
     oauthProviderAuthServerMetadata.mockReset();
     oauthProviderAuthServerMetadata.mockReturnValue(
       async () =>
@@ -102,6 +108,28 @@ describe('mountMcpDiscovery', () => {
       .expect(200);
     expect(res.body).toEqual({ issuer: 'http://localhost:3001/api/auth' });
   });
+
+  it.each(['localhost:3001', 'gateway.manifest.build'])(
+    'advertises anonymous registration alongside CIMD on %s when enabled',
+    async (host) => {
+      authConfig.mcpAnonymousClientRegistration = true;
+      const origin = host === 'localhost:3001' ? `http://${host}` : `https://${host}`;
+      const metadata = {
+        issuer: `${origin}/api/auth`,
+        registration_endpoint: `${origin}/api/auth/oauth2/register`,
+        client_id_metadata_document_supported: true,
+      };
+      oauthProviderAuthServerMetadata.mockReturnValue(
+        async () => new Response(JSON.stringify(metadata)),
+      );
+
+      const res = await request(makeApp())
+        .get('/.well-known/oauth-authorization-server/api/auth')
+        .set('Host', host)
+        .expect(200);
+      expect(JSON.parse(res.text)).toEqual(metadata);
+    },
+  );
 
   it('uses the gateway host for gateway authorization metadata', async () => {
     const serve = jest.fn(

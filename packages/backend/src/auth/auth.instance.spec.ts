@@ -623,6 +623,7 @@ describe('auth.instance', () => {
       // switch, or Stripe keys turning billing on).
       for (const key of [
         'MCP_ENABLED',
+        'MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION',
         'STRIPE_SECRET_KEY',
         'STRIPE_WEBHOOK_SECRET',
         'STRIPE_PRO_PRICE_ID',
@@ -701,6 +702,21 @@ describe('auth.instance', () => {
       expect(config.resources[0].accessTokenTtl).toBe(15 * 60);
       expect(config.resources[0].allowedScopes).toEqual(
         expect.arrayContaining(['mcp:read', 'mcp:write', 'offline_access']),
+      );
+    });
+
+    it('enables anonymous registration with native callback inference when opted in', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://manifest.example.com';
+      process.env['MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION'] = 'true';
+      loadModule();
+
+      const { mcp } = jest.requireMock('@better-auth/mcp') as { mcp: jest.Mock };
+      expect(mcp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          allowUnauthenticatedClientRegistration: true,
+          clientRegistrationDefaultApplicationType: 'infer',
+          clientRegistrationRequirePKCE: true,
+        }),
       );
     });
 

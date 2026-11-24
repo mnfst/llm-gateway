@@ -52,6 +52,13 @@ export function clientSetups(endpoint: string): [ClientSetup, ...ClientSetup[]] 
 }`,
     },
     {
+      id: 'vibe',
+      label: 'Vibe Code',
+      icon: '/icons/providers/mistral.svg',
+      language: 'bash',
+      code: `vibe mcp add manifest --url ${endpoint}`,
+    },
+    {
       id: 'other',
       label: 'Other',
       icon: PLATFORM_ICONS.other,
@@ -146,6 +153,13 @@ const McpServer: Component = () => {
               </For>
             </div>
           </div>
+          <Show when={activeId() === 'vibe'}>
+            <p class="integration-panel__desc">
+              For automatic setup, ask your Manifest operator to enable dynamic client registration
+              with <code>MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION=true</code>. Then run this command
+              and approve access in your browser.
+            </p>
+          </Show>
           <CodeBlock code={active().code} language={active().language} />
         </div>
 

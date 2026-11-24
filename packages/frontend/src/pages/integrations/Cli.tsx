@@ -91,6 +91,9 @@ const Cli: Component = () => {
           request.
         </p>
         <CodeBlock code={EXAMPLE} language="bash" />
+        <p class="integration-panel__desc" style="margin-top: var(--gap-md); margin-bottom: 0;">
+          To use Manifest tools in Vibe Code, follow the <a href="/integrations/mcp">MCP setup</a>.
+        </p>
       </div>
     </div>
   );

@@ -353,28 +353,55 @@ describe('McpController', () => {
     expect(res.status).toHaveBeenCalledWith(500);
     expect(res.send.mock.calls[0][0]).toContain('Internal error');
   });
-  it.each(['rejectGet', 'rejectDelete'] as const)(
-    '%s answers 405 with Allow: POST (stateless JSON transport, no SSE stream)',
-    async (method) => {
-      const controller = makeController('tenant-1');
-      const res = makeRes();
+  it('challenges unauthenticated GET probes before rejecting the stream', async () => {
+    const challenge =
+      'Bearer resource_metadata="http://localhost:3001/.well-known/oauth-protected-resource/api/v1/mcp", scope="mcp:read"';
+    createMcpProtectedRequestHandler.mockReturnValue(
+      async () => new Response(null, { status: 401, headers: { 'WWW-Authenticate': challenge } }),
+    );
+    const res = makeRes();
 
-      await controller[method](res);
+    await makeController('tenant-1').handleGet({ ...req, method: 'GET' } as Request, res);
 
-      expect(res.status).toHaveBeenCalledWith(405);
-      expect(res.set).toHaveBeenCalledWith('allow', 'POST');
-      expect(res.set).toHaveBeenCalledWith('content-type', 'application/json');
-      const body = JSON.parse(res.send.mock.calls[0][0] as string) as {
-        jsonrpc: string;
-        id: null;
-        error: { code: number; message: string };
-      };
-      expect(body).toEqual({
-        jsonrpc: '2.0',
-        id: null,
-        error: { code: -32000, message: 'Method not allowed' },
-      });
-      expect(createMcpProtectedRequestHandler).not.toHaveBeenCalled();
-    },
-  );
+    expect(res.status).toHaveBeenCalledWith(401);
+    expect(res.set).toHaveBeenCalledWith('www-authenticate', challenge);
+    expect(createMcpHandler).not.toHaveBeenCalled();
+  });
+
+  it('answers an authenticated GET with 405 and Allow: POST', async () => {
+    createMcpProtectedRequestHandler.mockImplementation(
+      (_options: unknown, cb: (r: unknown, c: unknown) => Promise<Response>) =>
+        (request: unknown) =>
+          cb(request, { sub: 'user-1', scope: 'mcp:read' }),
+    );
+    const res = makeRes();
+
+    await makeController('tenant-1').handleGet({ ...req, method: 'GET' } as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(405);
+    expect(res.set).toHaveBeenCalledWith('allow', 'POST');
+    expect(res.set).toHaveBeenCalledWith('content-type', 'application/json');
+    expect(JSON.parse(res.send.mock.calls[0][0] as string)).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32000, message: 'Method not allowed' },
+    });
+    expect(createMcpHandler).not.toHaveBeenCalled();
+  });
+
+  it('answers DELETE with 405 and Allow: POST', async () => {
+    const res = makeRes();
+
+    await makeController('tenant-1').rejectDelete(res);
+
+    expect(res.status).toHaveBeenCalledWith(405);
+    expect(res.set).toHaveBeenCalledWith('allow', 'POST');
+    expect(res.set).toHaveBeenCalledWith('content-type', 'application/json');
+    expect(JSON.parse(res.send.mock.calls[0][0] as string)).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32000, message: 'Method not allowed' },
+    });
+    expect(createMcpProtectedRequestHandler).not.toHaveBeenCalled();
+  });
 });

@@ -86,4 +86,9 @@ describe('CLI page', () => {
     expect(link).not.toBeNull();
     expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
   });
+
+  it('links Vibe Code users to MCP setup', () => {
+    const { getByRole } = render(() => <Cli />);
+    expect(getByRole('link', { name: 'MCP setup' }).getAttribute('href')).toBe('/integrations/mcp');
+  });
 });
