@@ -2,4 +2,4 @@
 'manifest': patch
 ---
 
-Fix MCP OAuth discovery for Mistral Vibe Code. Set `MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION=true` to let clients register before users sign in and grant access.
+Fix OAuth discovery for MCP clients that probe with GET. Set `MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION=true` to enable dynamic client registration before users sign in and grant access.
