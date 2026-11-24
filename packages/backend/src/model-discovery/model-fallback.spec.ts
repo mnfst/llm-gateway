@@ -363,6 +363,7 @@ describe('buildSubscriptionFallbackModels', () => {
     expect(result.map((model) => model.id)).toEqual([
       'claude-fable-5',
       'claude-fable-5-1',
+      'claude-fable-5-2',
       'claude-opus-4',
       'claude-sonnet-4',
       'claude-haiku-4',
