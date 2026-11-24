@@ -706,6 +706,7 @@ describe('auth.instance', () => {
     });
 
     it('enables anonymous registration with native callback inference when opted in', () => {
+      process.env['BETTER_AUTH_URL'] = 'https://manifest.example.com';
       process.env['MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION'] = 'true';
       loadModule();
 

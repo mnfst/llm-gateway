@@ -380,6 +380,12 @@ describe('McpController', () => {
 
     expect(res.status).toHaveBeenCalledWith(405);
     expect(res.set).toHaveBeenCalledWith('allow', 'POST');
+    expect(res.set).toHaveBeenCalledWith('content-type', 'application/json');
+    expect(JSON.parse(res.send.mock.calls[0][0] as string)).toEqual({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32000, message: 'Method not allowed' },
+    });
     expect(createMcpHandler).not.toHaveBeenCalled();
   });
 
