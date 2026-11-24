@@ -13,12 +13,22 @@ async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve();
 }
 
-const makeRepo = () =>
-  ({
+const makeRepo = () => {
+  const repo = {
     upsert: jest.fn().mockResolvedValue(undefined),
     find: jest.fn().mockResolvedValue([]),
     delete: jest.fn().mockResolvedValue(undefined),
-  }) as unknown as jest.Mocked<Repository<ReasoningContentCacheEntry>>;
+  };
+  const transaction = {
+    query: jest.fn().mockResolvedValue(undefined),
+    getRepository: () => repo,
+  };
+  const manager = {
+    ...transaction,
+    transaction: jest.fn(async (run: (tx: unknown) => Promise<void>) => run(transaction)),
+  };
+  return { ...repo, manager } as unknown as jest.Mocked<Repository<ReasoningContentCacheEntry>>;
+};
 
 describe('ReasoningContentCache', () => {
   let cache: ReasoningContentCache;
@@ -101,12 +111,14 @@ describe('ReasoningContentCache', () => {
     expect(cache.retrieve('session-1', 'call_1')).toBe('new');
   });
 
-  it('persists stored reasoning_content to the shared repository when available', () => {
+  it('persists reasoning_content with a transaction-scoped database timeout', async () => {
     const repo = makeRepo();
     const sharedCache = new ReasoningContentCache(repo);
 
     sharedCache.store('session-1', 'call_1', 'thinking');
+    await flushMicrotasks();
 
+    expect(repo.manager.query).toHaveBeenCalledWith("SET LOCAL statement_timeout = '5000ms'");
     expect(repo.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
         session_key: 'session-1',
@@ -144,6 +156,7 @@ describe('ReasoningContentCache', () => {
     }
     sharedCache.store('session-1', 'queued', 'old');
     sharedCache.store('session-1', 'queued', 'latest');
+    await flushMicrotasks();
 
     expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY);
     const pending = (
@@ -164,20 +177,84 @@ describe('ReasoningContentCache', () => {
     ]);
   });
 
-  it('bounds active and queued shared-cache writes during repository stalls', () => {
+  it('bounds active and queued shared-cache writes during repository stalls', async () => {
     const repo = makeRepo();
-    repo.upsert.mockImplementation(() => new Promise(() => undefined));
+    let finishWrite!: () => void;
+    repo.upsert
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishWrite = () => resolve({} as never);
+          }),
+      )
+      .mockImplementation(() => new Promise(() => undefined));
     const sharedCache = new ReasoningContentCache(repo);
 
     for (let i = 0; i < MAX_PERSIST_CONCURRENCY + MAX_PENDING_PERSIST_WRITES + 5; i++) {
       sharedCache.store('session-1', `call-${i}`, `content-${i}`);
     }
 
+    await flushMicrotasks();
     const state = sharedCache as unknown as {
       pendingPersists: Map<string, unknown>;
     };
     expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY);
     expect(state.pendingPersists.size).toBe(MAX_PENDING_PERSIST_WRITES);
+    sharedCache.clearSession('other-session');
+    expect(state.pendingPersists.size).toBe(MAX_PENDING_PERSIST_WRITES);
+
+    finishWrite();
+    await flushMicrotasks();
+    expect(repo.upsert).toHaveBeenCalledTimes(MAX_PERSIST_CONCURRENCY + 1);
+    expect(state.pendingPersists.size).toBe(MAX_PENDING_PERSIST_WRITES - 1);
+  });
+
+  it('discards a shared read that returns while its session is clearing', async () => {
+    const repo = makeRepo();
+    let finishRead!: () => void;
+    repo.find.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishRead = () =>
+            resolve([
+              {
+                session_key: 'session-1',
+                first_tool_call_id: 'call_1',
+                content: 'old value',
+                expires_at: new Date(Date.now() + 60_000).toISOString(),
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+            ]);
+        }),
+    );
+    repo.delete.mockImplementationOnce(() => new Promise(() => undefined));
+    const sharedCache = new ReasoningContentCache(repo);
+
+    const reading = sharedCache.retrieveMany('session-1', ['call_1']);
+    sharedCache.clearSession('session-1');
+    finishRead();
+
+    expect(await reading).toEqual(new Map());
+    expect(sharedCache.retrieve('session-1', 'call_1')).toBeNull();
+  });
+
+  it('excludes and cleans up expired shared rows', async () => {
+    const repo = makeRepo();
+    repo.find.mockResolvedValueOnce([
+      {
+        session_key: 'session-1',
+        first_tool_call_id: 'expired',
+        content: 'stale value',
+        expires_at: new Date(Date.now() - 1).toISOString(),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ]);
+    const sharedCache = new ReasoningContentCache(repo);
+
+    expect(await sharedCache.retrieveMany('session-1', ['expired'])).toEqual(new Map());
+    expect(repo.delete).toHaveBeenCalledWith(expect.objectContaining({ session_key: 'session-1' }));
   });
 
   it('replays an unexpired shared value that exceeds the local cache limit', async () => {
@@ -215,6 +292,7 @@ describe('ReasoningContentCache', () => {
     sharedCache.store('session-1', 'call_1', 'first');
     sharedCache.store('session-1', 'call_1', 'latest');
     sharedCache.store('session-1', 'call_2', 'independent');
+    await flushMicrotasks();
 
     expect(repo.upsert.mock.calls.map(([row]) => row)).toEqual([
       expect.objectContaining({ content: 'first' }),
@@ -224,6 +302,80 @@ describe('ReasoningContentCache', () => {
     await flushMicrotasks();
     expect(repo.upsert).toHaveBeenCalledTimes(3);
     expect(repo.upsert).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'latest' }), [
+      'session_key',
+      'first_tool_call_id',
+    ]);
+  });
+
+  it('drains the queue after a shared write times out in PostgreSQL', async () => {
+    const repo = makeRepo();
+    repo.upsert.mockRejectedValueOnce(new Error('canceling statement due to statement timeout'));
+    const sharedCache = new ReasoningContentCache(repo);
+
+    sharedCache.store('session-1', 'call_1', 'timed out');
+    sharedCache.store('session-1', 'call_1', 'latest');
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(repo.upsert).toHaveBeenCalledTimes(2);
+    expect(repo.upsert).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'latest' }), [
+      'session_key',
+      'first_tool_call_id',
+    ]);
+  });
+
+  it('finishes active writes before clearing shared rows and then persists new values', async () => {
+    const repo = makeRepo();
+    let finishWrite!: () => void;
+    repo.upsert.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishWrite = () => resolve({} as never);
+        }),
+    );
+    const sharedCache = new ReasoningContentCache(repo);
+    sharedCache.store('session-1', 'call_1', 'before clear');
+    sharedCache.store('session-1', 'call_1', 'queued before clear');
+    await flushMicrotasks();
+
+    sharedCache.clearSession('session-1');
+    sharedCache.store('session-1', 'call_1', 'after clear');
+    await sharedCache.retrieveMany('session-1', ['uncached']);
+    await flushMicrotasks();
+
+    expect(repo.delete).not.toHaveBeenCalled();
+    expect(repo.upsert).toHaveBeenCalledTimes(1);
+    expect(repo.find).not.toHaveBeenCalled();
+
+    finishWrite();
+    await flushMicrotasks();
+    await flushMicrotasks();
+    expect(repo.delete).toHaveBeenCalledWith({ session_key: 'session-1' });
+    expect(repo.upsert).toHaveBeenCalledTimes(2);
+    expect(repo.upsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({ content: 'after clear' }),
+      ['session_key', 'first_tool_call_id'],
+    );
+    expect(repo.delete.mock.invocationCallOrder[0]).toBeLessThan(
+      repo.upsert.mock.invocationCallOrder[1],
+    );
+  });
+
+  it('drops queued writes on a repeated clear and resumes after a failed shared delete', async () => {
+    const repo = makeRepo();
+    repo.delete.mockRejectedValueOnce(new Error('delete failed'));
+    const sharedCache = new ReasoningContentCache(repo);
+
+    sharedCache.clearSession('session-1');
+    sharedCache.store('session-1', 'call_1', 'discard me');
+    sharedCache.clearSession('session-1');
+    sharedCache.store('session-1', 'call_1', 'keep me');
+    await flushMicrotasks();
+    await flushMicrotasks();
+
+    expect(repo.delete).toHaveBeenCalledTimes(1);
+    expect(repo.upsert).toHaveBeenCalledTimes(1);
+    expect(repo.upsert).toHaveBeenCalledWith(expect.objectContaining({ content: 'keep me' }), [
       'session_key',
       'first_tool_call_id',
     ]);
@@ -513,6 +665,20 @@ describe('ReasoningContentCache', () => {
     expect(cache.retrieve('session', 'call_0')).toBeNull();
     expect(cache.retrieve('session', 'call_1')).toBe(content);
     expect(cache.retrieve('session', `call_${entriesAtBudget}`)).toBe(content);
+  });
+
+  it('retains a fresh entry when sweeping older expired entries', () => {
+    const now = 1_000_000_000;
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now);
+    const freshCache = new ReasoningContentCache();
+    freshCache.store('session-1', 'old', 'expired');
+    clock.mockReturnValue(now + 25 * 60_000);
+    freshCache.store('session-1', 'fresh', 'still valid');
+    clock.mockReturnValue(now + 31 * 60_000);
+    freshCache.store('session-1', 'sweep', 'trigger');
+
+    expect(freshCache.retrieve('session-1', 'old')).toBeNull();
+    expect(freshCache.retrieve('session-1', 'fresh')).toBe('still valid');
   });
 
   it('evicts expired entries lazily when cleanup interval has elapsed', () => {

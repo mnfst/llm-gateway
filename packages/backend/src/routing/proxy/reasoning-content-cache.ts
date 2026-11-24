@@ -20,6 +20,7 @@ interface PendingPersistence {
 
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+const SHARED_WRITE_STATEMENT_TIMEOUT_MS = 5_000;
 /**
  * Hard ceiling on turns held in the in-memory layer. The key embeds an
  * upstream-generated tool call id, so the in-memory keyspace is unbounded and
@@ -30,9 +31,9 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 export const MAX_CACHE_ENTRIES = 10_000;
 /** Skip pathological single values rather than retaining or persisting them. */
 export const MAX_REASONING_CONTENT_BYTES = 256 * 1024;
-/** Bound aggregate reasoning strings retained by this process. */
+/** Bound reasoning strings in the local replay cache. The write queue has its own limit. */
 export const MAX_REASONING_CACHE_BYTES = 64 * 1024 * 1024;
-/** Shared persistence is best-effort; cap stalled writes and retain local hits. */
+/** Bound pending writes separately by entry count and the per-entry size limit. */
 export const MAX_PENDING_PERSIST_WRITES = 256;
 export const MAX_PERSIST_CONCURRENCY = 4;
 
@@ -57,7 +58,11 @@ export class ReasoningContentCache {
   private cacheBytes = 0;
   private lastCleanup = Date.now();
   private readonly pendingPersists = new Map<string, PendingPersistence>();
-  private readonly activePersistKeys = new Set<string>();
+  private readonly activePersists = new Map<
+    string,
+    { sessionKey: string; completion: Promise<void> }
+  >();
+  private readonly clearingSessions = new Set<string>();
   private warnedPersistenceQueueFull = false;
 
   constructor(
@@ -111,7 +116,7 @@ export class ReasoningContentCache {
       }
     }
 
-    if (missing.length === 0 || !this.repo) return result;
+    if (missing.length === 0 || !this.repo || this.clearingSessions.has(sessionKey)) return result;
 
     try {
       const rows = await this.repo.find({
@@ -120,6 +125,7 @@ export class ReasoningContentCache {
           first_tool_call_id: In(missing),
         },
       });
+      if (this.clearingSessions.has(sessionKey)) return result;
       const now = Date.now();
       const expired: string[] = [];
       for (const row of rows) {
@@ -199,11 +205,21 @@ export class ReasoningContentCache {
     for (const [key, pending] of this.pendingPersists) {
       if (pending.sessionKey === sessionKey) this.pendingPersists.delete(key);
     }
-    if (this.repo) {
-      void this.repo.delete({ session_key: sessionKey }).catch((err) => {
+    if (!this.repo || this.clearingSessions.has(sessionKey)) return;
+    // Flush in-flight writes before deletion and defer new writes until it finishes.
+    this.clearingSessions.add(sessionKey);
+    const active = [...this.activePersists.values()]
+      .filter((write) => write.sessionKey === sessionKey)
+      .map((write) => write.completion);
+    void Promise.all(active)
+      .then(() => this.writeShared((repo) => repo.delete({ session_key: sessionKey })))
+      .catch((err) => {
         this.logger.warn(`Failed to clear shared reasoning_content cache: ${String(err)}`);
+      })
+      .finally(() => {
+        this.clearingSessions.delete(sessionKey);
+        this.drainPersistQueue();
       });
-    }
   }
 
   private storeLocal(
@@ -272,13 +288,15 @@ export class ReasoningContentCache {
   private drainPersistQueue(): void {
     if (!this.repo) return;
     for (const [queueKey, entry] of this.pendingPersists) {
-      if (this.activePersistKeys.size >= MAX_PERSIST_CONCURRENCY) break;
-      if (this.activePersistKeys.has(queueKey)) continue;
+      if (this.activePersists.size >= MAX_PERSIST_CONCURRENCY) break;
+      if (this.activePersists.has(queueKey) || this.clearingSessions.has(entry.sessionKey))
+        continue;
 
       this.pendingPersists.delete(queueKey);
-      this.activePersistKeys.add(queueKey);
-      void this.persist(entry).finally(() => {
-        this.activePersistKeys.delete(queueKey);
+      const completion = this.persist(entry);
+      this.activePersists.set(queueKey, { sessionKey: entry.sessionKey, completion });
+      void completion.finally(() => {
+        this.activePersists.delete(queueKey);
         if (this.pendingPersists.size < MAX_PENDING_PERSIST_WRITES) {
           this.warnedPersistenceQueueFull = false;
         }
@@ -287,20 +305,31 @@ export class ReasoningContentCache {
     }
   }
 
+  private async writeShared(
+    write: (repo: Repository<ReasoningContentCacheEntry>) => Promise<unknown>,
+  ): Promise<void> {
+    await this.repo?.manager.transaction(async (manager) => {
+      // Use a server-side timeout so a rejected write is no longer running.
+      await manager.query(`SET LOCAL statement_timeout = '${SHARED_WRITE_STATEMENT_TIMEOUT_MS}ms'`);
+      await write(manager.getRepository(ReasoningContentCacheEntry));
+    });
+  }
+
   private async persist(entry: PendingPersistence): Promise<void> {
-    if (!this.repo) return;
     const now = new Date().toISOString();
     try {
-      await this.repo.upsert(
-        {
-          session_key: entry.sessionKey,
-          first_tool_call_id: entry.cacheKey,
-          content: entry.content,
-          expires_at: new Date(entry.expiresAt).toISOString(),
-          created_at: now,
-          updated_at: now,
-        },
-        ['session_key', 'first_tool_call_id'],
+      await this.writeShared((repo) =>
+        repo.upsert(
+          {
+            session_key: entry.sessionKey,
+            first_tool_call_id: entry.cacheKey,
+            content: entry.content,
+            expires_at: new Date(entry.expiresAt).toISOString(),
+            created_at: now,
+            updated_at: now,
+          },
+          ['session_key', 'first_tool_call_id'],
+        ),
       );
     } catch (err) {
       this.logger.warn(`Failed to persist reasoning_content cache: ${String(err)}`);
