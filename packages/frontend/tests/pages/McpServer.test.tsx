@@ -83,7 +83,7 @@ describe('MCP server page', () => {
     const tabs = Array.from(container.querySelectorAll('.panel__tab')).map((t) =>
       t.textContent?.trim(),
     );
-    expect(tabs).toEqual(['Claude Code', 'Codex', 'OpenCode', 'Other']);
+    expect(tabs).toEqual(['Claude Code', 'Codex', 'OpenCode', 'Vibe Code', 'Other']);
     const active = container.querySelector('.panel__tab--active');
     expect(active?.textContent?.trim()).toBe('Claude Code');
     expect(container.textContent).toContain('claude mcp add --transport http manifest');
@@ -103,9 +103,15 @@ describe('MCP server page', () => {
 
     fireEvent.click(byLabel('OpenCode'));
     expect(container.textContent).toContain('opencode.ai/config.json');
+
+    fireEvent.click(byLabel('Vibe Code'));
+    expect(container.textContent).toContain(
+      `vibe mcp add manifest --url ${window.location.origin}/api/v1/mcp`,
+    );
+    expect(container.textContent).toContain('MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION=true');
   });
 
-  it('shows each client logo, sourced from the shared platform map', async () => {
+  it('shows each client logo', async () => {
     const { container } = await renderReady();
     const icons = Array.from(container.querySelectorAll('.panel__tab .panel__tab-icon')).map((i) =>
       i.getAttribute('src'),
@@ -114,6 +120,7 @@ describe('MCP server page', () => {
       '/icons/providers/claude-code.svg',
       '/icons/providers/codex.svg',
       '/icons/providers/opencode.svg',
+      '/icons/providers/mistral.svg',
       '/icons/other.svg',
     ]);
     // Decorative: the label beside it already names the client.
@@ -144,7 +151,9 @@ describe('MCP server page', () => {
   it('explains the read-only scope and links to the tool list', async () => {
     const { container } = await renderReady();
     expect(container.textContent).toContain('never sees the write');
-    const link = container.querySelector('a[href="https://manifest.build/llm-gateway/docs/integrations/mcp/"]');
+    const link = container.querySelector(
+      'a[href="https://manifest.build/llm-gateway/docs/integrations/mcp/"]',
+    );
     expect(link).not.toBeNull();
     expect(link?.getAttribute('rel')).toBe('noopener noreferrer');
   });
