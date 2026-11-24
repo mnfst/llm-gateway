@@ -47,6 +47,8 @@ export const mcpResource = `${authOrigin}/api/v1/mcp`;
 const mcpDecision = mcpAvailability();
 export const mcpEnabled = mcpDecision.enabled;
 export const mcpDisabledReason = mcpDecision.reason;
+export const mcpAnonymousClientRegistration =
+  mcpEnabled && process.env['MCP_ALLOW_ANONYMOUS_CLIENT_REGISTRATION'] === 'true';
 export { MCP_READ_SCOPE, MCP_WRITE_SCOPE, MCP_SCOPES } from './mcp-scopes';
 
 const CLOUD_ORIGINS = ['https://app.manifest.build', 'https://gateway.manifest.build'];
@@ -235,12 +237,11 @@ function buildMcpPlugins() {
       resourceSeedMode: 'overwrite',
       clientRegistrationDefaultScopes: [MCP_READ_SCOPE],
       clientRegistrationAllowedScopes: [MCP_WRITE_SCOPE, 'offline_access'],
-      // DCR stays available to signed-in users, but anonymous registration is
-      // off: a client that can point a URL at a verified metadata document
-      // (CIMD) identifies itself, and everyone else must be added by an
-      // operator. This is the MCP 2026-07-28 posture.
       allowDynamicClientRegistration: true,
-      allowUnauthenticatedClientRegistration: false,
+      // Let operators opt in for clients that need DCR before user sign-in.
+      allowUnauthenticatedClientRegistration: mcpAnonymousClientRegistration,
+      // Vibe omits application_type when registering its HTTP loopback callback.
+      clientRegistrationDefaultApplicationType: mcpAnonymousClientRegistration ? 'infer' : 'web',
       clientRegistrationRequirePKCE: true,
     }),
     cimd({

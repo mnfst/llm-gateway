@@ -5,6 +5,7 @@ import type { Request, Response } from 'express';
 import { mcpOAuthResponse } from '../auth/mcp-oauth-response';
 import {
   authInstance,
+  mcpAnonymousClientRegistration,
   authIssuerForHost,
   authOriginForHost,
   mcpResourceForHost,
@@ -50,7 +51,11 @@ export function mountMcpDiscovery(app: INestApplication): void {
           headers: fromNodeHeaders(req.headers),
         },
       );
-      const response = await mcpOAuthResponse(webRequest, await authServerMetadata(webRequest));
+      const response = await mcpOAuthResponse(
+        webRequest,
+        await authServerMetadata(webRequest),
+        mcpAnonymousClientRegistration,
+      );
       response.headers.forEach((value, key) => res.set(key, value));
       res.status(response.status).send(req.method === 'HEAD' ? undefined : await response.text());
     } catch {

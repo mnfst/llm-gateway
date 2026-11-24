@@ -119,17 +119,11 @@ export class McpController {
     };
   }
 
-  /**
-   * Streamable HTTP clients open a GET for the optional server-push stream
-   * right after `initialize`, and send DELETE to end a session. This transport
-   * is stateless JSON-only and offers neither, and the spec says such a server
-   * MUST answer 405 — the JSON 404 the `/api/` prefix otherwise produces reads
-   * to clients as a broken endpoint and is logged on every connect.
-   */
+  // Some clients probe with GET before POST initialize to discover OAuth.
   @Get()
   @Public()
-  async rejectGet(@Res() res: Response): Promise<void> {
-    await sendWebResponse(methodNotAllowedResponse(), res, this.logger);
+  async handleGet(@Req() req: Request, @Res() res: Response): Promise<void> {
+    await this.handle(req, res);
   }
 
   @Delete()
@@ -141,7 +135,6 @@ export class McpController {
   @Post()
   @Public()
   async handle(@Req() req: Request, @Res() res: Response): Promise<void> {
-    const deps = this.deps();
     const resource = mcpResourceForHost(req.headers.host);
     const issuer = authIssuerForHost(req.headers.host);
     const webRequest = new globalThis.Request(resource, {
@@ -163,9 +156,11 @@ export class McpController {
         async (request, claims) => {
           const operator = await resolveMcpOperator(this.tenantCache, claims);
           if (!operator) return unauthorizedResponse(resource);
+          // The stateless transport has no server-push stream.
+          if (request.method !== 'POST') return methodNotAllowedResponse();
           // A fresh handler per request keeps the operator closure un-forgeable:
           // no caller-supplied field can change whose tenant a tool acts on.
-          const handler = createMcpHandler(() => buildMcpServer(deps, operator), {
+          const handler = createMcpHandler(() => buildMcpServer(this.deps(), operator), {
             responseMode: 'json',
           });
           return handler.fetch(request, { parsedBody: req.body });

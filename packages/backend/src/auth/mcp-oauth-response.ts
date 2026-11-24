@@ -1,8 +1,16 @@
 /** Keep public MCP OAuth responses useful to clients without changing Better Auth's routes. */
-export async function mcpOAuthResponse(request: Request, response: Response): Promise<Response> {
+export async function mcpOAuthResponse(
+  request: Request,
+  response: Response,
+  anonymousClientRegistration = false,
+): Promise<Response> {
   const { pathname } = new URL(request.url);
 
-  if (pathname === '/api/auth/oauth2/register' && response.status === 401) {
+  if (
+    !anonymousClientRegistration &&
+    pathname === '/api/auth/oauth2/register' &&
+    response.status === 401
+  ) {
     const body = (await response
       .clone()
       .json()
@@ -23,8 +31,9 @@ export async function mcpOAuthResponse(request: Request, response: Response): Pr
   }
 
   if (
-    pathname.includes('/.well-known/oauth-authorization-server') ||
-    pathname.includes('/.well-known/openid-configuration')
+    !anonymousClientRegistration &&
+    (pathname.includes('/.well-known/oauth-authorization-server') ||
+      pathname.includes('/.well-known/openid-configuration'))
   ) {
     const body = (await response
       .clone()
