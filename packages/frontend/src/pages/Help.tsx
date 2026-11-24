@@ -23,12 +23,12 @@ const Help: Component = () => {
           <div class="settings-card__label">
             <span class="settings-card__label-title">Schedule a Call</span>
             <span class="settings-card__label-desc">
-              Book a 30-min call with us to get help setting things up.
+              Book a 15-min call with us to get help setting things up.
             </span>
           </div>
           <div class="settings-card__control">
             <a
-              href="https://calendly.com/sebastien-manifest/30min?month=2026-02"
+              href="https://calendly.com/sebastien-manifest/15min"
               target="_blank"
               rel="noopener noreferrer"
               class="btn btn--outline btn--sm"

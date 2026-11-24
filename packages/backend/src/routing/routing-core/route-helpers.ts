@@ -72,6 +72,35 @@ export function unambiguousRoute(
 }
 
 /**
+ * Resolve a bare model name carried by exactly two (provider, authType) route
+ * classes of the SAME provider — one subscription, one api_key — to the
+ * subscription route. A flat-fee subscription already covers the request, so
+ * silently metering a key (or refusing outright) would charge the user for
+ * traffic their subscription serves.
+ *
+ * Matches count route classes, not connections: discovery collapses multiple
+ * api_key connections of one provider into a single api_key row, and the
+ * subscription still wins over any number of metered keys — the same rationale
+ * applies whether one key or several would otherwise be billed.
+ *
+ * Returns null for every other multi-match shape (single match, cross-provider
+ * collision, three or more route classes, a `local` route involved) — those
+ * stay ambiguous and keep M302, exactly as unambiguousRoute treated them.
+ */
+export function subscriptionPreferredRoute(
+  model: string,
+  available: DiscoveredModel[],
+): ModelRoute | null {
+  const matches = available.filter((m) => m.id === model && m.authType);
+  if (matches.length !== 2) return null;
+  const subscription = matches.find((m) => m.authType === 'subscription');
+  const apiKey = matches.find((m) => m.authType === 'api_key');
+  if (!subscription || !apiKey) return null;
+  if (subscription.provider.toLowerCase() !== apiKey.provider.toLowerCase()) return null;
+  return { provider: subscription.provider, authType: 'subscription', model: subscription.id };
+}
+
+/**
  * Strict equality on (provider, authType, model, keyLabel). Used for tier-card
  * dedup where the same model with two different keys must NOT collide.
  *

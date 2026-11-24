@@ -1236,3 +1236,98 @@ tr:hover .connection-label-cell__edit,
   color: hsl(var(--muted-foreground));
   margin: 6px 0 0;
 }
+
+/* ── Collapsed connections table ─────────────────── */
+/* The connections list sits above the supported-provider catalog, so a long one
+   pushes the catalog off the screen. Collapsed, it keeps six and a half rows
+   visible: the half row is the affordance that there is more below. Nothing is
+   hidden, everything stays reachable by scrolling inside the card. */
+.connections-panel {
+  /* Measured in the browser: the header row is 44px with its bottom border, and
+     a body row is 57px (a 2rem btn--sm plus 12px of padding each side plus the
+     border). Half a row is the affordance that there is more below. */
+  --connections-header-h: 44px;
+  --connections-row-h: 57px;
+  --connections-rows: 6.5;
+}
+
+/* Under 768px the shared table rule drops cell padding from 12px to 10px, so
+   the row and header shrink with it. Measured the same way. */
+@media (max-width: 768px) {
+  .connections-panel {
+    --connections-header-h: 40px;
+    --connections-row-h: 53px;
+  }
+}
+
+.connections-panel__viewport {
+  position: relative;
+}
+
+.connections-panel__body {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.connections-panel--collapsed .connections-panel__body {
+  max-height: calc(
+    var(--connections-header-h) + var(--connections-row-h) * var(--connections-rows)
+  );
+  overflow-y: auto;
+}
+
+/* Column headers have to survive the internal scroll. */
+.connections-panel--collapsed .connections-panel__body thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: hsl(var(--card));
+}
+
+/* Fade the cut-off row. Reuses the .scroll-panel--at-bottom class that
+   toggleScrollFade() sets on the scroller's parent, which is the viewport. */
+.connections-panel--collapsed .connections-panel__viewport::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 56px;
+  background: linear-gradient(transparent, hsl(var(--card)));
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+}
+
+.connections-panel--collapsed .connections-panel__viewport.scroll-panel--at-bottom::after {
+  opacity: 0;
+}
+
+.connections-panel__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: var(--gap-md);
+  background: none;
+  border: none;
+  border-top: 1px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.connections-panel__toggle:hover {
+  background: hsl(var(--muted) / 0.5);
+  color: hsl(var(--foreground));
+}
+
+.connections-panel__chevron {
+  transition: transform var(--transition-fast);
+}
+
+.connections-panel__toggle[aria-expanded='true'] .connections-panel__chevron {
+  transform: rotate(180deg);
+}

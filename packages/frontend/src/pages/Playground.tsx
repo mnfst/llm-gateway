@@ -9,7 +9,7 @@ import {
   Show,
   type Component,
 } from 'solid-js';
-import { useSearchParams } from '@solidjs/router';
+import { useSearchParams, type RouteSectionProps } from '@solidjs/router';
 import { Meta, Title } from '@solidjs/meta';
 import type { AuthType, PlaygroundHistoryRunSummary } from '../services/api.js';
 import {
@@ -122,7 +122,18 @@ function findWinners(columns: readonly ColumnData[]): {
   };
 }
 
-const Playground: Component = () => {
+interface PlaygroundProps {
+  onBestModelChange?: (
+    selection: { model: string; provider: string; authType: AuthType } | null,
+  ) => void;
+  /**
+   * Rendered inside another page (onboarding wizard): no document title,
+   * no page header, and no run-history sidebar.
+   */
+  embedded?: boolean;
+}
+
+const Playground: Component<PlaygroundProps & Partial<RouteSectionProps>> = (props) => {
   const [searchParams, setSearchParams] = useSearchParams<{ run?: string }>();
   const [agent] = createResource(getPlaygroundAgent);
   // Only the resolved name (from the server) drives resource sources and the
@@ -155,7 +166,7 @@ const Playground: Component = () => {
   const [announcement, setAnnouncement] = createSignal('');
   const [promptHeight, setPromptHeight] = createSignal(0);
   const [historyOpen, setHistoryOpen] = createSignal(
-    localStorage.getItem('manifest.playground.recentOpen') !== 'false',
+    !props.embedded && localStorage.getItem('manifest.playground.recentOpen') !== 'false',
   );
   const toggleRecent = () => {
     const next = !historyOpen();
@@ -183,8 +194,13 @@ const Playground: Component = () => {
 
   const handleMarkBest = (col: ColumnData) => {
     if (viewingHistory()) return; // read-only overlay
+    const next =
+      col.columnDbId != null && col.columnDbId !== store().bestColumnId()
+        ? { model: col.model, provider: col.provider, authType: col.authType }
+        : null;
     void store()
       .markBest(col)
+      .then(() => props.onBestModelChange?.(next))
       .catch((err) =>
         toast.error(err instanceof Error ? err.message : 'Failed to set best answer'),
       );
@@ -322,6 +338,7 @@ const Playground: Component = () => {
           setLiveRunId(null);
           // Snapshot completed results so the summary table survives column removals
           setCompletedResults([...store().columns]);
+          if (props.embedded) return;
           void refreshHistory().then(() => {
             // If user isn't viewing a past run, auto-select the latest
             if (!viewingHistory()) {
@@ -427,6 +444,7 @@ const Playground: Component = () => {
   };
 
   createEffect(() => {
+    if (props.embedded) return;
     setRightSidebar(
       <PlaygroundRecentSidebar
         open={historyOpen()}
@@ -448,22 +466,28 @@ const Playground: Component = () => {
   const winners = () => findWinners(viewingHistory() ?? store().columns);
 
   return (
-    <div class="playground" style={{ 'padding-bottom': `${promptHeight() + 48}px` }}>
-      <Title>Playground · Manifest</Title>
-      <Meta
-        name="description"
-        content="Compare models side by side for cost, speed, and quality."
-      />
+    <div
+      class="playground"
+      classList={{ 'playground--embedded': props.embedded }}
+      style={props.embedded ? undefined : { 'padding-bottom': `${promptHeight() + 48}px` }}
+    >
+      <Show when={!props.embedded}>
+        <Title>Playground · Manifest</Title>
+        <Meta
+          name="description"
+          content="Compare models side by side for cost, speed, and quality."
+        />
 
-      <header class="page-header">
-        <div>
-          <h1>Playground</h1>
-          <p class="page-header__sub">
-            Send one prompt to multiple models and compare cost, speed, and quality.
-          </p>
-        </div>
-        {/* Provider connection now handled via sidebar provider pages */}
-      </header>
+        <header class="page-header">
+          <div>
+            <h1>Playground</h1>
+            <p class="page-header__sub">
+              Send one prompt to multiple models and compare cost, speed, and quality.
+            </p>
+          </div>
+          {/* Provider connection now handled via sidebar provider pages */}
+        </header>
+      </Show>
 
       <Show
         when={(available() && providers() && hasConnectedProviders()) || viewingHistory()}
@@ -534,7 +558,9 @@ const Playground: Component = () => {
           }
         >
           <PlaygroundPrompt
-            ref={(el) => { promptRef = el; }}
+            ref={(el) => {
+              promptRef = el;
+            }}
             value={store().prompt()}
             onChange={store().setPrompt}
             onSubmit={handleSubmit}

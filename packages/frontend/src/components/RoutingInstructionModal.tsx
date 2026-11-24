@@ -3,6 +3,7 @@ import CopyButton from './CopyButton.jsx';
 import ModelSelectDropdown from './ModelSelectDropdown.jsx';
 import SetupStepAddProvider from './SetupStepAddProvider.jsx';
 import { getAgentKey } from '../services/api.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import { agentPlatform, agentCategory } from '../services/agent-platform-store.js';
 import { platformIcon } from 'manifest-shared';
 
@@ -26,9 +27,7 @@ const RoutingInstructionModal: Component<Props> = (props) => {
   );
 
   const baseUrl = () => {
-    const host = window.location.hostname;
-    if (host === 'app.manifest.build') return 'https://app.manifest.build/v1';
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const disableCmd = () =>
@@ -65,7 +64,7 @@ const RoutingInstructionModal: Component<Props> = (props) => {
                     alt=""
                     width="28"
                     height="28"
-                    class="setup-modal__platform-icon"
+                    class="platform-icon setup-modal__platform-icon"
                   />
                 </Show>
               </Show>

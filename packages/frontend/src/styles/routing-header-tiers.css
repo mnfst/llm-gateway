@@ -297,6 +297,12 @@
   gap: 6px;
 }
 
+@media (max-width: 768px) {
+  .header-tier-modal__swatches {
+    grid-template-columns: repeat(auto-fill, 24px);
+  }
+}
+
 .header-tier-modal__swatch {
   width: 24px;
   height: 24px;

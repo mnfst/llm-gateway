@@ -6,6 +6,7 @@ import { TierService } from './routing-core/tier.service';
 import { ModelDiscoveryService } from '../model-discovery/model-discovery.service';
 import { OllamaSyncService } from '../database/ollama-sync.service';
 import { PricingSyncService } from '../database/pricing-sync.service';
+import { CustomProviderService } from './custom-provider/custom-provider.service';
 import { Agent } from '../entities/agent.entity';
 
 const mockCtx = { tenantId: 'tenant-1', userId: 'user-1' } as never;
@@ -22,6 +23,7 @@ describe('ProviderController', () => {
   let mockResolveAgent: Record<string, jest.Mock>;
   let mockTierService: Record<string, jest.Mock>;
   let mockPricingSync: Record<string, jest.Mock>;
+  let mockCustomProviderService: Record<string, jest.Mock>;
   let mockCacheManager: { clear: jest.Mock };
 
   beforeEach(() => {
@@ -56,6 +58,10 @@ describe('ProviderController', () => {
     mockPricingSync = {
       getAll: jest.fn().mockReturnValue(new Map([['model-1', {}]])),
     };
+    mockCustomProviderService = {
+      getById: jest.fn().mockResolvedValue(null),
+      primaryConnection: jest.fn().mockResolvedValue(undefined),
+    };
     mockCacheManager = {
       clear: jest.fn().mockResolvedValue(true),
     };
@@ -67,6 +73,7 @@ describe('ProviderController', () => {
       mockResolveAgent as unknown as ResolveAgentService,
       mockTierService as unknown as TierService,
       mockPricingSync as unknown as PricingSyncService,
+      mockCustomProviderService as unknown as CustomProviderService,
       mockCacheManager as never,
     );
   });
@@ -750,21 +757,157 @@ describe('ProviderController', () => {
       ).rejects.toThrow('AWS Bedrock region must be a valid AWS region code');
     });
 
-    it('should reject region when MiniMax is connected with api_key auth', async () => {
+    it('should reject region for providers without regional endpoints', async () => {
       await expect(
         controller.upsertProvider(mockCtx, mockAgentName, {
-          provider: 'minimax',
+          provider: 'openai',
           apiKey: 'sk-test',
           authType: 'api_key',
           region: 'cn',
         }),
       ).rejects.toThrow(
-        'region is only supported for Alibaba/Qwen providers, AWS Bedrock, MiniMax subscriptions, Xiaomi MiMo Token Plan, and Z.ai subscriptions',
+        'region is only supported for Alibaba/Qwen providers, AWS Bedrock, MiniMax, Xiaomi MiMo Token Plan, and Z.ai subscriptions',
       );
+    });
+
+    it('should reject an unsupported region for MiniMax API-key auth', async () => {
+      await expect(
+        controller.upsertProvider(mockCtx, mockAgentName, {
+          provider: 'minimax',
+          apiKey: 'sk-test',
+          authType: 'api_key',
+          region: 'eu',
+        }),
+      ).rejects.toThrow('MiniMax API-key region must be one of: global, cn');
+      expect(mockProviderService.upsertProvider).not.toHaveBeenCalled();
+    });
+
+    it('should accept region=cn for MiniMax API-key auth', async () => {
+      mockProviderService.upsertProvider.mockResolvedValue({
+        provider: {
+          id: 'p1',
+          provider: 'minimax',
+          is_active: true,
+          auth_type: 'api_key',
+          region: 'cn',
+        },
+        isNew: true,
+      });
+
+      const result = await controller.upsertProvider(mockCtx, mockAgentName, {
+        provider: 'minimax',
+        apiKey: 'sk-test',
+        authType: 'api_key',
+        region: 'cn',
+      });
+
+      expect(mockProviderService.upsertProvider).toHaveBeenCalledWith(
+        TEST_AGENT_ID,
+        'tenant-1',
+        'minimax',
+        'sk-test',
+        'api_key',
+        'cn',
+        undefined,
+        'user-1',
+      );
+      expect(result.region).toBe('cn');
     });
   });
 
   /* ── deactivateAllProviders ── */
+
+  describe('upsertProvider for a custom provider', () => {
+    const CUSTOM_ID = '0b6f1f2e-6a47-4c43-9f55-0f7a4b6f1c2d';
+    const CUSTOM_KEY = `custom:${CUSTOM_ID}`;
+    const savedRow = {
+      id: 'tp-2',
+      provider: CUSTOM_KEY,
+      auth_type: 'api_key',
+      is_active: true,
+      label: 'Account B',
+      priority: 1,
+      region: null,
+    };
+
+    beforeEach(() => {
+      mockCustomProviderService.getById.mockResolvedValue({ id: CUSTOM_ID });
+      mockProviderService.upsertProvider.mockResolvedValue({ provider: savedRow, isNew: true });
+    });
+
+    it('adds a labeled connection and skips model discovery', async () => {
+      const result = await controller.upsertProvider(mockCtx, mockAgentName, {
+        provider: CUSTOM_KEY,
+        apiKey: 'sk-b',
+        authType: 'api_key',
+        label: 'Account B',
+      } as never);
+
+      expect(mockCustomProviderService.getById).toHaveBeenCalledWith(CUSTOM_ID, TEST_TENANT_ID);
+      expect(mockProviderService.upsertProvider).toHaveBeenCalledWith(
+        TEST_AGENT_ID,
+        TEST_TENANT_ID,
+        CUSTOM_KEY,
+        'sk-b',
+        'api_key',
+        undefined,
+        'Account B',
+        'user-1',
+      );
+      expect(mockCustomProviderService.primaryConnection).not.toHaveBeenCalled();
+      expect(mockDiscoveryService.discoverModels).not.toHaveBeenCalled();
+      expect(result).toEqual(expect.objectContaining({ label: 'Account B', priority: 1 }));
+    });
+
+    it('targets the primary connection when no label is given', async () => {
+      mockCustomProviderService.primaryConnection.mockResolvedValue({ label: 'Main account' });
+
+      await controller.upsertProvider(mockCtx, mockAgentName, {
+        provider: CUSTOM_KEY,
+        apiKey: 'sk-new',
+      } as never);
+
+      expect(mockCustomProviderService.primaryConnection).toHaveBeenCalledWith(
+        TEST_TENANT_ID,
+        CUSTOM_ID,
+      );
+      expect(mockProviderService.upsertProvider).toHaveBeenCalledWith(
+        TEST_AGENT_ID,
+        TEST_TENANT_ID,
+        CUSTOM_KEY,
+        'sk-new',
+        undefined,
+        undefined,
+        'Main account',
+        'user-1',
+      );
+    });
+
+    it('rejects a custom provider the tenant does not own', async () => {
+      mockCustomProviderService.getById.mockResolvedValue(null);
+
+      await expect(
+        controller.upsertProvider(mockCtx, mockAgentName, {
+          provider: CUSTOM_KEY,
+          apiKey: 'sk-b',
+          label: 'Account B',
+        } as never),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(mockProviderService.upsertProvider).not.toHaveBeenCalled();
+    });
+
+    it('rejects non-API-key auth on a custom provider', async () => {
+      await expect(
+        controller.upsertProvider(mockCtx, mockAgentName, {
+          provider: CUSTOM_KEY,
+          authType: 'subscription',
+          apiKey: 'sk-b',
+        } as never),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(mockCustomProviderService.getById).not.toHaveBeenCalled();
+      expect(mockProviderService.upsertProvider).not.toHaveBeenCalled();
+    });
+  });
 
   describe('deactivateAllProviders', () => {
     it('should return ok after deactivating all', async () => {

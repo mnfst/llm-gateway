@@ -20,7 +20,7 @@ import { scoreRequest, ScorerInput, MomentumInput, scanMessages } from '../../sc
 import { ResolveResponse } from '../dto/resolve-response';
 import { inferProviderFromModelName } from '../../common/utils/provider-aliases';
 import { Agent } from '../../entities/agent.entity';
-import { DEFAULT_RESPONSE_MODE, DEFAULT_OUTPUT_MODALITY } from 'manifest-shared';
+import { DEFAULT_RESPONSE_MODE, DEFAULT_OUTPUT_MODALITY, DEFAULT_TIER_SLOT } from 'manifest-shared';
 import type {
   AuthType,
   ModelRoute,
@@ -36,6 +36,13 @@ import type { SpecificityAssignment } from '../../entities/specificity-assignmen
 interface ResolvedRouteChain {
   primaryRoute: ModelRoute | null;
   fallbackRoutes: ModelRoute[] | null;
+  /**
+   * The model named by a pinned override that could not be resolved even
+   * though its own provider connection exists. Surfaces M302 at the proxy
+   * instead of the neutral M101, which misreads a missing model as missing
+   * configuration.
+   */
+  unavailableOverrideModel: string | null;
 }
 
 /**
@@ -72,6 +79,9 @@ export class ResolveService {
     // fresh without a cross-module dependency (which would cycle).
     this.routingCache.addInvalidationListener((agentId) =>
       this.discoveryService.invalidate(agentId),
+    );
+    this.routingCache.addTenantInvalidationListener((tenantId) =>
+      this.discoveryService.invalidateTenant(tenantId),
     );
   }
 
@@ -180,6 +190,7 @@ export class ResolveService {
         confidence: result.confidence,
         score: result.score,
         reason: result.reason,
+        override_model_unavailable: routeChain.unavailableOverrideModel ?? undefined,
       };
     }
 
@@ -240,6 +251,13 @@ export class ResolveService {
       confidence: 1,
       score: 0,
       reason,
+      // Heartbeats are keep-alives, not routed chat. Keep their existing
+      // neutral M101 so an unavailable simple-tier override can't repaint
+      // every periodic heartbeat as a model-not-available response.
+      override_model_unavailable:
+        effectiveRoutes.primaryRoute || reason === 'heartbeat'
+          ? undefined
+          : (routeChain.unavailableOverrideModel ?? undefined),
     };
   }
 
@@ -441,13 +459,25 @@ export class ResolveService {
       return {
         primaryRoute: await this.enrichRouteKeyLabel(agentId, tenantId, override),
         fallbackRoutes,
+        unavailableOverrideModel: null,
       };
     }
+
+    // A configured override whose model the connection no longer offers still
+    // gets a fallback/auto route below. When none of those has credentials,
+    // name the override model so the proxy can return M302: M101 ("no providers
+    // are set up") misreads a model that is missing at this client version as
+    // missing configuration. Only flag it when the override's own connection
+    // exists, so a genuinely unconfigured agent keeps the neutral M101 (#2494).
+    let unavailableOverrideModel: string | null = null;
     if (override) {
       this.logger.warn(
         `Override ${override.model} unavailable for agent=${agentId} — ` +
           `falling back to configured routes`,
       );
+      if (await this.providerKeyService.hasRouteCredentials(tenantId, override, agentId)) {
+        unavailableOverrideModel = override.model;
+      }
     }
 
     // An orphaned override walks its fallbacks before the legacy auto-assigned
@@ -461,10 +491,52 @@ export class ResolveService {
         return {
           primaryRoute: await this.enrichRouteKeyLabel(agentId, tenantId, candidates[i]),
           fallbackRoutes: rest.length > 0 ? rest : null,
+          unavailableOverrideModel: null,
         };
       }
     }
-    return { primaryRoute: null, fallbackRoutes: null };
+    return { primaryRoute: null, fallbackRoutes: null, unavailableOverrideModel };
+  }
+
+  /**
+   * Public so the proxy can pin an explicit-model route the same way the
+   * automatic path pins a tier route.
+   *
+   * A request that names a concrete model bypasses tier resolution entirely,
+   * so it never sees the connection the operator pinned on the default tier.
+   * With two connections for one provider that means the *first* key wins and
+   * the pin is silently ignored. Adopt the default tier's `override_route`
+   * label when that override addresses the same (provider, authType) as the
+   * resolved route, then fall back to the default-connection label.
+   */
+  async pinRouteKeyLabel(
+    agentId: string,
+    tenantId: string,
+    route: ModelRoute,
+  ): Promise<ModelRoute> {
+    if (route.keyLabel) return route;
+    const pinned = await this.defaultTierKeyLabel(agentId, route);
+    if (pinned) return { ...route, keyLabel: pinned };
+    return this.enrichRouteKeyLabel(agentId, tenantId, route);
+  }
+
+  /**
+   * The default tier's pinned connection label when its override addresses the
+   * same connection family as `route`. A pin only carries over when both the
+   * provider and the auth mode match — the same label on a different auth
+   * mode is a different `tenant_providers` row.
+   */
+  private async defaultTierKeyLabel(
+    agentId: string,
+    route: ModelRoute,
+  ): Promise<string | undefined> {
+    const tiers = await this.tierService.getTiers(agentId);
+    const assignment = tiers.find((t) => t.tier === DEFAULT_TIER_SLOT);
+    const override = assignment ? readOverrideRoute(assignment) : null;
+    if (!override?.keyLabel) return undefined;
+    if (override.provider.toLowerCase() !== route.provider.toLowerCase()) return undefined;
+    if (override.authType !== route.authType) return undefined;
+    return override.keyLabel;
   }
 
   /**

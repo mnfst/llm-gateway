@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-manifest",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "description": "Use Manifest's OpenAI-compatible model router from n8n workflows.",
   "license": "MIT",
   "homepage": "https://manifest.build",
@@ -20,11 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mnfst/manifest.git",
+    "url": "git+https://github.com/mnfst/llm-gateway.git",
     "directory": "integrations/n8n-nodes-manifest"
   },
   "bugs": {
-    "url": "https://github.com/mnfst/manifest/issues"
+    "url": "https://github.com/mnfst/llm-gateway/issues"
   },
   "scripts": {
     "build": "n8n-node build",
@@ -62,13 +62,5 @@
   "peerDependencies": {
     "@n8n/ai-node-sdk": "*",
     "n8n-workflow": "*"
-  },
-  "overrides": {
-    "@langchain/classic": {
-      "uuid": "11.1.1"
-    },
-    "@langchain/community": {
-      "uuid": "11.1.1"
-    }
   }
 }

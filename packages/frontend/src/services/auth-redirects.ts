@@ -22,7 +22,22 @@ export function isSafeInternalRedirect(value: string | undefined): value is stri
   return true;
 }
 
-export function getAuthDestination(searchParams: SearchParams): string {
+/** Resume the signed MCP authorization request after local or social sign-in. */
+export function signedOAuthDestination(rawSearch: string): string | undefined {
+  const search = new URLSearchParams(rawSearch);
+  if (!search.has('sig') || !search.has('ba_param')) return undefined;
+  if (!search.has('client_id') || !search.has('redirect_uri')) return undefined;
+  const signedNames = new Set(search.getAll('ba_param'));
+  const signed = new URLSearchParams();
+  for (const [key, value] of search) {
+    if (key === 'sig' || key === 'ba_param' || signedNames.has(key)) signed.append(key, value);
+  }
+  return `/api/auth/oauth2/authorize?${signed.toString()}`;
+}
+
+export function getAuthDestination(searchParams: SearchParams, rawSearch = ''): string {
+  const oauthDestination = signedOAuthDestination(rawSearch);
+  if (oauthDestination) return oauthDestination;
   const redirect = firstParam(searchParams.redirect);
   if (isSafeInternalRedirect(redirect)) return redirect;
   return firstParam(searchParams.plan) === 'pro' ? UPGRADE_PATH : HOME_PATH;
@@ -37,12 +52,22 @@ export function appendSearch(pathname: string, search = ''): string {
   return `${pathname}${search.startsWith('?') ? search : `?${search}`}`;
 }
 
-export function buildSocialAuthUrls(searchParams: SearchParams): {
+export function buildSocialAuthUrls(
+  searchParams: SearchParams,
+  rawSearch = '',
+): {
   callbackURL: string;
   errorCallbackURL: string;
 } {
-  const callbackURL = getAuthDestination(searchParams);
+  const callbackURL = getAuthDestination(searchParams, rawSearch);
   const errorParams = new URLSearchParams();
+  const oauthDestination = signedOAuthDestination(rawSearch);
+
+  if (oauthDestination) {
+    const oauthParams = new URLSearchParams(rawSearch);
+    oauthParams.set('oauth', 'failed');
+    return { callbackURL, errorCallbackURL: `/login?${oauthParams.toString()}` };
+  }
   const redirect = firstParam(searchParams.redirect);
 
   if (isSafeInternalRedirect(redirect)) {
@@ -51,7 +76,9 @@ export function buildSocialAuthUrls(searchParams: SearchParams): {
   if (firstParam(searchParams.plan) === 'pro') {
     errorParams.set('plan', 'pro');
   }
-  errorParams.set('error', 'oauth_failed');
+  // Better Auth appends the actual `error` code to this URL. Keep our fallback
+  // marker separate so the callback does not contain two `error` parameters.
+  errorParams.set('oauth', 'failed');
 
   return {
     callbackURL,

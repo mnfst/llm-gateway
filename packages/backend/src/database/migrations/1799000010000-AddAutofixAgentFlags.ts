@@ -1,7 +1,7 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
- * Adds the per-agent Auto-fix opt-in toggle to the `agents` table:
+ * Adds the per-agent Autofix opt-in toggle to the `agents` table:
  * - `autofix_enabled` — opt-in toggle (default off).
  */
 export class AddAutofixAgentFlags1799000010000 implements MigrationInterface {

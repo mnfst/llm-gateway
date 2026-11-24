@@ -1,3 +1,12 @@
+// Platform setup snippets moved to manifest-shared so the CLI consumes the
+// same setup truth; re-exported here to keep existing imports working.
+import {
+  getOpenClawSnippet,
+  getClaudeCodeSettingsSnippet,
+  getNanobotConfigSnippet,
+} from 'manifest-shared';
+export { getOpenClawSnippet, getClaudeCodeSettingsSnippet, getNanobotConfigSnippet };
+
 export type FrameworkId = 'python' | 'typescript' | 'openclaw' | 'curl';
 
 export interface FrameworkTab {
@@ -315,66 +324,6 @@ const response = await client.responses.create({
 });`,
     },
   ];
-}
-
-export function getOpenClawSnippet(baseUrl: string, apiKey: string): string {
-  // Manifest's cloud proxy speaks OpenAI Chat Completions
-  // (`/v1/chat/completions`). OpenClaw's `openai-responses` parser reads
-  // assistant text from the Responses API shape (`output[].content[].text`),
-  // which doesn't match — chat bubbles render empty even though tokens are
-  // billed correctly. Stay on `openai-completions` until the proxy exposes a
-  // first-class `/v1/responses` endpoint.
-  const providerJson = JSON.stringify({
-    baseUrl,
-    api: 'openai-completions',
-    apiKey,
-    models: [{ id: 'auto', name: 'Manifest Auto' }],
-  });
-  return `openclaw config set models.providers.manifest '${providerJson}'
-openclaw config set agents.defaults.model.primary manifest/auto
-openclaw gateway restart`;
-}
-
-/**
- * The JSON block to paste into ~/.claude/settings.json. Claude Code reads
- * `env` keys from settings.json on every startup, so this is the persistent
- * configuration path — no shell rc edits, no Node required, no command-line
- * gymnastics. Pin the default model to Manifest's `auto` route so Claude
- * Code does not send its built-in Anthropic model IDs to the gateway.
- * Anthropic SDK auto-appends /v1/messages to baseURL, so we strip a trailing
- * /v1 from the rendered URL.
- */
-export function getClaudeCodeSettingsSnippet(baseUrl: string, apiKey: string): string {
-  const url = stripV1Suffix(baseUrl);
-  return `{
-  "model": "auto",
-  "env": {
-    "ANTHROPIC_BASE_URL": "${url}",
-    "ANTHROPIC_AUTH_TOKEN": "${apiKey}"
-  }
-}`;
-}
-
-/**
- * The JSON block to merge into ~/.nanobot/config.json. Nanobot only accepts its
- * predefined provider keys; "custom" is the built-in slot for arbitrary
- * OpenAI-compatible endpoints, so we use that rather than an arbitrary name.
- */
-export function getNanobotConfigSnippet(baseUrl: string, apiKey: string): string {
-  return `{
-  "agents": {
-    "defaults": {
-      "provider": "custom",
-      "model": "auto"
-    }
-  },
-  "providers": {
-    "custom": {
-      "apiKey": "${apiKey}",
-      "apiBase": "${baseUrl}"
-    }
-  }
-}`;
 }
 
 export function getOpenClawDisableSnippet(model: string): string {

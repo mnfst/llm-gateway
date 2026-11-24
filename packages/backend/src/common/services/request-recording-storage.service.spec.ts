@@ -150,7 +150,7 @@ describe('S3RecordingStorage', () => {
 
   beforeEach(() => jest.clearAllMocks());
 
-  it('writes gzip JSON objects to the configured private bucket', async () => {
+  it('writes opaque encrypted objects to the configured private bucket', async () => {
     send.mockResolvedValue({});
 
     await storage.put('request-recordings/v1/request-1.json.gz', Buffer.from('body'));
@@ -160,10 +160,12 @@ describe('S3RecordingStorage', () => {
       expect.objectContaining({
         Bucket: 'recordings',
         Key: 'request-recordings/v1/request-1.json.gz',
-        ContentType: 'application/json',
-        ContentEncoding: 'gzip',
+        ContentType: 'application/octet-stream',
       }),
     );
+    // The body is ciphertext, so declaring gzip would make S3-compatible stores
+    // and CDNs try to decompress it on GET.
+    expect(send.mock.calls[0][0].input.ContentEncoding).toBeUndefined();
   });
 
   it('reads object bytes through the S3 streaming body helper', async () => {

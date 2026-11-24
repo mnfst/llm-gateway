@@ -18,11 +18,14 @@ function event(data: unknown, name = ''): EventSourceMessage {
 describe('StreamProtocolObserver', () => {
   it('accepts OpenAI Chat Completions terminal markers', () => {
     const done = new StreamProtocolObserver('openai_chat_completions');
+    expect(done.isComplete()).toBe(false);
     done.observe(event('[DONE]'));
+    expect(done.isComplete()).toBe(true);
     expect(() => done.assertComplete()).not.toThrow();
 
     const finishReason = new StreamProtocolObserver('openai_chat_completions');
     finishReason.observe(event({ choices: [{ finish_reason: 'stop' }, null] }));
+    expect(finishReason.isComplete()).toBe(true);
     expect(() => finishReason.assertComplete()).not.toThrow();
   });
 
@@ -88,10 +91,11 @@ describe('StreamProtocolObserver', () => {
   });
 
   it.each(['google_generate_content', 'google_code_assist'] as const)(
-    'treats clean EOF as terminal for %s',
+    'treats clean EOF as terminal for %s without marking a provider outcome',
     (protocol) => {
       const observer = new StreamProtocolObserver(protocol);
       observer.observe(event('not-json'));
+      expect(observer.isComplete()).toBe(false);
       expect(() => observer.assertComplete()).not.toThrow();
     },
   );

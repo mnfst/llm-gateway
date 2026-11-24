@@ -153,3 +153,47 @@ jobs:
     permissions:
       contents: read
       id-token: write
+
+  # Publishes the management CLI to npm as mnfst-gateway-cli. Gated on the same
+  # `should_publish` output as the Docker image, so the CLI version always
+  # matches the Manifest release it shipped with — that is why the package stays
+  # in the `.changeset/config.json` ignore list and has no changeset target of
+  # its own.
+  publish-npm:
+    needs: release
+    if: needs.release.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    # Shared with the on-demand Publish CLI workflow: the two must never race
+    # for the same package and version.
+    concurrency:
+      group: npm-publish-mnfst-gateway-cli
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write # npm provenance attestation
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - name: Stamp the CLI version from packages/manifest/package.json
+        run: npm run set-version --workspace=packages/cli
+      - name: Check whether this version is already on npm
+        id: published
+        run: bash .github/scripts/check-cli-npm-status.sh
+      - name: Build shared, then the CLI
+        if: steps.published.outputs.skip != 'true'
+        # The CLI's `gen` step reads manifest-shared's build output to regenerate
+        # its provider catalog, so shared must be built first.
+        run: |
+          npm run build --workspace=packages/shared
+          npm run build --workspace=packages/cli
+      - name: Publish
+        if: steps.published.outputs.skip != 'true'
+        # access + provenance come from publishConfig in packages/cli/package.json.
+        run: npm publish --workspace=packages/cli
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

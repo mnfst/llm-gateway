@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.LmChatManifest = void 0;
 const n8n_workflow_1 = require("n8n-workflow");
+const attribution_1 = require("../shared/attribution");
 function manifestApiBaseUrl(credentials) {
     const raw = String(credentials.baseUrl || 'https://app.manifest.build');
     return `${raw.replace(/\/+$/, '')}/v1`;
@@ -61,7 +62,7 @@ class LmChatManifest {
                 resources: {
                     primaryDocumentation: [
                         {
-                            url: 'https://github.com/mnfst/manifest/tree/main/integrations/n8n-nodes-manifest',
+                            url: 'https://github.com/mnfst/llm-gateway/tree/main/integrations/n8n-nodes-manifest',
                         },
                     ],
                 },
@@ -166,6 +167,7 @@ class LmChatManifest {
                     const response = (await this.helpers.httpRequestWithAuthentication.call(this, 'manifestApi', {
                         method: 'GET',
                         url: `${manifestApiBaseUrl(credentials)}/models`,
+                        headers: { ...attribution_1.MANIFEST_ATTRIBUTION_HEADERS },
                         json: true,
                     }));
                     const models = [
@@ -196,6 +198,7 @@ class LmChatManifest {
             type: 'openai',
             baseUrl: manifestApiBaseUrl(credentials),
             apiKey: String(credentials.apiKey),
+            defaultHeaders: { ...attribution_1.MANIFEST_ATTRIBUTION_HEADERS },
             model,
             temperature: options.temperature,
             topP: options.topP,

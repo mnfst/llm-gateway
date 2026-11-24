@@ -1,3 +1,4 @@
+import type { AgentScope } from './analytics-scope.service';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
@@ -5,6 +6,9 @@ import { Agent } from '../../entities/agent.entity';
 import { AgentMessage } from '../../entities/agent-message.entity';
 import { ManifestRequest } from '../../entities/request.entity';
 import { AutofixService } from '../../routing/autofix/autofix.service';
+import { InstallMetadata } from '../../entities/install-metadata.entity';
+import { isSelfHosted } from '../../common/utils/detect-self-hosted';
+import { v4 as uuid } from 'uuid';
 import {
   rangeToInterval,
   rangeToPreviousInterval,
@@ -18,15 +22,22 @@ import {
   sqlIsFailedStatus,
   sqlIsSuccessStatus,
 } from './query-helpers';
-import { RequestVolumeService } from './request-volume.service';
+import { RequestVolumeService, type DispositionTotals } from './request-volume.service';
 
 export interface AutofixStatusResponse {
-  /** The tenant passes the same rollout gate used by request healing. */
-  available: boolean;
   /** At least one agent is effectively enabled after deployment-mode defaults. */
   any_enabled: boolean;
   /** Names of agents effectively enabled after deployment-mode defaults. */
   enabled_agents: string[];
+  /** Names of agents effectively disabled after deployment-mode defaults. */
+  disabled_agents: string[];
+  /** Legacy agents need the one-time fleet enable action. */
+  needs_enable_all: boolean;
+  /**
+   * Self-hosted consent-once. Cloud always reports true (no gate). False only
+   * when the install has never confirmed the enable modal.
+   */
+  consented: boolean;
 }
 
 export interface AutofixStatsResponse {
@@ -88,48 +99,120 @@ export class AutofixStatsService {
     private readonly agentRepo: Repository<Agent>,
     @InjectRepository(AgentMessage)
     private readonly messageRepo: Repository<AgentMessage>,
+    @InjectRepository(InstallMetadata)
+    private readonly installMetadataRepo: Repository<InstallMetadata>,
     private readonly autofix: AutofixService,
     private readonly requestVolume: RequestVolumeService,
   ) {}
 
   async getWorkspaceStatus(tenantId: string | null): Promise<AutofixStatusResponse> {
     if (!tenantId) {
-      return { available: false, any_enabled: false, enabled_agents: [] };
-    }
-
-    if (!(await this.autofix.hasAccess(tenantId))) {
-      return { available: false, any_enabled: false, enabled_agents: [] };
+      return {
+        any_enabled: false,
+        enabled_agents: [],
+        disabled_agents: [],
+        needs_enable_all: false,
+        consented: await this.hasConsent(),
+      };
     }
 
     const agents = await this.agentRepo.find({
       where: { tenant_id: tenantId, deleted_at: IsNull(), is_playground: false },
       select: ['name', 'autofix_enabled'],
     });
-    const enabledAgents = agents
-      .filter((agent) => this.autofix.resolveEnabled(agent.autofix_enabled))
-      .map((agent) => agent.name);
+    const enabledAgents: string[] = [];
+    const disabledAgents: string[] = [];
+    for (const agent of agents) {
+      (this.autofix.resolveEnabled(agent.autofix_enabled) ? enabledAgents : disabledAgents).push(
+        agent.name,
+      );
+    }
 
+    const consented = await this.hasConsent();
     return {
-      available: true,
       any_enabled: enabledAgents.length > 0,
       enabled_agents: enabledAgents,
+      disabled_agents: disabledAgents,
+      // The fleet CTA is a one-time onboarding nudge, so it takes all three
+      // terms: nothing is enabled, the install has never consented, and some
+      // agent never made an explicit choice.
+      //
+      // `autofix_enabled IS NULL` on its own is NOT a "row predates the
+      // feature" marker — NULL is the deliberate "inherit the deployment-mode
+      // default" state (see AutofixService.resolveEnabled, and migration
+      // 1799000300000 which reset pre-feature rows *to* NULL for exactly that
+      // reason). Only the create dialog sends an explicit choice; agents
+      // onboarded over OTLP, or by API clients that omit the field, still
+      // store NULL. Without the consent term those installs get re-prompted
+      // after they have already decided.
+      needs_enable_all:
+        enabledAgents.length === 0 &&
+        !consented &&
+        agents.some((agent) => agent.autofix_enabled == null),
+      consented,
     };
+  }
+
+  /**
+   * Enable Autofix for every non-playground agent in the tenant and record
+   * the install's once-consent. Used by the sidebar fleet CTA — not by the
+   * per-agent toggle, which only ever touches one agent.
+   */
+  async enableAll(tenantId: string): Promise<AutofixStatusResponse> {
+    // Match getWorkspaceStatus: only live, non-playground agents. Soft-deleted
+    // rows must keep whatever they had — resurrecting them later shouldn't
+    // surprise the operator with Autofix flipped on.
+    await this.agentRepo.update(
+      { tenant_id: tenantId, is_playground: false, deleted_at: IsNull() },
+      { autofix_enabled: true },
+    );
+    await this.recordAutofixConsent();
+    return this.getWorkspaceStatus(tenantId);
+  }
+
+  private async hasConsent(): Promise<boolean> {
+    if (!isSelfHosted()) return true;
+    const row = await this.installMetadataRepo.findOne({ where: { id: 'singleton' } });
+    return row?.autofix_consented_at != null;
+  }
+
+  async recordAutofixConsent(): Promise<void> {
+    if (!isSelfHosted()) return;
+    if (await this.hasConsent()) return;
+    await this.installMetadataRepo
+      .createQueryBuilder()
+      .insert()
+      .into(InstallMetadata)
+      .values({
+        id: 'singleton',
+        install_id: uuid(),
+        autofix_consented_at: new Date().toISOString(),
+      })
+      .orUpdate(['autofix_consented_at'], ['id'])
+      .execute();
   }
 
   async getStats(params: {
     tenantId: string | null;
     range?: string;
-    agentName?: string;
+    agentScope?: AgentScope;
   }): Promise<AutofixStatsResponse> {
     const range = params.range ?? '7d';
     const cutoff = computeCutoff(rangeToInterval(range));
     const prevCutoff = computeCutoff(rangeToPreviousInterval(range));
 
-    const [current, previous, attention] = await Promise.all([
-      this.queryWindow(cutoff, computeCutoff('0 hours'), params.tenantId, params.agentName),
-      this.queryWindow(prevCutoff, cutoff, params.tenantId, params.agentName),
-      this.queryNeedsAttention(cutoff, params.tenantId, params.agentName),
+    const [windows, attention] = await Promise.all([
+      this.requestVolume.getDispositionTotalsForWindows({
+        tenantId: params.tenantId,
+        from: prevCutoff,
+        splitAt: cutoff,
+        to: computeCutoff('0 hours'),
+        agentScope: params.agentScope,
+      }),
+      this.queryNeedsAttention(cutoff, params.tenantId, params.agentScope),
     ]);
+    const current = this.windowCounts(windows.current);
+    const previous = this.windowCounts(windows.previous);
 
     const rate = (c: WindowCounts) => (c.total > 0 ? c.successes / c.total : 0);
     const afxTotal = (c: WindowCounts) => c.healed + c.no_fix_found + c.resolving + c.ineffective;
@@ -165,7 +248,7 @@ export class AutofixStatsService {
   async getPerProviderStats(params: {
     tenantId: string | null;
     range?: string;
-    agentName?: string;
+    agentScope?: AgentScope;
   }): Promise<
     Array<{
       provider: string;
@@ -194,7 +277,7 @@ export class AutofixStatsService {
       .groupBy(providerExpr)
       .addGroupBy(authExpr)
       .addGroupBy(labelExpr);
-    addTenantFilter(qb, params.tenantId, params.agentName);
+    addTenantFilter(qb, params.tenantId, params.agentScope);
     excludePlaygroundAgents(qb);
 
     const rows = await qb.getRawMany<{
@@ -243,7 +326,7 @@ export class AutofixStatsService {
   async getPerModelStats(params: {
     tenantId: string | null;
     range?: string;
-    agentName?: string;
+    agentScope?: AgentScope;
   }): Promise<
     Array<{
       model: string;
@@ -264,7 +347,7 @@ export class AutofixStatsService {
       .andWhere(sqlIsCompletedStatus('at.status'))
       .andWhere('at.model IS NOT NULL')
       .groupBy('at.model');
-    addTenantFilter(qb, params.tenantId, params.agentName);
+    addTenantFilter(qb, params.tenantId, params.agentScope);
     excludePlaygroundAgents(qb);
 
     const rows = await qb.getRawMany<{
@@ -285,7 +368,7 @@ export class AutofixStatsService {
     tenantId: string | null;
     range?: string;
     by?: string;
-    agentName?: string;
+    agentScope?: AgentScope;
     failedOnly?: boolean;
   }): Promise<AutofixTimeseriesResponse> {
     const range = params.range ?? '7d';
@@ -304,7 +387,7 @@ export class AutofixStatsService {
         tenantId: params.tenantId,
         range,
         hourly,
-        agentName: params.agentName,
+        agentScope: params.agentScope,
         failedOnly: params.failedOnly,
       });
       return this.pivotTimeseries(range, by, rows);
@@ -327,7 +410,7 @@ export class AutofixStatsService {
     }
 
     qb.groupBy(bucketExpr).addGroupBy(dimExpr).orderBy(bucketExpr, 'ASC');
-    addTenantFilter(qb, params.tenantId, params.agentName);
+    addTenantFilter(qb, params.tenantId, params.agentScope);
     excludePlaygroundAgents(qb);
 
     const rows = await qb.getRawMany<{ bucket: string; dim: string | null; count: string }>();
@@ -394,21 +477,12 @@ export class AutofixStatsService {
   /**
    * KPI window counts, read from the SAME request-level reducer as the
    * By request status chart (one request, one disposition; Recovered by
-   * Auto-fix = requests.autofix_status = 'retry_succeeded'). One definition,
-   * every surface.
+   * Autofix = requests.autofix_status = 'retry_succeeded'). One definition,
+   * every surface. Pure — the window totals come from a single
+   * `getDispositionTotalsForWindows` scan for both the current and previous
+   * window, so the KPI no longer scans the request/attempt window twice.
    */
-  private async queryWindow(
-    from: string,
-    to: string,
-    tenantId: string | null,
-    agentName?: string,
-  ): Promise<WindowCounts> {
-    const t = await this.requestVolume.getDispositionTotals({
-      tenantId,
-      from,
-      to,
-      agentName,
-    });
+  private windowCounts(t: DispositionTotals): WindowCounts {
     return {
       total: t.total,
       successes: t.success + t.healed + t.fallback,
@@ -425,7 +499,7 @@ export class AutofixStatsService {
   private async queryNeedsAttention(
     cutoff: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<AutofixStatsResponse['needs_attention']> {
     const qb = this.messageRepo
       .createQueryBuilder('at')
@@ -454,7 +528,7 @@ export class AutofixStatsService {
       .addGroupBy("(at.autofix_phoenix->>'issueId')::text")
       .orderBy('count', 'DESC')
       .limit(5);
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     excludePlaygroundAgents(qb);
 
     const rows = await qb.getRawMany<{

@@ -1,3 +1,5 @@
+import { isAnthropicExtraUsageError } from './provider-error-semantics';
+
 /**
  * Error taxonomy for `agent_messages`.
  *
@@ -14,9 +16,10 @@
  *  - `superseded`   — whether this row is a retried / fell-back-away-from attempt
  *    rather than the request's terminal outcome (the old `fallback_error`).
  *
- * `classifyMessageError` is the single source of truth: the proxy ingestion path
- * calls it for every recorded row, and the backfill migration's SQL `CASE`
- * mirrors it exactly. Keep the two in lock-step when editing.
+ * `classifyMessageError` is the single source of truth for live ingestion. The
+ * original backfill migration mirrors its status-derived rules; provider-body
+ * semantic overrides added later apply to newly recorded rows unless a dedicated
+ * follow-up migration explicitly reclassifies history.
  */
 
 /**
@@ -34,7 +37,7 @@ export const OK_STATUS = 'ok';
 export const RATE_LIMITED_STATUS = 'rate_limited';
 /** A row that failed but was recovered by a later attempt (retry / fallback). */
 export const SUPERSEDED_STATUS = 'fallback_error';
-/** The failed original of a healed Auto-fix flow — recovered by the retry row. */
+/** The failed original of a healed Autofix flow — recovered by the retry row. */
 export const AUTOFIX_ORIGINAL_STATUS = 'auto_fixed';
 /** Every status whose row is a recovered (superseded) attempt, not a terminal failure. */
 export const SUPERSEDED_STATUSES: readonly string[] = [SUPERSEDED_STATUS, AUTOFIX_ORIGINAL_STATUS];
@@ -188,6 +191,7 @@ const MANIFEST_REASON_TO_CLASSIFICATION: Record<
   manifest_rate_limited: { origin: 'policy', errorClass: 'rate_limit' },
   manifest_ip_rate_limited: { origin: 'policy', errorClass: 'rate_limit' },
   manifest_concurrency_limited: { origin: 'policy', errorClass: 'rate_limit' },
+  provider_cooldown: { origin: 'policy', errorClass: 'rate_limit' },
   manifest_invalid_request: { origin: 'request', errorClass: 'invalid_request' },
   model_not_available: { origin: 'request', errorClass: 'not_found' },
   manifest_internal_error: { origin: 'internal', errorClass: 'internal' },
@@ -217,6 +221,10 @@ export interface MessageErrorSignals {
   errorHttpStatus?: number | null;
   /** `agent_messages.routing_reason` — carries the canned Manifest reason for stubs. */
   routingReason?: string | null;
+  /** Canonical provider id, used for narrow provider-specific semantic overrides. */
+  provider?: string | null;
+  /** Raw or persisted provider error envelope. */
+  errorMessage?: string | null;
 }
 
 export interface MessageErrorClassification {
@@ -270,6 +278,15 @@ export function classifyMessageError(signals: MessageErrorSignals): MessageError
   }
 
   const http = signals.errorHttpStatus ?? null;
+  if (
+    isAnthropicExtraUsageError({
+      provider: signals.provider,
+      httpStatus: http,
+      errorBody: signals.errorMessage,
+    })
+  ) {
+    return { error_origin: 'provider', error_class: 'billing', superseded };
+  }
   if (http === TRANSPORT_TIMEOUT_HTTP_STATUS) {
     return { error_origin: 'transport', error_class: 'timeout', superseded };
   }

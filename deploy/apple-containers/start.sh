@@ -81,6 +81,7 @@ fi
 PORT="${PORT:-2099}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-manifest}"
 PG_VOLUME="${MANIFEST_PG_VOLUME:-mnfst-postgres-data}"
+RECORDINGS_VOLUME="${MANIFEST_RECORDINGS_VOLUME:-mnfst-request-recordings}"
 POSTGRES_IMAGE="postgres:16-alpine@sha256:20edbde7749f822887a1a022ad526fde0a47d6b2be9a8364433605cf65099416"
 
 if [[ "$POSTGRES_PASSWORD" != "manifest" && -z "${DATABASE_URL:-}" ]]; then
@@ -198,6 +199,17 @@ cmd_up() {
   if ! container volume inspect "$PG_VOLUME" >/dev/null 2>&1; then
     container volume create "$PG_VOLUME" >/dev/null
   fi
+  if ! container volume inspect "$RECORDINGS_VOLUME" >/dev/null 2>&1; then
+    container volume create "$RECORDINGS_VOLUME" >/dev/null
+  fi
+  # The Manifest image runs as distroless nonroot (uid/gid 65532), while a new
+  # Apple Containers volume is root-owned. Initialize ownership before mounting
+  # it over the writable recording directory.
+  container run --rm \
+    --entrypoint chown \
+    --volume "$RECORDINGS_VOLUME:/data/request-recordings" \
+    "$POSTGRES_IMAGE" \
+    65532:65532 /data/request-recordings >/dev/null
 
   if is_running "$PG_CONTAINER"; then
     echo "postgres already running."
@@ -271,6 +283,7 @@ cmd_up() {
   container run --detach --name "$APP_CONTAINER" \
     --memory 1g \
     --publish "127.0.0.1:${PORT}:${PORT}" \
+    --volume "$RECORDINGS_VOLUME:/data/request-recordings" \
     --env PORT="$PORT" \
     --env BIND_ADDRESS=0.0.0.0 \
     --env DATABASE_URL="$database_url" \
@@ -294,6 +307,15 @@ cmd_up() {
     --env GITHUB_CLIENT_SECRET="${GITHUB_CLIENT_SECRET:-}" \
     --env DISCORD_CLIENT_ID="${DISCORD_CLIENT_ID:-}" \
     --env DISCORD_CLIENT_SECRET="${DISCORD_CLIENT_SECRET:-}" \
+    --env REQUEST_RECORDING_STORAGE="${REQUEST_RECORDING_STORAGE:-auto}" \
+    --env REQUEST_RECORDING_FILESYSTEM_PATH=/data/request-recordings \
+    --env REQUEST_RECORDING_RETENTION_DAYS="${REQUEST_RECORDING_RETENTION_DAYS:-}" \
+    --env REQUEST_RECORDING_S3_BUCKET="${REQUEST_RECORDING_S3_BUCKET:-}" \
+    --env REQUEST_RECORDING_S3_ENDPOINT="${REQUEST_RECORDING_S3_ENDPOINT:-}" \
+    --env REQUEST_RECORDING_S3_REGION="${REQUEST_RECORDING_S3_REGION:-}" \
+    --env REQUEST_RECORDING_S3_ACCESS_KEY_ID="${REQUEST_RECORDING_S3_ACCESS_KEY_ID:-}" \
+    --env REQUEST_RECORDING_S3_SECRET_ACCESS_KEY="${REQUEST_RECORDING_S3_SECRET_ACCESS_KEY:-}" \
+    --env REQUEST_RECORDING_S3_FORCE_PATH_STYLE="${REQUEST_RECORDING_S3_FORCE_PATH_STYLE:-false}" \
     --env MANIFEST_TELEMETRY_DISABLED="${MANIFEST_TELEMETRY_DISABLED:-0}" \
     manifestdotbuild/manifest:latest
 
@@ -324,7 +346,7 @@ cmd_up() {
 
 cmd_down() {
   require_cli
-  echo "stopping containers (postgres data in volume $PG_VOLUME is kept)..."
+  echo "stopping containers (data in volumes $PG_VOLUME and $RECORDINGS_VOLUME is kept)..."
   container stop --time 15 "$APP_CONTAINER" >/dev/null 2>&1 || true
   container stop --time 15 "$PG_CONTAINER" >/dev/null 2>&1 || true
   container delete "$APP_CONTAINER" >/dev/null 2>&1 || true

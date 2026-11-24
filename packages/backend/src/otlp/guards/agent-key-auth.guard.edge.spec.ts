@@ -197,7 +197,7 @@ describe('AgentKeyAuthGuard edge cases', () => {
       // The guard rejects on the null relation before reaching cache.set, so
       // no positive entry lands in the cache — a poisoned entry can never be
       // served on a later request.
-      const internalCache = (guard as unknown as { cache: Map<string, unknown> }).cache;
+      const internalCache = (AgentKeyAuthGuard as unknown as { cache: Map<string, unknown> }).cache;
       expect(internalCache.size).toBe(0);
     });
   });

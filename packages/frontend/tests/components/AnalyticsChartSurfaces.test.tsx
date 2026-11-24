@@ -79,7 +79,7 @@ vi.mock('../../src/services/sse.js', () => ({
 }));
 
 vi.mock('../../src/services/api/analytics.js', () => ({
-  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Auto-fix or fallback.',
+  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Autofix or fallback.',
   REQUEST_SUCCESS_RATE_TOOLTIP:
     'Successful requests over all requests. Recovered requests count as successful.',
   getErrorBreakdown: (...args: unknown[]) => mockGetErrorBreakdown(...args),
@@ -151,7 +151,7 @@ describe('analytics chart surface components', () => {
     await buildLazyChart();
     // Stacked series are reversed (top-of-stack first).
     const labels = capturedChartOpts.series.slice(1).map((s: { label: string }) => s.label);
-    expect(labels).toContain('Success - recovered by Auto-fix');
+    expect(labels).toContain('Success - recovered by Autofix');
     expect(labels).toContain('Success - recovered by Fallback');
     unmount();
   });
@@ -205,7 +205,7 @@ describe('analytics chart surface components', () => {
     expect(screen.getByText('No recovered requests in this time range')).toBeDefined();
     unmount();
 
-    // Without a timeseries the tab itself is not rendered (ineligible tenants).
+    // Without a timeseries the tab itself is not rendered.
     const noTab = render(() => (
       <UnifiedChartCard
         activeTab="requests"
@@ -242,7 +242,7 @@ describe('analytics chart surface components', () => {
     );
     expect(legend).toEqual([
       'Success',
-      'Success - recovered by Auto-fix',
+      'Success - recovered by Autofix',
       'Success - recovered by Fallback',
       'Error',
     ]);
@@ -295,7 +295,7 @@ describe('analytics chart surface components', () => {
     }));
     expect(rows).toEqual([
       { label: 'Success', value: '1' },
-      { label: 'Success - recovered by Auto-fix', value: '2' },
+      { label: 'Success - recovered by Autofix', value: '2' },
       { label: 'Success - recovered by Fallback', value: '3' },
       { label: 'Error', value: '4' },
     ]);
@@ -319,7 +319,7 @@ describe('analytics chart surface components', () => {
     expect(capturedLifecycleOpts.buildChart()).toBeNull();
   });
 
-  it('renders the self-healed KPI cards (rate, share, via Auto-fix, via Fallback)', () => {
+  it('renders the self-healed KPI cards (rate, share, via Autofix, via Fallback)', () => {
     const base = {
       success_rate: { value: 0.8, previous: 0.7 },
       errors_remaining: { value: 0, previous: 0 },
@@ -343,10 +343,15 @@ describe('analytics chart surface components', () => {
     expect(screen.getByText('Recovered requests')).toBeDefined();
     expect(screen.getByText('8.0%')).toBeDefined();
     expect(screen.getByText('Failed requests')).toBeDefined();
-    expect(screen.getByText('Recovered by Auto-fix')).toBeDefined();
+    expect(screen.getByText('Recovered by Autofix')).toBeDefined();
     expect(screen.getByText('5')).toBeDefined();
     expect(screen.getByText('Recovered by Fallback')).toBeDefined();
     expect(screen.getByText('3')).toBeDefined();
+    // The five-card row relies on the responsive `overview-stats--5` modifier;
+    // an inline grid-template-columns would override the phone breakpoints.
+    const grid = screen.getByText('Success rate').closest('.overview-stats') as HTMLElement;
+    expect(grid.classList.contains('overview-stats--5')).toBe(true);
+    expect(grid.style.gridTemplateColumns).toBe('');
     unmount();
 
     // Trends: previous window present → percentage badges.
@@ -387,7 +392,7 @@ describe('analytics chart surface components', () => {
     expect(routerNavigate).toHaveBeenCalledWith(
       '/messages?agent=demo-agent&range=7d&status=failed',
     );
-    fireEvent.click(screen.getByText('Recovered by Auto-fix').closest('.overview-stat-card')!);
+    fireEvent.click(screen.getByText('Recovered by Autofix').closest('.overview-stat-card')!);
     expect(routerNavigate).toHaveBeenCalledWith(
       '/messages?agent=demo-agent&range=7d&status=ok&trigger=autofix',
     );
@@ -527,7 +532,7 @@ describe('analytics chart surface components', () => {
     ));
 
     expect(screen.getByTestId('info-tooltip').textContent).toBe(
-      'Caller success: 95.0%. Provider-attempt success: 80.0%. The gap is recovery from fallbacks and Auto-fix.',
+      'Caller success: 95.0%. Provider-attempt success: 80.0%. The gap is recovery from fallbacks and Autofix.',
     );
     unmount();
 

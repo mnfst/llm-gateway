@@ -5,6 +5,7 @@ const MANAGED_FREE_PROVIDER_API_KEY_URL = 'https://calendly.com/sebastien-manife
 export const ROUTING_PROVIDER_API_KEY_URLS: Record<string, string> = {
   anthropic: 'https://console.anthropic.com/settings/keys',
   bedrock: 'https://docs.aws.amazon.com/bedrock/latest/userguide/api-keys-generate.html',
+  vertex: 'https://cloud.google.com/vertex-ai/generative-ai/docs/start/express-mode/overview',
   cerebras: 'https://cloud.cerebras.ai',
   'cline-pass': 'https://app.cline.bot/settings/api-keys',
   deepseek: 'https://platform.deepseek.com/api_keys',
@@ -14,6 +15,7 @@ export const ROUTING_PROVIDER_API_KEY_URLS: Record<string, string> = {
   groq: 'https://console.groq.com/keys',
   huggingface: 'https://huggingface.co/settings/tokens',
   kilo: 'https://app.kilo.ai',
+  meta: 'https://dev.meta.ai/',
   minimax: 'https://platform.minimax.io/user-center/basic-information/interface-key',
   mistral: 'https://console.mistral.ai/api-keys/',
   moonshot: 'https://platform.moonshot.ai/',

@@ -60,12 +60,18 @@ describe('ResolveService', () => {
   let specificityService: jest.Mocked<Pick<SpecificityService, 'getActiveAssignments'>>;
   let pricingCache: jest.Mocked<Pick<ModelPricingCacheService, 'getByModel'>>;
   let discoveryService: jest.Mocked<
-    Pick<ModelDiscoveryService, 'getModelForAgent' | 'getModelsForAgent' | 'invalidate'>
+    Pick<
+      ModelDiscoveryService,
+      'getModelForAgent' | 'getModelsForAgent' | 'invalidate' | 'invalidateTenant'
+    >
   >;
   let penaltyService: jest.Mocked<Pick<SpecificityPenaltyService, 'getPenaltiesForAgent'>>;
   let headerTierService: jest.Mocked<Pick<HeaderTierService, 'list'>>;
   let agentRepo: { findOne: jest.Mock };
-  let routingCache: { addInvalidationListener: jest.Mock };
+  let routingCache: {
+    addInvalidationListener: jest.Mock;
+    addTenantInvalidationListener: jest.Mock;
+  };
   let svc: ResolveService;
 
   beforeEach(() => {
@@ -88,13 +94,14 @@ describe('ResolveService', () => {
       getModelForAgent: jest.fn().mockResolvedValue(null),
       getModelsForAgent: jest.fn().mockResolvedValue([]),
       invalidate: jest.fn(),
+      invalidateTenant: jest.fn(),
     };
     penaltyService = { getPenaltiesForAgent: jest.fn().mockResolvedValue(new Map()) };
     headerTierService = { list: jest.fn().mockResolvedValue([]) };
     agentRepo = {
       findOne: jest.fn().mockResolvedValue({ id: 'agent-1', complexity_routing_enabled: true }),
     };
-    routingCache = { addInvalidationListener: jest.fn() };
+    routingCache = { addInvalidationListener: jest.fn(), addTenantInvalidationListener: jest.fn() };
 
     // Defaults — each test overrides as needed.
     mockedScore.mockReturnValue({
@@ -131,6 +138,17 @@ describe('ResolveService', () => {
       listener('agent-42');
 
       expect(discoveryService.invalidate).toHaveBeenCalledWith('agent-42');
+    });
+
+    it('registers a tenant listener that drops the discovery cache tenant-wide', () => {
+      expect(routingCache.addTenantInvalidationListener).toHaveBeenCalledTimes(1);
+      const listener = routingCache.addTenantInvalidationListener.mock.calls[0][0] as (
+        tenantId: string,
+      ) => void;
+
+      listener('tenant-42');
+
+      expect(discoveryService.invalidateTenant).toHaveBeenCalledWith('tenant-42');
     });
   });
 
@@ -601,6 +619,48 @@ describe('ResolveService', () => {
       expect(providerKeyService.isRouteAvailable).not.toHaveBeenCalled();
     });
 
+    // A pinned override whose model the connection no longer offers must name
+    // itself so the proxy can return M302, not the neutral "no providers
+    // configured" M101. The flag only applies while the connection still exists.
+    it('flags the unavailable override model when its connection exists', async () => {
+      agentRepo.findOne.mockResolvedValue({ id: 'agent-1', complexity_routing_enabled: false });
+      const override = route('openai', 'subscription', 'gpt-6-astra');
+      tierService.getTiers.mockResolvedValue([
+        {
+          tier: 'default',
+          override_route: override,
+          auto_assigned_route: null,
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+      providerKeyService.isRouteAvailable.mockResolvedValue(false);
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenant, r: ModelRoute) => r === override,
+      );
+
+      const result = await svc.resolve('agent-1', 'user-1', messages);
+      expect(result.route).toBeNull();
+      expect(result.override_model_unavailable).toBe('gpt-6-astra');
+    });
+
+    it('keeps the neutral no-provider signal when the override connection is gone', async () => {
+      agentRepo.findOne.mockResolvedValue({ id: 'agent-1', complexity_routing_enabled: false });
+      tierService.getTiers.mockResolvedValue([
+        {
+          tier: 'default',
+          override_route: route('openai', 'subscription', 'gpt-6-astra'),
+          auto_assigned_route: null,
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+      providerKeyService.isRouteAvailable.mockResolvedValue(false);
+      providerKeyService.hasRouteCredentials.mockResolvedValue(false);
+
+      const result = await svc.resolve('agent-1', 'user-1', messages);
+      expect(result.route).toBeNull();
+      expect(result.override_model_unavailable).toBeUndefined();
+    });
+
     // A configured fallback provider stays eligible when the auto-assigned
     // route's provider is not connected.
     it('promotes an available fallback when the auto_assigned_route is unavailable', async () => {
@@ -883,6 +943,54 @@ describe('ResolveService', () => {
       expect(result.fallback_routes).toEqual([route('openai', 'api_key', 'gpt-4o')]);
     });
 
+    it('flags the unavailable override model on the scored tier path', async () => {
+      mockedScore.mockReturnValue({
+        tier: 'standard',
+        confidence: 0.7,
+        score: 5,
+        reason: 'scored',
+      } as never);
+      const override = route('openai', 'subscription', 'gpt-6-astra');
+      tierService.getTiers.mockResolvedValue([
+        {
+          tier: 'standard',
+          override_route: override,
+          auto_assigned_route: null,
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+      providerKeyService.isRouteAvailable.mockResolvedValue(false);
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenant, r: ModelRoute) => r === override,
+      );
+
+      const result = await svc.resolve('agent-1', 'user-1', messages);
+      expect(result.route).toBeNull();
+      expect(result.override_model_unavailable).toBe('gpt-6-astra');
+    });
+
+    it('keeps the neutral no-provider signal on the scored tier path', async () => {
+      mockedScore.mockReturnValue({
+        tier: 'standard',
+        confidence: 0.7,
+        score: 5,
+        reason: 'scored',
+      } as never);
+      tierService.getTiers.mockResolvedValue([
+        {
+          tier: 'standard',
+          override_route: null,
+          auto_assigned_route: null,
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+      providerKeyService.hasRouteCredentials.mockResolvedValue(false);
+
+      const result = await svc.resolve('agent-1', 'user-1', messages);
+      expect(result.route).toBeNull();
+      expect(result.override_model_unavailable).toBeUndefined();
+    });
+
     it('falls back to the default tier when the scored tier is missing', async () => {
       mockedScore.mockReturnValue({
         tier: 'reasoning',
@@ -1009,6 +1117,26 @@ describe('ResolveService', () => {
       expect(result.reason).toBe('heartbeat');
     });
 
+    it('keeps the neutral signal for heartbeats even with an unavailable override', async () => {
+      const override = route('openai', 'subscription', 'gpt-6-astra');
+      tierService.getTiers.mockResolvedValue([
+        {
+          tier: 'simple',
+          override_route: override,
+          auto_assigned_route: null,
+          fallback_routes: null,
+        } as unknown as TierAssignment,
+      ]);
+      providerKeyService.isRouteAvailable.mockResolvedValue(false);
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenant, r: ModelRoute) => r === override,
+      );
+
+      const result = await svc.resolveForTier('agent-1', 'user-1', 'simple', 'heartbeat');
+      expect(result.route).toBeNull();
+      expect(result.override_model_unavailable).toBeUndefined();
+    });
+
     it('returns the override route when present', async () => {
       tierService.getTiers.mockResolvedValue([
         {
@@ -1028,7 +1156,7 @@ describe('ResolveService', () => {
       tierService.getTiers.mockResolvedValue([
         {
           tier: 'simple',
-          override_route: route('custom:local', 'api_key', 'local-model'),
+          override_route: route('openai', 'api_key', 'gpt-image-1'),
           auto_assigned_route: null,
           fallback_routes: [
             route('openai', 'api_key', 'gpt-4o'),
@@ -1050,7 +1178,7 @@ describe('ResolveService', () => {
           tier: 'simple',
           override_route: route('openai', 'api_key', 'gpt-4o'),
           auto_assigned_route: null,
-          fallback_routes: [route('custom:local', 'api_key', 'local-model')],
+          fallback_routes: [route('openai', 'api_key', 'gpt-image-1')],
           response_mode: 'stream',
         } as TierAssignment,
       ]);
@@ -1072,6 +1200,117 @@ describe('ResolveService', () => {
       ]);
       const result = await svc.resolveForTier('agent-1', 'user-1', 'default', 'default');
       expect(result.reason).toBe('default');
+    });
+  });
+
+  /**
+   * Shared with the proxy's explicit-model path: a request that names a
+   * concrete model skips tier resolution, so this is the only place its route
+   * can pick up the connection the operator pinned.
+   */
+  describe('pinRouteKeyLabel', () => {
+    const defaultTier = (override: ModelRoute | null): TierAssignment =>
+      ({
+        tier: 'default',
+        override_route: override,
+        auto_assigned_route: null,
+        fallback_routes: null,
+      }) as TierAssignment;
+
+    it('keeps a label the route already pins', async () => {
+      const pinned = { ...route('openai', 'api_key', 'gpt-4o'), keyLabel: 'Explicit' };
+
+      const result = await svc.pinRouteKeyLabel('agent-1', 'tenant-1', pinned);
+
+      expect(result).toBe(pinned);
+      expect(tierService.getTiers).not.toHaveBeenCalled();
+    });
+
+    it('adopts the default tier pin when provider and auth match', async () => {
+      tierService.getTiers.mockResolvedValue([
+        defaultTier({ ...route('OpenAI', 'api_key', 'gpt-4o-mini'), keyLabel: 'Work' }),
+      ]);
+
+      const result = await svc.pinRouteKeyLabel(
+        'agent-1',
+        'tenant-1',
+        route('openai', 'api_key', 'gpt-4o'),
+      );
+
+      // Model differs on purpose: the pin follows the connection, not the model.
+      expect(result).toEqual({ ...route('openai', 'api_key', 'gpt-4o'), keyLabel: 'Work' });
+      expect(providerKeyService.getDefaultKeyLabel).not.toHaveBeenCalled();
+    });
+
+    it('ignores a default tier pin for a different provider', async () => {
+      tierService.getTiers.mockResolvedValue([
+        defaultTier({ ...route('anthropic', 'api_key', 'claude-sonnet-4-5'), keyLabel: 'Work' }),
+      ]);
+      providerKeyService.getDefaultKeyLabel.mockResolvedValue('Default');
+
+      const result = await svc.pinRouteKeyLabel(
+        'agent-1',
+        'tenant-1',
+        route('openai', 'api_key', 'gpt-4o'),
+      );
+
+      expect(result).toEqual({ ...route('openai', 'api_key', 'gpt-4o'), keyLabel: 'Default' });
+    });
+
+    it('ignores a default tier pin for a different auth type', async () => {
+      tierService.getTiers.mockResolvedValue([
+        defaultTier({ ...route('openai', 'subscription', 'gpt-5.5'), keyLabel: 'Work' }),
+      ]);
+      providerKeyService.getDefaultKeyLabel.mockResolvedValue('Default');
+
+      const result = await svc.pinRouteKeyLabel(
+        'agent-1',
+        'tenant-1',
+        route('openai', 'api_key', 'gpt-4o'),
+      );
+
+      expect(result).toEqual({ ...route('openai', 'api_key', 'gpt-4o'), keyLabel: 'Default' });
+    });
+
+    it('falls back to the default connection label when the default tier pins nothing', async () => {
+      tierService.getTiers.mockResolvedValue([
+        defaultTier(route('openai', 'api_key', 'gpt-4o-mini')),
+      ]);
+      providerKeyService.getDefaultKeyLabel.mockResolvedValue('Default');
+
+      const result = await svc.pinRouteKeyLabel(
+        'agent-1',
+        'tenant-1',
+        route('openai', 'api_key', 'gpt-4o'),
+      );
+
+      expect(result).toEqual({ ...route('openai', 'api_key', 'gpt-4o'), keyLabel: 'Default' });
+    });
+
+    it('falls back to the default connection label when there is no default tier row', async () => {
+      tierService.getTiers.mockResolvedValue([]);
+      providerKeyService.getDefaultKeyLabel.mockResolvedValue('Only');
+
+      const result = await svc.pinRouteKeyLabel(
+        'agent-1',
+        'tenant-1',
+        route('openai', 'api_key', 'gpt-4o'),
+      );
+
+      expect(result).toEqual({ ...route('openai', 'api_key', 'gpt-4o'), keyLabel: 'Only' });
+    });
+
+    it('leaves the route unlabelled when no connection resolves at all', async () => {
+      tierService.getTiers.mockResolvedValue([defaultTier(null)]);
+      providerKeyService.getDefaultKeyLabel.mockResolvedValue(undefined);
+
+      const result = await svc.pinRouteKeyLabel(
+        'agent-1',
+        'tenant-1',
+        route('openai', 'api_key', 'gpt-4o'),
+      );
+
+      expect(result).toEqual(route('openai', 'api_key', 'gpt-4o'));
     });
   });
 });

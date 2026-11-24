@@ -173,6 +173,213 @@ describe('Anthropic Messages adapter', () => {
       ]);
     });
 
+    it('extracts tool_result images into a follow-up user message instead of stringified base64', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  { type: 'text', text: 'screenshot follows' },
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([
+            { type: 'text', text: 'screenshot follows' },
+            { type: 'text', text: '[image attached below]' },
+          ]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+          ],
+        },
+      ]);
+    });
+
+    it('keeps parallel tool results contiguous and emits their images once, after the group', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_2',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'BBBB' },
+                  },
+                ],
+              },
+              { type: 'text', text: 'both screenshots above' },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'tu_2',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,BBBB' } },
+          ],
+        },
+        { role: 'user', content: 'both screenshots above' },
+      ]);
+    });
+
+    it('keeps parallel tool results contiguous across consecutive user messages', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tu_1', name: 'screenshot', input: {} },
+              { type: 'tool_use', id: 'tu_2', name: 'screenshot', input: {} },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'AAAA' },
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_2',
+                content: [
+                  {
+                    type: 'image',
+                    source: { type: 'base64', media_type: 'image/png', data: 'BBBB' },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            { id: 'tu_1', type: 'function', function: { name: 'screenshot', arguments: '{}' } },
+            { id: 'tu_2', type: 'function', function: { name: 'screenshot', arguments: '{}' } },
+          ],
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'tool',
+          tool_call_id: 'tu_2',
+          content: JSON.stringify([{ type: 'text', text: '[image attached below]' }]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,BBBB' } },
+          ],
+        },
+      ]);
+    });
+
+    it('keeps url-sourced tool_result images and leaves unconvertible image blocks in place', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'tu_1',
+                content: [
+                  { type: 'image', source: { type: 'url', url: 'https://example.com/a.png' } },
+                  { type: 'image', source: { type: 'unknown' } },
+                ],
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        {
+          role: 'tool',
+          tool_call_id: 'tu_1',
+          content: JSON.stringify([
+            { type: 'text', text: '[image attached below]' },
+            { type: 'image', source: { type: 'unknown' } },
+          ]),
+        },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Images from the preceding tool result:' },
+            { type: 'image_url', image_url: { url: 'https://example.com/a.png' } },
+          ],
+        },
+      ]);
+    });
+
     it('falls back to "unknown" for missing tool ids and synthesizes assistant ids', () => {
       const result = messagesToChatCompletionsRequest({
         messages: [
@@ -230,11 +437,50 @@ describe('Anthropic Messages adapter', () => {
       expect(ignoredNamed.tool_choice).toBeUndefined();
     });
 
+    it('translates tool_choice none so tools stay off on chat routes', () => {
+      const result = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tools: [{ name: 'search', input_schema: { type: 'object' } }],
+        tool_choice: { type: 'none' },
+      });
+      expect(result.tool_choice).toBe('none');
+      expect(result).not.toHaveProperty('parallel_tool_calls');
+    });
+
+    it('maps disable_parallel_tool_use to parallel_tool_calls false', () => {
+      const tools = [{ name: 'search', input_schema: { type: 'object' } }];
+      for (const choice of [{ type: 'auto' }, { type: 'any' }, { type: 'tool', name: 'search' }]) {
+        const result = messagesToChatCompletionsRequest({
+          messages: [{ role: 'user', content: 'x' }],
+          tools,
+          tool_choice: { ...choice, disable_parallel_tool_use: true },
+        });
+        expect(result.parallel_tool_calls).toBe(false);
+      }
+
+      const allowed = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tools,
+        tool_choice: { type: 'auto', disable_parallel_tool_use: false },
+      });
+      expect(allowed).not.toHaveProperty('parallel_tool_calls');
+    });
+
+    it('omits parallel_tool_calls when no tools are sent', () => {
+      // OpenAI rejects parallel_tool_calls on a request without tools.
+      const result = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+      });
+      expect(result).not.toHaveProperty('parallel_tool_calls');
+    });
+
     it('exposes Anthropic server tools to the scorer by function.name (issue #1886)', () => {
-      // chatBody is only consumed by the routing/scoring layer in messages
-      // mode — the wire body goes through applyAnthropicMessagesMutations
-      // direct from the inbound body, so server-tool `type` tags are
-      // preserved upstream. Scoring just needs tool count + function.name.
+      // chatBody is consumed by the routing/scoring layer in messages mode —
+      // the scorer reads tool count + function.name. When the resolved
+      // provider is Anthropic, the wire body goes through
+      // applyAnthropicMessagesMutations direct from the inbound body instead
+      // of this translation, so server-tool `type` tags are preserved there.
       const result = messagesToChatCompletionsRequest({
         messages: [{ role: 'user', content: 'x' }],
         tools: [
@@ -256,6 +502,48 @@ describe('Anthropic Messages adapter', () => {
         'mcp',
         'my_custom',
         'explicit_custom',
+      ]);
+    });
+
+    it('gives Anthropic server tools a safe empty schema so strict chat-completions providers accept them (issue #2754)', () => {
+      // chatBody.tools is also the literal wire payload forwarded to
+      // non-Anthropic providers reached via the chat-completions wire format
+      // (ProviderClient.forward's needsChatBody path). Anthropic server
+      // tools (web_search, bash, computer, etc.) carry no `input_schema`;
+      // some strict providers (e.g. MiniMax) reject any function tool with
+      // no `parameters` field at all, so omitting it 400s the request even
+      // though Manifest itself never executes the tool.
+      const result = messagesToChatCompletionsRequest({
+        messages: [{ role: 'user', content: 'x' }],
+        tools: [
+          { type: 'web_search_20250305', name: 'web_search' },
+          { type: 'bash_20250124', name: 'bash' },
+          { type: 'mcp_toolset', name: 'mcp' },
+        ],
+      });
+
+      expect(result.tools).toEqual([
+        {
+          type: 'function',
+          function: {
+            name: 'web_search',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'bash',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        },
+        {
+          type: 'function',
+          function: {
+            name: 'mcp',
+            parameters: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        },
       ]);
     });
 
@@ -491,12 +779,53 @@ describe('Anthropic Messages adapter', () => {
       expect(result.stop_reason).toBe('tool_use');
     });
 
+    it('reports tool_use when tool calls arrive with finish_reason "stop"', () => {
+      const result = chatCompletionsResponseToMessages(
+        {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [{ id: 'tc_1', function: { name: 'search', arguments: '{"q":"a"}' } }],
+              },
+              finish_reason: 'stop',
+            },
+          ],
+        },
+        'm',
+      );
+      expect(result.stop_reason).toBe('tool_use');
+    });
+
+    it.each([undefined, null])('reports tool_use with finish_reason %s', (finishReason) => {
+      const result = chatCompletionsResponseToMessages(
+        {
+          choices: [
+            {
+              message: {
+                tool_calls: [{ id: 'tc_1', function: { name: 'search', arguments: '{}' } }],
+              },
+              finish_reason: finishReason,
+            },
+          ],
+        },
+        'm',
+      );
+      expect(result.stop_reason).toBe('tool_use');
+    });
+
     it('maps stop reasons and falls back to end_turn for unknown values', () => {
       const length = chatCompletionsResponseToMessages(
         { choices: [{ message: { content: 'x' }, finish_reason: 'length' }] },
         'm',
       );
       expect(length.stop_reason).toBe('max_tokens');
+
+      const filtered = chatCompletionsResponseToMessages(
+        { choices: [{ message: { content: 'x' }, finish_reason: 'content_filter' }] },
+        'm',
+      );
+      expect(filtered.stop_reason).toBe('refusal');
 
       const unknown = chatCompletionsResponseToMessages(
         { choices: [{ message: { content: 'x' }, finish_reason: 'mystery' }] },
@@ -594,6 +923,35 @@ describe('Anthropic Messages adapter', () => {
       const tail = transformer.finalize() ?? '';
       return out + tail;
     }
+
+    it('opens one tool_use block per call when the provider omits tool call indexes', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\\"Paris\\"}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{\\"tz\\":\\"CET\\"}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]);
+
+      const events = sse
+        .split('\n\n')
+        .filter(Boolean)
+        .map((block) => JSON.parse(block.split('\n')[1]!.replace('data: ', '')));
+      const starts = events.filter((e) => e.type === 'content_block_start');
+      const partials = events
+        .filter((e) => e.type === 'content_block_delta')
+        .map((e) => [e.index, e.delta.partial_json]);
+
+      expect(starts.map((e) => [e.index, e.content_block.name])).toEqual([
+        [0, 'get_weather'],
+        [1, 'get_time'],
+      ]);
+      expect(partials).toEqual([
+        [0, '{"city":'],
+        [0, '"Paris"}'],
+        [1, '{"tz":"CET"}'],
+      ]);
+    });
 
     it('emits message_start, content_block events, message_delta, and message_stop for plain text', () => {
       const t = createMessagesStreamTransformer('claude-sonnet-4');
@@ -698,6 +1056,53 @@ describe('Anthropic Messages adapter', () => {
         'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"q"}}',
       );
       expect(sse).toContain('"stop_reason":"tool_use"');
+    });
+
+    it('streams tool_use stop_reason when tool calls finish with "stop"', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"model":"claude","choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{}"}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      ]);
+
+      expect(sse).toContain('"stop_reason":"tool_use"');
+      expect(sse).not.toContain('"stop_reason":"end_turn"');
+    });
+
+    it.each([undefined, null])('streams tool_use when finish_reason is %s', (finishReason) => {
+      for (const terminal of ['', 'data: [DONE]\n\n']) {
+        const t = createMessagesStreamTransformer('claude-sonnet-4');
+        const sse = flushChunks(t, [
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{}"}}]}}]}\n\n',
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
+          terminal,
+        ]);
+        expect(sse).toContain('"stop_reason":"tool_use"');
+        expect(sse).not.toContain('"stop_reason":"end_turn"');
+      }
+    });
+
+    it.each([
+      ['length', 'max_tokens'],
+      ['content_filter', 'refusal'],
+    ])('preserves %s with tool calls', (finishReason, stopReason) => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_a","function":{"name":"search","arguments":"{}"}}]}}]}\n\n',
+        `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: finishReason }] })}\n\n`,
+      ]);
+      expect(sse).toContain(`"stop_reason":"${stopReason}"`);
+    });
+
+    it('streams a content_filter finish_reason as a refusal stop_reason', () => {
+      const t = createMessagesStreamTransformer('claude-sonnet-4');
+      const sse = flushChunks(t, [
+        'data: {"model":"claude","choices":[{"delta":{"content":"Partial"}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"content_filter"}]}\n\n',
+      ]);
+
+      expect(sse).toContain('"stop_reason":"refusal"');
+      expect(sse).not.toContain('"stop_reason":"end_turn"');
     });
 
     it('translates DeepSeek-style delta.reasoning_content into a leading thinking block', () => {
@@ -1164,8 +1569,92 @@ describe('Anthropic Messages adapter', () => {
       ]);
       // Stop must reference the tool_use's index (0, the first/only block).
       expect(events[0].data).toEqual({ type: 'content_block_stop', index: 0 });
-      // No finish_reason was ever seen, so stop_reason defaults to end_turn.
-      expect(events[1].data.delta.stop_reason).toBe('end_turn');
+      // Without a finish_reason, infer the reason from the emitted tool call.
+      expect(events[1].data.delta.stop_reason).toBe('tool_use');
     });
+  });
+});
+
+describe('tool-call id sanitation on /v1/messages responses', () => {
+  it('chatCompletionsResponseToMessages sanitizes upstream tool_call ids', () => {
+    const result = chatCompletionsResponseToMessages(
+      {
+        choices: [
+          {
+            message: {
+              content: '',
+              tool_calls: [
+                { id: 'Edit:0', type: 'function', function: { name: 'Edit', arguments: '{}' } },
+                {
+                  id: 'call_ok-1',
+                  type: 'function',
+                  function: { name: 'Read', arguments: '{}' },
+                },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+      'kimi-k3',
+    );
+    const blocks = result.content as Array<Record<string, unknown>>;
+    expect(blocks[0].id).toBe('Edit_0');
+    expect(blocks[1].id).toBe('call_ok-1');
+  });
+
+  it('createMessagesStreamTransformer sanitizes the streamed tool_use id', () => {
+    const t = createMessagesStreamTransformer('kimi-k3');
+    const out =
+      [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"Edit:0","function":{"name":"Edit","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]
+        .map((c) => t.transform(c) ?? '')
+        .join('') + (t.finalize() ?? '');
+    const start = out
+      .split('\n\n')
+      .find((b) => b.startsWith('event: content_block_start') && b.includes('tool_use'))!;
+    const data = JSON.parse(start.split('\n')[1].replace('data: ', ''));
+    expect(data.content_block.id).toBe('Edit_0');
+  });
+});
+
+describe('empty upstream tool_call ids', () => {
+  it('mints a toolu_ id instead of emitting an empty one', () => {
+    const result = chatCompletionsResponseToMessages(
+      {
+        choices: [
+          {
+            message: {
+              content: '',
+              tool_calls: [
+                { id: '', type: 'function', function: { name: 'Read', arguments: '{}' } },
+              ],
+            },
+            finish_reason: 'tool_calls',
+          },
+        ],
+      },
+      'kimi-k3',
+    );
+    const blocks = result.content as Array<Record<string, unknown>>;
+    expect(blocks[0].id).toMatch(/^toolu_[0-9a-f]{32}$/);
+  });
+
+  it('mints a toolu_ id in the stream transformer as well', () => {
+    const t = createMessagesStreamTransformer('kimi-k3');
+    const out =
+      [
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"Read","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
+      ]
+        .map((c) => t.transform(c) ?? '')
+        .join('') + (t.finalize() ?? '');
+    const start = out
+      .split('\n\n')
+      .find((b) => b.startsWith('event: content_block_start') && b.includes('tool_use'))!;
+    const data = JSON.parse(start.split('\n')[1].replace('data: ', ''));
+    expect(data.content_block.id).toMatch(/^toolu_[0-9a-f]{32}$/);
   });
 });

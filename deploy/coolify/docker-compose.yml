@@ -13,6 +13,10 @@ services:
       - NODE_ENV=production
       - DB_POOL_MAX=10
       - AUTH_DB_POOL_MAX=5
+      - REQUEST_RECORDING_STORAGE=filesystem
+      - REQUEST_RECORDING_FILESYSTEM_PATH=/data/request-recordings
+    volumes:
+      - manifest-recordings-data:/data/request-recordings
     depends_on:
       postgres:
         condition: service_healthy
@@ -21,7 +25,7 @@ services:
         - CMD
         - node
         - -e
-        - "const p=process.env.PORT||'2099';fetch(`http://127.0.0.1:${p}/api/v1/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - "const p=process.env.PORT||'2099';fetch(`http://127.0.0.1:$${p}/api/v1/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 30s
       timeout: 5s
       start_period: 90s
@@ -43,3 +47,4 @@ services:
 
 volumes:
   manifest-postgres-data:
+  manifest-recordings-data:

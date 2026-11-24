@@ -1,3 +1,5 @@
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
+import { mockScopeResolver, selectedAgent } from '../__tests__/scope.fixture';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CacheModule } from '@nestjs/cache-manager';
 import { TokensController } from './tokens.controller';
@@ -30,6 +32,7 @@ describe('TokensController', () => {
       imports: [CacheModule.register()],
       controllers: [TokensController],
       providers: [
+        { provide: AnalyticsScopeService, useValue: mockScopeResolver() },
         {
           provide: AggregationService,
           useValue: { getPreviousTokenTotal: mockGetPreviousTokenTotal },
@@ -67,9 +70,23 @@ describe('TokensController', () => {
   it('passes agent_name to service calls', async () => {
     await controller.getTokens({ range: '7d', agent_name: 'bot' }, ctx as never);
 
-    expect(mockGetPreviousTokenTotal).toHaveBeenCalledWith('7d', 'tenant-1', 'bot');
-    expect(mockGetTimeseries).toHaveBeenCalledWith('7d', 'tenant-1', true, 'bot');
-    expect(mockGetTimeseries).toHaveBeenCalledWith('7d', 'tenant-1', false, 'bot');
+    expect(mockGetPreviousTokenTotal).toHaveBeenCalledWith(
+      '7d',
+      'tenant-1',
+      selectedAgent('tenant-1', 'bot'),
+    );
+    expect(mockGetTimeseries).toHaveBeenCalledWith(
+      '7d',
+      'tenant-1',
+      true,
+      selectedAgent('tenant-1', 'bot'),
+    );
+    expect(mockGetTimeseries).toHaveBeenCalledWith(
+      '7d',
+      'tenant-1',
+      false,
+      selectedAgent('tenant-1', 'bot'),
+    );
   });
 
   it('returns zero trend when previous tokens is zero', async () => {

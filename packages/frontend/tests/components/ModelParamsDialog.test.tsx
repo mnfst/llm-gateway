@@ -198,9 +198,13 @@ describe('ModelParamsDialog', () => {
     expect(q('.provider-toggle__switch--on')).not.toBeNull();
   });
 
-  it('describes params with client-override note when specs exist', () => {
+  it('explains that set values override the client and unset ones pass through', () => {
     render(() => <ModelParamsDialog {...baseProps} slotLabel="GPT-5 Nano" />);
-    expect(screen.getByText('Defaults for GPT-5 Nano. Client requests override.')).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Values you set override the client's request for GPT-5 Nano; unset ones keep the client's value. Requests that name a model instead of auto skip them.",
+      ),
+    ).toBeTruthy();
   });
 
   it('shows loading description while specs are being fetched', () => {
@@ -543,7 +547,7 @@ describe('ModelParamsDialog', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledWith({ max_tokens: 2048 }));
   });
 
-  it('saves null when every chosen value matches the spec default', async () => {
+  it('keeps a stored value even when the user picks the provider default', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined);
     render(() => (
       <ModelParamsDialog
@@ -556,7 +560,7 @@ describe('ModelParamsDialog', () => {
     fireEvent.click(q('.model-params__toggle') as HTMLButtonElement);
     fireEvent.click(screen.getByText('Save'));
 
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ thinking: { type: 'enabled' } }));
   });
 
   it('saves an explicit override when at least one value differs from the spec default', async () => {
@@ -658,7 +662,121 @@ describe('ModelParamsDialog', () => {
 
     fireEvent.click(screen.getByText('Save'));
 
-    await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith({ thinking: { type: 'disabled' } }));
+  });
+
+  describe('unset params (issue #3022)', () => {
+    const maxTokensSpec = anthropicSpecs.find((spec) => spec.path === 'max_tokens')!;
+    const renderMaxTokens = (
+      onSave: ReturnType<typeof vi.fn>,
+      current: RequestParamDefaults | null = null,
+    ) =>
+      render(() => (
+        <ModelParamsDialog
+          {...baseProps}
+          specs={[maxTokensSpec]}
+          slotLabel="claude-sonnet-4-6"
+          current={current}
+          onSave={onSave}
+        />
+      ));
+
+    it('shows an unset field with the provider default as placeholder', () => {
+      renderMaxTokens(vi.fn());
+      const input = screen.getByLabelText('Max tokens') as HTMLInputElement;
+      expect(input.value).toBe('');
+      expect(input.placeholder).toBe('4096');
+      expect(screen.getByText(/Not set/)).toBeTruthy();
+    });
+
+    it('saves nothing when the user leaves the field unset', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      renderMaxTokens(onSave);
+      fireEvent.click(screen.getByText('Save'));
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    });
+
+    it('saves a value equal to the provider default once the user types it', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      renderMaxTokens(onSave);
+      fireEvent.input(screen.getByLabelText('Max tokens'), { target: { value: '4096' } });
+      expect(screen.getByRole('button', { name: 'Reset Max tokens' })).toBeTruthy();
+      fireEvent.click(screen.getByText('Save'));
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith({ max_tokens: 4096 }));
+    });
+
+    it('shows a stored value that equals the provider default as set', () => {
+      renderMaxTokens(vi.fn(), { max_tokens: 4096 });
+      expect((screen.getByLabelText('Max tokens') as HTMLInputElement).value).toBe('4096');
+      expect(screen.getByRole('button', { name: 'Reset Max tokens' })).toBeTruthy();
+    });
+
+    it('unsets the param when the user clears the field', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      renderMaxTokens(onSave, { max_tokens: 8000 });
+      fireEvent.input(screen.getByLabelText('Max tokens'), { target: { value: '' } });
+      expect(screen.getByText(/Not set/)).toBeTruthy();
+      fireEvent.click(screen.getByText('Save'));
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    });
+
+    it('unsets the param with the Reset button', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      renderMaxTokens(onSave, { max_tokens: 8000 });
+      fireEvent.click(screen.getByRole('button', { name: 'Reset Max tokens' }));
+      expect((screen.getByLabelText('Max tokens') as HTMLInputElement).value).toBe('');
+      fireEvent.click(screen.getByText('Save'));
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    });
+
+    it('leaves the slider text box empty until the user sets a value', async () => {
+      const onSave = vi.fn().mockResolvedValue(undefined);
+      render(() => (
+        <ModelParamsDialog
+          {...baseProps}
+          specs={anthropicSpecs}
+          slotLabel="claude-sonnet-4-6"
+          onSave={onSave}
+        />
+      ));
+      const temperature = screen.getByLabelText('Temperature value') as HTMLInputElement;
+      expect(temperature.disabled).toBe(false);
+      expect(temperature.value).toBe('');
+      expect(temperature.placeholder).toBe('1');
+
+      fireEvent.input(temperature, { target: { value: '0.4' } });
+      fireEvent.blur(temperature);
+      expect(temperature.value).toBe('0.4');
+
+      fireEvent.input(temperature, { target: { value: '' } });
+      fireEvent.blur(temperature);
+      expect(temperature.value).toBe('');
+      fireEvent.click(screen.getByText('Save'));
+      await waitFor(() => expect(onSave).toHaveBeenCalledWith(null));
+    });
+
+    it('labels nested siblings the proxy sends with a set root', () => {
+      render(() => (
+        <ModelParamsDialog
+          {...baseProps}
+          specs={anthropicSpecs}
+          slotLabel="claude-sonnet-4-6"
+          current={{ thinking: { type: 'enabled' } }}
+        />
+      ));
+      expect(screen.getByText(/Default sent with thinking/)).toBeTruthy();
+    });
+
+    it('shows "Not set" as placeholder when the spec has no default', () => {
+      render(() => (
+        <ModelParamsDialog
+          {...baseProps}
+          specs={[{ ...maxTokensSpec, default: undefined }]}
+          slotLabel="claude-sonnet-4-6"
+        />
+      ));
+      expect((screen.getByLabelText('Max tokens') as HTMLInputElement).placeholder).toBe('Not set');
+    });
   });
 
   it('cancel button closes without persisting', () => {

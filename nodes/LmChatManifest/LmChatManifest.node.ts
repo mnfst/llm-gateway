@@ -7,6 +7,7 @@ import type {
 	SupplyData,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { MANIFEST_ATTRIBUTION_HEADERS } from '../shared/attribution';
 
 interface ManifestModelListResponse {
 	data?: Array<{ id?: string }>;
@@ -49,7 +50,7 @@ export class LmChatManifest implements INodeType {
 			resources: {
 				primaryDocumentation: [
 					{
-						url: 'https://github.com/mnfst/manifest/tree/main/integrations/n8n-nodes-manifest',
+						url: 'https://github.com/mnfst/llm-gateway/tree/main/integrations/n8n-nodes-manifest',
 					},
 				],
 			},
@@ -164,6 +165,7 @@ export class LmChatManifest implements INodeType {
 					{
 						method: 'GET',
 						url: `${manifestApiBaseUrl(credentials)}/models`,
+						headers: { ...MANIFEST_ATTRIBUTION_HEADERS },
 						json: true,
 					},
 				)) as ManifestModelListResponse;
@@ -205,6 +207,7 @@ export class LmChatManifest implements INodeType {
 			type: 'openai',
 			baseUrl: manifestApiBaseUrl(credentials),
 			apiKey: String(credentials.apiKey),
+			defaultHeaders: { ...MANIFEST_ATTRIBUTION_HEADERS },
 			model,
 			temperature: options.temperature,
 			topP: options.topP,

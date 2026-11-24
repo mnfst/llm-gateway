@@ -13,7 +13,7 @@ describe('plan-limits', () => {
   });
 
   it('pins the launch values', () => {
-    expect(FREE_PLAN_REQUESTS_PER_MONTH).toBe(10_000);
+    expect(FREE_PLAN_REQUESTS_PER_MONTH).toBe(0);
     expect(PLAN_LIMITS.free).toEqual({ requestsPerMonth: FREE_PLAN_REQUESTS_PER_MONTH });
     expect(PLAN_LIMITS.pro).toEqual({ requestsPerMonth: null });
     expect(UNLIMITED_PLAN_LIMITS).toEqual({ requestsPerMonth: null });

@@ -6,7 +6,9 @@ import helmet from 'helmet';
 import compression from 'compression';
 import * as express from 'express';
 import { AppModule } from './app.module';
-import { auth } from './auth/auth.instance';
+import { auth, mcpDisabledReason, mcpEnabled } from './auth/auth.instance';
+import { mcpOAuthResponse } from './auth/mcp-oauth-response';
+import { mountMcpDiscovery, mountMcpUnavailable } from './mcp/mcp-discovery';
 import { SpaFallbackFilter } from './common/filters/spa-fallback.filter';
 import { httpErrorLogger } from './common/middleware/http-error-logger.middleware';
 import {
@@ -16,6 +18,7 @@ import {
   createProxyBodyBudgetMiddleware,
 } from './common/middleware/body-parser-limits';
 import {
+  applyPivotClaimCors,
   applyPrivateNetworkAllow,
   buildCorsOptions,
   buildDevAllowedOrigins,
@@ -105,6 +108,18 @@ export async function bootstrap() {
   // already-allow-listed origins, so it's a no-op for a public gateway.
   app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
     applyPrivateNetworkAllow(req, corsAllowedOrigins, (name, value) => res.setHeader(name, value));
+    next();
+  });
+  // The pivot waiting-list claim is posted from self-hosted dashboards in the
+  // browser, so this one route answers CORS for any origin. Registered before
+  // the allow-list cors middleware so its preflight wins; see
+  // `applyPivotClaimCors` for why this is safe.
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const handled = applyPivotClaimCors(req, (name, value) => res.setHeader(name, value));
+    if (handled) {
+      res.sendStatus(204);
+      return;
+    }
     next();
   });
   app.enableCors(buildCorsOptions(corsAllowedOrigins));
@@ -197,7 +212,13 @@ export async function bootstrap() {
 
   // Mount Better Auth handler (needs raw body, before express.json)
   const { toNodeHandler } = await import('better-auth/node');
-  expressApp.all('/api/auth/*splat', toNodeHandler(auth));
+  const authHandler = (request: Request) =>
+    auth.handler(request).then((response) => mcpOAuthResponse(request, response));
+  expressApp.all(
+    '/api/auth/*splat',
+    // Better Auth's adapter checks for a handler property and delegates to it.
+    toNodeHandler({ handler: authHandler } as typeof auth),
+  );
 
   // Re-add body parsing for NestJS routes. The OpenAI-compatible proxy has a
   // separate parser because clients may legitimately send large inline image
@@ -208,6 +229,17 @@ export async function bootstrap() {
   expressApp.use(express.json({ limit: API_BODY_LIMIT }));
   expressApp.use(express.urlencoded({ extended: true, limit: API_BODY_LIMIT }));
   expressApp.use(bodyParserErrorHandler);
+
+  // Both the OAuth discovery documents and the MCP module go together: with the
+  // Better Auth MCP plugin unloaded there is no authorization server to
+  // advertise, and publishing metadata for an endpoint that does not exist
+  // sends clients into a flow that cannot complete.
+  if (mcpEnabled) {
+    mountMcpDiscovery(app);
+  } else {
+    mountMcpUnavailable(app);
+    logger.warn(`Remote MCP server disabled: ${mcpDisabledReason}`);
+  }
 
   const port = Number(process.env['PORT'] ?? 3001);
   const host = process.env['BIND_ADDRESS'] ?? '127.0.0.1';

@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { v4 as uuid } from 'uuid';
@@ -13,7 +13,10 @@ import {
 } from 'manifest-shared';
 import { AgentMessage } from '../../entities/agent-message.entity';
 import { ManifestRequest } from '../../entities/request.entity';
-import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache.service';
+import {
+  ModelPricingCacheService,
+  type PricingEntry,
+} from '../../model-prices/model-pricing-cache.service';
 import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
 import { IngestionContext } from '../../otlp/interfaces/ingestion-context.interface';
 import { FailedFallback } from './proxy-fallback.service';
@@ -21,10 +24,12 @@ import { StreamUsage } from './stream-writer';
 import { computeTokenCost } from '../../common/utils/cost-calculator';
 import { scrubSecrets } from '../../common/utils/secret-scrub';
 import { CallerAttribution } from './caller-classifier';
-import type { ProviderAttemptRef, ProviderAttemptStart } from './proxy-types';
+import type { ProviderAttemptRef, ProviderAttemptStart, ProxyApiMode } from './proxy-types';
 import { CustomProviderService } from '../custom-provider/custom-provider.service';
 import { OpencodeGoCatalogService } from '../../model-discovery/opencode-go-catalog.service';
 import { PROVIDER_BY_ID_OR_ALIAS } from '../../common/constants/providers';
+import { isLocalOnlyProvider } from '../../common/utils/provider-availability';
+import { ProviderService } from '../routing-core/provider.service';
 import { extractManifestErrorCode, type ManifestErrorCode } from '../../common/errors/error-codes';
 import {
   MANIFEST_CODE_TO_REASON,
@@ -65,7 +70,7 @@ function buildAutofixDecision(entry: AutofixChainEntry | undefined): object | nu
 }
 
 /**
- * Auto-fix audit for every Phoenix decision, plus linked-flow columns only when
+ * Autofix audit for every Phoenix decision, plus linked-flow columns only when
  * Manifest actually sent a patched retry.
  */
 function autofixColumns(
@@ -108,7 +113,7 @@ export interface ProviderErrorOpts extends HeaderTierRef {
   requestId?: string;
   attemptNumber?: number;
   attempt?: ProviderAttemptRef;
-  /** Finish the Request without creating a Provider Attempt. */
+  /** The route failed locally before provider transport started. */
   skipAttempt?: boolean;
   requestDurationMs?: number;
   model?: string;
@@ -139,15 +144,17 @@ export interface ProviderErrorOpts extends HeaderTierRef {
    * provider request. Persisted to `agent_messages.request_params`.
    */
   requestParams?: RequestParamDefaults | null;
-  /** Auto-fix audit when this error was the terminal outcome after healing. */
+  /** Autofix audit when this error was the terminal outcome after healing. */
   autofix?: AutofixRecord;
+  /** API surface to retain when this terminal write creates the Request. */
+  apiMode?: ProxyApiMode;
 }
 
 export type { ManifestBlockedRequestReason };
 
 export interface ManifestBlockedRequestOpts {
   requestId?: string;
-  /** Real provider retry to finalize when Auto-fix did not clear a Manifest block. */
+  /** Real provider retry to finalize when Autofix did not clear a Manifest block. */
   attempt?: ProviderAttemptRef;
   /**
    * The status the caller saw, when there was one. Omitted for the HTTP-200
@@ -165,7 +172,7 @@ export interface ManifestBlockedRequestOpts {
   callerAttribution?: CallerAttribution | null;
   requestHeaders?: Record<string, string> | null;
   /**
-   * Auto-fix audit when this Manifest-blocked failure was handed to the healing
+   * Autofix audit when this Manifest-blocked failure was handed to the healing
    * service (e.g. an M302 unknown model). This path is used only when the block
    * remains caller-visible; a healed request finishes through the success path
    * and records only the provider retry Attempt.
@@ -173,6 +180,27 @@ export interface ManifestBlockedRequestOpts {
   autofix?: AutofixRecord;
   /** End-to-end time until Manifest returned the rejection. */
   durationMs?: number;
+  /**
+   * The Manifest API surface the caller used. Stamped so a rejection that never
+   * got a pending row (the guard-level M004 path writes the terminal row first)
+   * still names its surface.
+   */
+  apiMode?: ProxyApiMode;
+  /**
+   * How the request was classified, when Manifest failed after routing ran (a
+   * post-routing M500). Keeps tier and header-tier filters matching the row.
+   * Provider stays null (the row still claims no provider attempt); the
+   * requested model is still recorded in the model field.
+   */
+  routing?: ManifestBlockedRouting;
+}
+
+export interface ManifestBlockedRouting {
+  tier?: string;
+  specificityCategory?: string;
+  headerTierId?: string;
+  headerTierName?: string;
+  headerTierColor?: string;
 }
 
 export interface PendingRequestOpts {
@@ -183,6 +211,8 @@ export interface PendingRequestOpts {
   requestedModel?: string;
   callerAttribution?: CallerAttribution | null;
   requestHeaders?: Record<string, string> | null;
+  /** The Manifest API surface the caller used. Persisted to requests.api_mode. */
+  apiMode?: ProxyApiMode;
 }
 
 export interface CancelledRequestOpts {
@@ -191,6 +221,8 @@ export interface CancelledRequestOpts {
   attemptStart?: ProviderAttemptStart;
   requestDurationMs?: number;
   traceId?: string;
+  /** API surface to retain when cancellation creates or repairs the Request. */
+  apiMode?: ProxyApiMode;
 }
 
 export interface FallbackSuccessOpts extends HeaderTierRef {
@@ -226,8 +258,16 @@ export interface FallbackSuccessOpts extends HeaderTierRef {
    * known params apply. Persisted to `agent_messages.request_params`.
    */
   requestParams?: RequestParamDefaults | null;
-  /** Request-level Auto-fix outcome when a failed retry later fell back. */
+  /** Request-level Autofix outcome when a failed retry later fell back. */
   autofix?: AutofixRecord;
+  /**
+   * Autofix audit of the winning fallback hop itself. Only this record stamps
+   * the fallback-success row's linkage columns, so an ordinary fallback success
+   * never inherits the primary's Autofix retry metadata.
+   */
+  fallbackAutofix?: AutofixRecord;
+  /** API surface to retain when this terminal write creates the Request. */
+  apiMode?: ProxyApiMode;
 }
 
 export interface SuccessMessageOpts extends HeaderTierRef {
@@ -250,8 +290,10 @@ export interface SuccessMessageOpts extends HeaderTierRef {
   callerAttribution?: CallerAttribution | null;
   requestHeaders?: Record<string, string> | null;
   requestParams?: RequestParamDefaults | null;
-  /** Auto-fix audit when a healed request succeeded. */
+  /** Autofix audit when a healed request succeeded. */
   autofix?: AutofixRecord;
+  /** API surface to retain when this terminal write creates the Request. */
+  apiMode?: ProxyApiMode;
 }
 
 export interface AutofixOriginalOpts extends HeaderTierRef {
@@ -329,6 +371,7 @@ function buildRequestRow(
   attempt: Partial<AgentMessage>,
   terminal: boolean,
   autofix?: AutofixRecord,
+  apiMode?: ProxyApiMode,
 ): ManifestRequest {
   const classified = classifyRow(attempt);
   // classifyRow above reads the rich attempt status; the request row stores the
@@ -360,6 +403,7 @@ function buildRequestRow(
     error_origin: terminal ? classified.error_origin : null,
     error_class: terminal ? classified.error_class : null,
     requested_model: attempt.fallback_from_model ?? attempt.model ?? null,
+    api_mode: apiMode ?? null,
     caller_attribution: attempt.caller_attribution ?? null,
     request_headers: attempt.request_headers ?? null,
     request_params: attempt.request_params ?? null,
@@ -396,6 +440,8 @@ function classifyRow(row: Partial<AgentMessage>): {
     status: row.status ?? 'ok',
     errorHttpStatus: row.error_http_status,
     routingReason: codeReason ?? row.routing_reason,
+    provider: row.provider,
+    errorMessage: row.error_message,
   });
 }
 
@@ -414,6 +460,8 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
     private readonly eventBus: IngestEventBusService,
     private readonly customProviders: CustomProviderService,
     private readonly opencodeGoCatalog: OpencodeGoCatalogService,
+    @Optional()
+    private readonly providerService?: ProviderService,
   ) {
     this.cooldownCleanupTimer = setInterval(() => this.evictExpiredCooldowns(), 60_000);
     if (typeof this.cooldownCleanupTimer === 'object' && 'unref' in this.cooldownCleanupTimer) {
@@ -423,6 +471,106 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
 
   onModuleDestroy(): void {
     clearInterval(this.cooldownCleanupTimer);
+  }
+
+  private isCopilotSubscription(provider?: string, authType?: string): boolean {
+    if (authType !== 'subscription' || !provider) return false;
+    return PROVIDER_BY_ID_OR_ALIAS.get(provider.toLowerCase())?.id === 'copilot';
+  }
+
+  private async copilotTokenPricing(
+    ctx: IngestionContext,
+    tenantProviderId: string | null | undefined,
+    model: string,
+    promptTokens: number,
+  ): Promise<PricingEntry | undefined> {
+    if (!tenantProviderId || !this.providerService) return undefined;
+
+    let providers;
+    try {
+      providers = await this.providerService.getProviders(ctx.tenantId);
+    } catch {
+      return undefined;
+    }
+
+    const connection = providers.find((candidate) => candidate.id === tenantProviderId);
+    const bareModel = model.toLowerCase().replace(/^copilot\//, '');
+    const cached = Array.isArray(connection?.cached_models)
+      ? connection.cached_models.find(
+          (candidate) => candidate.id.toLowerCase().replace(/^copilot\//, '') === bareModel,
+        )
+      : undefined;
+    const validPrice = (price: number | null): price is number =>
+      typeof price === 'number' && Number.isFinite(price) && price >= 0;
+    if (
+      !cached ||
+      !validPrice(cached.inputPricePerToken) ||
+      !validPrice(cached.outputPricePerToken)
+    ) {
+      return undefined;
+    }
+
+    const longContext = cached.longContextPricing;
+    const useLongContext =
+      longContext != null &&
+      Number.isSafeInteger(longContext.thresholdTokens) &&
+      longContext.thresholdTokens > 0 &&
+      promptTokens > longContext.thresholdTokens &&
+      validPrice(longContext.inputPricePerToken) &&
+      validPrice(longContext.outputPricePerToken) &&
+      (longContext.inputPricePerToken > 0 || longContext.outputPricePerToken > 0);
+    const effective = useLongContext ? longContext : cached;
+    if (effective.inputPricePerToken === 0 && effective.outputPricePerToken === 0) {
+      return undefined;
+    }
+
+    return {
+      model_name: cached.id,
+      provider: connection?.provider ?? 'copilot',
+      input_price_per_token: effective.inputPricePerToken,
+      output_price_per_token: effective.outputPricePerToken,
+      cache_read_price_per_token: effective.cacheReadPricePerToken,
+      cache_write_price_per_token: effective.cacheWritePricePerToken,
+      display_name: cached.displayName || null,
+    };
+  }
+
+  private async computeCost(
+    ctx: IngestionContext,
+    model: string,
+    provider: string | undefined,
+    authType: string | undefined,
+    usage: StreamUsage | undefined,
+    tenantProviderId?: string | null,
+    canonicalProvider?: string | null,
+    at?: Date,
+  ): Promise<number | null> {
+    const isCopilot = this.isCopilotSubscription(provider, authType);
+    const copilotPricing =
+      isCopilot && usage
+        ? await this.copilotTokenPricing(ctx, tenantProviderId, model, usage.prompt_tokens)
+        : undefined;
+
+    return computeTokenCost({
+      inputTokens: usage?.prompt_tokens ?? 0,
+      outputTokens: usage?.completion_tokens ?? 0,
+      cacheReadTokens: usage?.cache_read_tokens ?? 0,
+      cacheCreationTokens: usage?.cache_creation_tokens ?? 0,
+      model,
+      // Priced on the raw keys: a custom provider's rates are stored under
+      // `custom:<uuid>/<model>`, which is exactly what canonicalization strips.
+      pricing:
+        copilotPricing ??
+        (!isCopilot && usage ? this.pricingCache.getByModel(model, provider) : undefined),
+      isSubscription: authType === 'subscription' && !copilotPricing,
+      isLocalProvider: isLocalOnlyProvider(canonicalProvider ?? provider ?? ''),
+      perRequestCostUsd: copilotPricing
+        ? null
+        : await this.perRequestSubscriptionCost(provider, authType, model),
+      // Copilot's usage.cost is a premium-request multiplier, not USD.
+      reportedCostUsd: isCopilot ? undefined : usage?.reported_cost_usd,
+      at,
+    });
   }
 
   /**
@@ -437,6 +585,7 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
     attempt: Partial<AgentMessage>,
     terminal: boolean,
     autofix?: AutofixRecord,
+    apiMode?: ProxyApiMode,
   ): Promise<boolean> {
     // Unit-test repository doubles predate the request table. Production
     // repositories always expose manager.getRepository().
@@ -444,32 +593,32 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
     if (!getRepository) return false;
     const repo = getRepository(ManifestRequest);
     if (typeof repo.createQueryBuilder !== 'function') return false;
-    const row = buildRequestRow(ctx, requestId, attempt, terminal, autofix);
+    const row = buildRequestRow(ctx, requestId, attempt, terminal, autofix, apiMode);
     const insert = repo.createQueryBuilder().insert().into(ManifestRequest).values(row);
     if (terminal) {
-      await insert
-        .orUpdate(
-          [
-            'user_id',
-            'agent_name',
-            'trace_id',
-            'session_key',
-            'session_id',
-            'duration_ms',
-            'status',
-            'autofix_status',
-            'error_message',
-            'error_http_status',
-            'error_code',
-            'error_origin',
-            'error_class',
-            'caller_attribution',
-            'request_headers',
-            'request_params',
-          ],
-          ['id'],
-        )
-        .execute();
+      // Most terminal writers do not need to repeat the ingress surface. When
+      // they do have it, let them repair a missing/failed pending write without
+      // allowing an undefined surface to erase an existing value.
+      const updatedColumns = [
+        'user_id',
+        'agent_name',
+        'trace_id',
+        'session_key',
+        'session_id',
+        'duration_ms',
+        'status',
+        'autofix_status',
+        'error_message',
+        'error_http_status',
+        'error_code',
+        'error_origin',
+        'error_class',
+        'caller_attribution',
+        'request_headers',
+        'request_params',
+        ...(apiMode == null ? [] : ['api_mode']),
+      ];
+      await insert.orUpdate(updatedColumns, ['id']).execute();
     } else {
       await insert.orIgnore().execute();
     }
@@ -529,6 +678,8 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
         request_headers: opts.requestHeaders ?? null,
       },
       false,
+      undefined,
+      opts.apiMode,
     );
   }
 
@@ -555,6 +706,9 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
         provider: canonical.provider,
         auth_type: start.authType ?? null,
         tenant_provider_id: start.tenantProviderId ?? null,
+        // Stamped from the start so an attempt that never reaches a terminal
+        // writer still names the connection it used.
+        provider_key_label: start.keyLabel ?? null,
       }),
     );
     return true;
@@ -573,12 +727,41 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       model: opts.attemptStart?.model ?? null,
       auth_type: opts.attemptStart?.authType ?? null,
       tenant_provider_id: opts.attemptStart?.tenantProviderId ?? null,
+      provider_key_label: opts.attemptStart?.keyLabel ?? null,
       error_message: null,
       error_http_status: null,
     });
-    await this.persistRequest(ctx, opts.requestId, row, true);
+    await this.persistRequest(ctx, opts.requestId, row, true, undefined, opts.apiMode);
     if (opts.attempt) await this.persistAttempt(row, opts.attempt);
     this.eventBus.emit(ctx.tenantId, 'message', ctx.userId);
+  }
+
+  /**
+   * Cancel Provider Attempts the caller disconnected under. A disconnect in the
+   * middle of the fallback chain throws out of the chain before its local
+   * failure list reaches a terminal writer, so these rows would otherwise stay
+   * `pending` forever. Only rows still pending are touched: a terminal write
+   * that already landed keeps its real outcome. Updates run in parallel and a
+   * failed one never stops the rest.
+   */
+  async cancelPendingProviderAttempts(attempts: ProviderAttemptRef[]): Promise<void> {
+    await Promise.all(
+      attempts.map(async (attempt) => {
+        if (!(await attempt.pendingWrite.catch(() => false))) return;
+        await this.messageRepo
+          .update(
+            { id: attempt.id, status: PENDING_STATUS },
+            {
+              status: CANCELLED_STATUS,
+              error_message: null,
+              error_code: null,
+              error_http_status: null,
+              duration_ms: Math.max(0, (attempt.completedAtMs ?? Date.now()) - attempt.startedAtMs),
+            },
+          )
+          .catch((e) => this.logger.warn(`Failed to cancel Provider Attempt ${attempt.id}: ${e}`));
+      }),
+    );
   }
 
   /** Complete an intermediate provider call that is retried below the proxy layer. */
@@ -638,8 +821,9 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       headerTierName,
       headerTierColor,
       autofix,
+      apiMode,
     } = opts ?? {};
-    // A real Auto-fix retry must never disappear behind the generic 429
+    // A real Autofix retry must never disappear behind the generic 429
     // deduplication window; it is required to complete the linked attempt story.
     if (
       httpStatus === 429 &&
@@ -675,7 +859,7 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       model: canonical.model,
       provider: canonical.provider,
       routing_tier: tier ?? null,
-      routing_reason: reason ?? null,
+      routing_reason: skipAttempt ? 'provider_cooldown' : (reason ?? null),
       fallback_from_model: fallbackFromModel ?? null,
       fallback_index: fallbackIndex ?? null,
       auth_type: authType ?? null,
@@ -689,8 +873,8 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       header_tier_name: headerTierName ?? null,
       header_tier_color: headerTierColor ?? null,
     });
-    await this.persistRequest(ctx, requestId, row, true, autofix);
-    if (!skipAttempt) await this.persistAttempt(row, attempt);
+    await this.persistRequest(ctx, requestId, row, true, autofix, apiMode);
+    await this.persistAttempt(row, attempt);
     this.eventBus.emit(ctx.tenantId, 'message', ctx.userId);
   }
 
@@ -724,6 +908,8 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       autofix,
       durationMs,
       attempt,
+      apiMode,
+      routing,
     } = opts;
 
     const canonical = await this.customProviders.canonicalizeAgentMessageKeys(
@@ -733,6 +919,7 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
     );
 
     const row = buildMessageRow(ctx, {
+      request_id: requestId,
       trace_id: traceId ?? null,
       session_key: sessionKey ?? null,
       timestamp: new Date().toISOString(),
@@ -744,25 +931,24 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       error_http_status: httpStatus ?? null,
       model: canonical.model,
       provider: null,
-      routing_tier: null,
+      routing_tier: routing?.tier ?? null,
       routing_reason: reason,
       fallback_from_model: null,
       fallback_index: null,
       auth_type: null,
-      specificity_category: null,
+      specificity_category: routing?.specificityCategory ?? null,
       provider_key_label: null,
       tenant_provider_id: null,
       caller_attribution: callerAttribution ?? null,
       request_headers: requestHeaders ?? null,
       request_params: null,
-      header_tier_id: null,
-      header_tier_name: null,
-      header_tier_color: null,
+      header_tier_id: routing?.headerTierId ?? null,
+      header_tier_name: routing?.headerTierName ?? null,
+      header_tier_color: routing?.headerTierColor ?? null,
     });
-    // A Manifest-level rejection normally has zero provider attempts. An M302
-    // patched retry is real provider work, though, even when Manifest ultimately
+    // An M302 patched retry is real provider work even when Manifest ultimately
     // returns its friendly stub; finish that pending Attempt from the audit.
-    const wroteRequest = await this.persistRequest(ctx, requestId, row, true, autofix);
+    await this.persistRequest(ctx, requestId, row, true, autofix, apiMode);
     const retry = getAutofixRetry(autofix);
     if (attempt && retry?.error) {
       await attempt.completeFailure?.({
@@ -771,9 +957,7 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
         superseded: false,
       });
     }
-    // Legacy unit-test doubles have no request repository. Keep their observed
-    // write shape without affecting the production zero-attempt model.
-    if (!wroteRequest) await this.messageRepo.insert(row);
+    await this.persistAttempt(row);
     this.eventBus.emit(ctx.tenantId, 'message', ctx.userId);
   }
 
@@ -790,6 +974,8 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       markHandled?: boolean;
       lastAsError?: boolean;
       authType?: string;
+      /** Primary connection label, used only for failures with no label of their own. */
+      providerKeyLabel?: string;
       reason?: string;
       callerAttribution?: CallerAttribution | null;
       requestHeaders?: Record<string, string> | null;
@@ -807,6 +993,7 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       markHandled = false,
       lastAsError = false,
       authType,
+      providerKeyLabel,
       reason,
       callerAttribution,
       requestHeaders,
@@ -815,7 +1002,6 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       headerTierName,
       headerTierColor,
     } = opts ?? {};
-    failures = failures.filter((failure) => failure.providerCallStarted !== false);
     if (failures.length === 0) return;
     // primaryModel is loop-invariant — canonicalize once.
     const canonicalPrimary = await this.customProviders.canonicalizeAgentMessageKeys(
@@ -870,18 +1056,24 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
           model: canonical.model,
           provider: canonical.provider,
           routing_tier: tier,
-          routing_reason: reason ?? null,
+          routing_reason: f.providerCallStarted === false ? 'provider_cooldown' : (reason ?? null),
           fallback_from_model: canonicalPrimary.model,
           fallback_index: f.fallbackIndex,
           auth_type: recordedAuth,
           // Per-failure connection: each failed fallback carries its own key id.
           tenant_provider_id: f.tenantProviderId ?? null,
+          // Same rule for the label: the hop's own connection first, the
+          // primary's only for rows that predate per-failure labels.
+          provider_key_label: f.keyLabel ?? providerKeyLabel ?? null,
           caller_attribution: callerAttribution ?? null,
           request_headers: requestHeaders ?? null,
           request_params: requestParams ?? null,
           header_tier_id: headerTierId ?? null,
           header_tier_name: headerTierName ?? null,
           header_tier_color: headerTierColor ?? null,
+          // Autofix audit for a fallback hop Phoenix was consulted on, so a
+          // recovered hop keeps its issue/patch/operations like a healed primary.
+          ...autofixColumns(f.autofix, f.autofixRole ?? 'original'),
         }),
       );
     }
@@ -911,27 +1103,31 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       requestId?: string;
       attemptNumber?: number;
       attempt?: ProviderAttemptRef;
-      /** Finish/update the Request without creating a Provider Attempt. */
+      /** The route failed locally before provider transport started. */
       skipAttempt?: boolean;
       requestDurationMs?: number;
       reason?: string;
       tenantProviderId?: string | null;
+      /** Label of that same connection, so the failed primary names the key it used. */
+      providerKeyLabel?: string;
       callerAttribution?: CallerAttribution | null;
       requestHeaders?: Record<string, string> | null;
       requestParams?: RequestParamDefaults | null;
       headerTierId?: string | null;
       headerTierName?: string | null;
       headerTierColor?: string | null;
-      /** Provider status for the superseded primary or failed Auto-fix retry. */
+      /** Provider status for the superseded primary or failed Autofix retry. */
       httpStatus?: number | null;
       /**
-       * Auto-fix audit when this superseded primary was also an Auto-fix
+       * Autofix audit when this superseded primary was also an Autofix
        * attempt. Stamped onto THIS row (not a separate `auto_fixed` row) so a
        * heal-then-fallback flow records the primary failure exactly once.
        */
       autofix?: AutofixRecord;
       /** HTTP status returned to the caller when every fallback was exhausted. */
       terminalHttpStatus?: number;
+      /** API surface to retain when the exhausted chain creates the Request. */
+      apiMode?: ProxyApiMode;
     },
   ): Promise<void> {
     const canonical = await this.customProviders.canonicalizeAgentMessageKeys(
@@ -958,11 +1154,12 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       model: canonical.model,
       provider: canonical.provider,
       routing_tier: tier,
-      routing_reason: opts?.reason ?? null,
+      routing_reason: opts?.skipAttempt ? 'provider_cooldown' : (opts?.reason ?? null),
       fallback_from_model: null,
       fallback_index: null,
       auth_type: authType ?? null,
       tenant_provider_id: opts?.tenantProviderId ?? null,
+      provider_key_label: opts?.providerKeyLabel ?? null,
       caller_attribution: opts?.callerAttribution ?? null,
       request_headers: opts?.requestHeaders ?? null,
       request_params: opts?.requestParams ?? null,
@@ -983,8 +1180,9 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       requestOutcome,
       Boolean(opts?.terminalHttpStatus),
       opts?.autofix,
+      opts?.apiMode,
     );
-    if (!opts?.skipAttempt) await this.persistAttempt(row, opts?.attempt);
+    await this.persistAttempt(row, opts?.attempt);
     this.eventBus.emit(ctx.tenantId, 'message', ctx.userId);
   }
 
@@ -1016,28 +1214,33 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       headerTierName,
       headerTierColor,
       autofix,
+      fallbackAutofix,
+      apiMode,
     } = opts ?? {};
 
     const inputTokens = usage?.prompt_tokens ?? 0;
     const outputTokens = usage?.completion_tokens ?? 0;
-
-    const costUsd = computeTokenCost({
-      inputTokens,
-      outputTokens,
-      cacheReadTokens: usage?.cache_read_tokens ?? 0,
-      cacheCreationTokens: usage?.cache_creation_tokens ?? 0,
-      model,
-      pricing: usage ? this.pricingCache.getByModel(model) : undefined,
-      isSubscription: authType === 'subscription',
-      perRequestCostUsd: await this.perRequestSubscriptionCost(provider, authType, model),
-      reportedCostUsd: usage?.reported_cost_usd,
-    });
 
     const canonical = await this.customProviders.canonicalizeAgentMessageKeys(
       ctx.tenantId,
       provider,
       model,
     );
+
+    const costUsd = await this.computeCost(
+      ctx,
+      model,
+      provider,
+      authType,
+      usage,
+      tenantProviderId,
+      canonical.provider,
+      // Bill the hour the provider attempt actually ran: `timestamp` is the
+      // synthetic ordering stamp from recordFallbackFailures, not the attempt
+      // start, so it can cross a peak boundary on delayed writes.
+      attempt ? new Date(attempt.startedAt) : timestamp ? new Date(timestamp) : undefined,
+    );
+
     const canonicalFallbackFrom = await this.customProviders.canonicalizeAgentMessageKeys(
       ctx.tenantId,
       null,
@@ -1071,8 +1274,16 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       header_tier_id: headerTierId ?? null,
       header_tier_name: headerTierName ?? null,
       header_tier_color: headerTierColor ?? null,
+      // A healed fallback's winning attempt is the Autofix retry: stamp the
+      // group, role, operations, and Phoenix decision so it links to the
+      // original hop recorded in recordFailedFallbacks. Only the fallback's own
+      // record qualifies — an ordinary fallback success must not inherit the
+      // primary's Autofix retry metadata.
+      ...autofixColumns(fallbackAutofix, 'retry'),
     });
-    await this.persistRequest(ctx, requestId, row, true, autofix);
+    // The request-level Autofix status prefers the fallback's own outcome when
+    // it healed, falling back to the primary's record otherwise.
+    await this.persistRequest(ctx, requestId, row, true, fallbackAutofix ?? autofix, apiMode);
     await this.persistAttempt(row, attempt);
     this.eventBus.emit(ctx.tenantId, 'message', ctx.userId);
   }
@@ -1104,20 +1315,9 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       headerTierName,
       headerTierColor,
       autofix,
+      apiMode,
     } = opts ?? {};
     const requestId = providedRequestId ?? uuid();
-
-    const costUsd = computeTokenCost({
-      inputTokens: usage.prompt_tokens,
-      outputTokens: usage.completion_tokens,
-      cacheReadTokens: usage.cache_read_tokens ?? 0,
-      cacheCreationTokens: usage.cache_creation_tokens ?? 0,
-      model,
-      pricing: this.pricingCache.getByModel(model),
-      isSubscription: authType === 'subscription',
-      perRequestCostUsd: await this.perRequestSubscriptionCost(provider, authType, model),
-      reportedCostUsd: usage.reported_cost_usd,
-    });
 
     // `model` is a required string, so the overload on
     // `canonicalizeAgentMessageKeys` keeps `canonical.model` non-null.
@@ -1126,6 +1326,22 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       provider,
       model,
     );
+
+    const costUsd = await this.computeCost(
+      ctx,
+      model,
+      provider,
+      authType,
+      usage,
+      tenantProviderId,
+      canonical.provider,
+      // Bill a peak/off-peak model on when the attempt started, not on when
+      // this row is written: a long stream that opens at 09:59 and records at
+      // 10:01 is a peak request, and the fallback path already reads it this
+      // way. Falls back to now when the caller tracked no attempt.
+      attempt ? new Date(attempt.startedAt) : undefined,
+    );
+
     const canonicalModel = canonical.model;
     const canonicalProvider = canonical.provider;
 
@@ -1166,13 +1382,13 @@ export class ProxyMessageRecorder implements OnModuleDestroy {
       header_tier_color: headerTierColor ?? null,
       ...autofixColumns(autofix, 'retry'),
     });
-    await this.persistRequest(ctx, requestId, requestRow, true, autofix);
+    await this.persistRequest(ctx, requestId, requestRow, true, autofix, apiMode);
     await this.persistAttempt(requestRow, attempt);
     this.eventBus.emit(ctx.tenantId, 'message', ctx.userId);
   }
 
   /**
-   * Record the failed original request of an Auto-fix flow as its own row,
+   * Record the failed original request of an Autofix flow as its own row,
    * linked to the successful or failed retry via `autofix.groupId`.
    */
   async recordAutofixOriginal(

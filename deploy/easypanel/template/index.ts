@@ -38,8 +38,17 @@ export function generate(input: Input): Output {
         "SEED_DATA=false",
         "DB_POOL_MAX=10",
         "AUTH_DB_POOL_MAX=5",
+        "REQUEST_RECORDING_STORAGE=filesystem",
+        "REQUEST_RECORDING_FILESYSTEM_PATH=/data/request-recordings",
         `MANIFEST_TELEMETRY_DISABLED=${input.telemetryDisabled || "0"}`,
       ].join("\n"),
+      mounts: [
+        {
+          type: "volume",
+          name: "recordings",
+          mountPath: "/data/request-recordings",
+        },
+      ],
     },
   });
 

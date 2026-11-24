@@ -39,11 +39,12 @@ curl -sSf https://<your-coolify-domain>/api/v1/health
 - Manifest Docker image `manifestdotbuild/manifest:6`.
 - PostgreSQL 16 container.
 - Persistent Docker volume for PostgreSQL data.
+- Persistent Docker volume for compressed request recordings at `/data/request-recordings`.
 - Generated session, encryption, database password, and public URL values.
 
 ## Production notes
 
-- Keep the PostgreSQL volume backed up through Coolify or your server provider.
+- Keep both the PostgreSQL and request-recording volumes backed up through Coolify or your server provider. PostgreSQL dumps do not include recording objects.
 - Use a real domain with HTTPS before enabling OAuth or email-based login flows.
 - If you later publish Manifest as an official Coolify one-click service, this Compose file is the starting point for the upstream service template.
 

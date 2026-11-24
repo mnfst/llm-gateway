@@ -11,15 +11,23 @@
  */
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
-import { createTestApp, TEST_AGENT_ID, TEST_API_KEY } from './helpers';
+import {
+  createTestApp,
+  stubProviderDiscoveryFetch,
+  TEST_AGENT_ID,
+  TEST_API_KEY,
+} from './helpers';
 
 let app: INestApplication;
+let restoreDiscoveryFetch: () => void;
 
 beforeAll(async () => {
   app = await createTestApp();
+  restoreDiscoveryFetch = stubProviderDiscoveryFetch();
 }, 30000);
 
 afterAll(async () => {
+  restoreDiscoveryFetch?.();
   await app.close();
 });
 

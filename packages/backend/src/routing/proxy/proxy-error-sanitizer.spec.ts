@@ -106,6 +106,195 @@ describe('sanitizeProviderError', () => {
     expect(sanitizeProviderError(500, body, 'production')).toBe('Upstream provider internal error');
   });
 
+  it('preserves a structured provider 4xx diagnostic in production', () => {
+    const body = JSON.stringify({
+      type: 'error',
+      error: {
+        type: 'invalid_request_error',
+        message: '`temperature` is deprecated for this model.',
+      },
+    });
+
+    expect(sanitizeProviderError(400, body, 'production')).toBe(
+      '`temperature` is deprecated for this model.',
+    );
+  });
+
+  it('preserves a FastAPI-style {detail} 4xx diagnostic in production', () => {
+    // ChatGPT Codex answers an unsupported model with `{detail}` and no `error`
+    // envelope. Dropping it hides the one sentence that explains the failure.
+    const body = JSON.stringify({
+      detail: "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+    });
+
+    expect(sanitizeProviderError(400, body, 'production')).toBe(
+      "The 'gpt-5.4-mini' model is not supported when using Codex with a ChatGPT account.",
+    );
+  });
+
+  it('joins a FastAPI validation detail array into one diagnostic', () => {
+    const body = JSON.stringify({
+      detail: [
+        { loc: ['body', 'model'], msg: 'field required', type: 'value_error.missing' },
+        { loc: ['body', 'input'], msg: 'none is not an allowed value', type: 'type_error' },
+      ],
+    });
+
+    expect(sanitizeProviderError(422, body, 'production')).toBe(
+      'field required; none is not an allowed value',
+    );
+  });
+
+  it('falls back to the generic message when detail is empty or carries no msg entries', () => {
+    expect(sanitizeProviderError(400, JSON.stringify({ detail: '' }), 'production')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(
+      sanitizeProviderError(
+        422,
+        JSON.stringify({ detail: [null, 'plain', { loc: ['body'] }, { msg: '' }] }),
+        'production',
+      ),
+    ).toBe('Upstream provider rejected the request');
+  });
+
+  it('keeps the generic message for whitespace-only detail or error strings outside production', () => {
+    expect(sanitizeProviderError(400, JSON.stringify({ detail: '   ' }), 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(sanitizeProviderError(400, JSON.stringify({ error: ' \n ' }), 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(
+      sanitizeProviderError(422, JSON.stringify({ detail: [{ msg: '  ' }] }), 'development'),
+    ).toBe('Upstream provider rejected the request');
+  });
+
+  it('keeps the generic message when the body parses to a non-object outside production', () => {
+    expect(sanitizeProviderError(400, '42', 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+    expect(sanitizeProviderError(400, '["x"]', 'development')).toBe(
+      'Bad request to upstream provider',
+    );
+  });
+
+  it('preserves a bare string error field in production', () => {
+    // Ollama and several OpenAI-compatible servers return `{"error":"..."}`.
+    const body = JSON.stringify({ error: 'model "llama9" not found, try pulling it first' });
+
+    expect(sanitizeProviderError(404, body, 'production')).toBe(
+      'model "llama9" not found, try pulling it first',
+    );
+  });
+
+  it('redacts credentials from structured provider 4xx diagnostics in production', () => {
+    const token = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9';
+    const body = JSON.stringify({
+      error: {
+        type: 'authentication_error',
+        message: `Invalid Authorization: Bearer ${token}`,
+      },
+    });
+
+    const result = sanitizeProviderError(401, body, 'production');
+    expect(result).toContain('Invalid Authorization');
+    expect(result).not.toContain(token);
+  });
+
+  it.each(['apiKey', 'api_key'])('redacts opaque %s values from structured diagnostics', (name) => {
+    const credential = 'opaque-credential-value';
+    const body = JSON.stringify({
+      error: { message: `Invalid credential: ${name}=${credential}` },
+    });
+
+    const result = sanitizeProviderError(401, body, 'production');
+    expect(result).toContain(`${name}=[REDACTED]`);
+    expect(result).not.toContain(credential);
+  });
+
+  it.each(['apiKey', 'key'])(
+    'redacts quoted JSON %s fields from structured diagnostics',
+    (name) => {
+      const credential = 'opaque-credential-value';
+      const body = JSON.stringify({
+        error: { message: `Invalid credential: "${name}":"${credential}"` },
+      });
+
+      const result = sanitizeProviderError(401, body, 'production');
+      expect(result).toContain(`"${name}":"[REDACTED]"`);
+      expect(result).not.toContain(credential);
+    },
+  );
+
+  it('redacts quoted credential values containing whitespace', () => {
+    const credential = 'opaque credential value';
+    const body = JSON.stringify({
+      error: { message: `Invalid credential: "apiKey":"${credential}"` },
+    });
+
+    const result = sanitizeProviderError(401, body, 'production');
+    expect(result).toContain('"apiKey":"[REDACTED]"');
+    expect(result).not.toContain(credential);
+  });
+
+  it('redacts short Bearer credentials containing punctuation', () => {
+    const body = JSON.stringify({ error: { message: 'Invalid Bearer a!b@c:' } });
+    expect(sanitizeProviderError(401, body, 'production')).toBe('Invalid Bearer [REDACTED]');
+  });
+
+  it.each(['"opaque credential value"', "'opaque credential value'"])(
+    'redacts quoted Bearer credentials: %s',
+    (credential) => {
+      const body = JSON.stringify({ error: { message: `Invalid Bearer ${credential}` } });
+      expect(sanitizeProviderError(401, body, 'production')).toBe('Invalid Bearer [REDACTED]');
+    },
+  );
+
+  it('redacts credential fields from escaped serialized JSON', () => {
+    const credential = 'opaque credential value';
+    const body = JSON.stringify({
+      error: { message: `Serialized request: {\\"apiKey\\":\\"${credential}\\"}` },
+    });
+
+    const result = sanitizeProviderError(401, body, 'production');
+    expect(result).toContain('{\\"apiKey\\":\\"[REDACTED]\\"}');
+    expect(result).not.toContain(credential);
+  });
+
+  it.each([
+    ['JSON', (value: string) => JSON.stringify({ apiKey: value })],
+    [
+      'escaped serialized JSON',
+      (value: string) => JSON.stringify({ apiKey: value }).replace(/"/g, '\\"'),
+    ],
+  ])('fully redacts credential values containing escaped quotes in %s', (_format, diagnostic) => {
+    const credential = 'opaque"secret tail';
+    const body = JSON.stringify({
+      error: { message: `Serialized request: ${diagnostic(credential)}` },
+    });
+
+    const result = sanitizeProviderError(401, body, 'production');
+    expect(result).toContain('[REDACTED]');
+    expect(result).not.toContain('secret tail');
+  });
+
+  it('preserves generic key-value prose', () => {
+    const message = 'Provider expected key: value for routing';
+    const body = JSON.stringify({ error: { message } });
+    expect(sanitizeProviderError(400, body, 'production')).toBe(message);
+  });
+
+  it('still redacts unquoted apiKey values after narrowing generic key matching', () => {
+    const body = JSON.stringify({ error: { message: 'Invalid apiKey:opaque-secret' } });
+    expect(sanitizeProviderError(401, body, 'production')).toBe('Invalid apiKey:[REDACTED]');
+  });
+
+  it('does not treat key substrings inside words as credential fields', () => {
+    const body = JSON.stringify({ error: { message: 'Provider says monkey:banana' } });
+    expect(sanitizeProviderError(400, body, 'production')).toBe('Provider says monkey:banana');
+  });
+
   it('defaults to production behavior when nodeEnv is omitted', () => {
     const body = JSON.stringify({ error: { message: 'Should not leak' } });
     expect(sanitizeProviderError(500, body)).toBe('Upstream provider internal error');
@@ -117,7 +306,7 @@ describe('sanitizeProviderError', () => {
       const body = JSON.stringify({ error: { message: `Invalid key: ${key}` } });
       const result = sanitizeProviderError(401, body, 'development');
       expect(result).not.toContain(key);
-      expect(result).toContain('sk-***');
+      expect(result).toContain('[REDACTED]');
     });
 
     it('redacts Anthropic API keys from error messages', () => {
@@ -125,7 +314,7 @@ describe('sanitizeProviderError', () => {
       const body = JSON.stringify({ error: { message: `Auth failed: ${key}` } });
       const result = sanitizeProviderError(401, body, 'development');
       expect(result).not.toContain(key);
-      expect(result).toContain('sk-ant-***');
+      expect(result).toContain('[REDACTED]');
     });
 
     it('redacts key= query parameters from error messages', () => {
@@ -134,7 +323,7 @@ describe('sanitizeProviderError', () => {
       });
       const result = sanitizeProviderError(400, body, 'development');
       expect(result).not.toContain('AIzaSyAbcdef123456789');
-      expect(result).toContain('key=***');
+      expect(result).toContain('key=[REDACTED]');
     });
 
     it('redacts Bearer tokens from error messages', () => {
@@ -143,7 +332,7 @@ describe('sanitizeProviderError', () => {
       });
       const result = sanitizeProviderError(401, body, 'development');
       expect(result).not.toContain('eyJhbGciOiJSUzI1NiIsInR5cCI6Ikp');
-      expect(result).toContain('Bearer ***');
+      expect(result).toContain('Bearer [REDACTED]');
     });
 
     it('redacts lowercase bearer tokens from error messages', () => {
@@ -152,14 +341,14 @@ describe('sanitizeProviderError', () => {
       });
       const result = sanitizeProviderError(401, body, 'development');
       expect(result).not.toContain('eyJhbGciOiJSUzI1NiIsInR5cCI6Ikp');
-      expect(result).toContain('Bearer ***');
+      expect(result).toContain('Bearer [REDACTED]');
     });
 
-    it('does not redact patterns in production mode', () => {
+    it('redacts patterns in structured production 4xx responses', () => {
       const key = 'sk-proj-abcdefghijklmnopqrstuvwxyz';
       const body = JSON.stringify({ error: { message: `Invalid key: ${key}` } });
       const result = sanitizeProviderError(401, body, 'production');
-      expect(result).toBe('Authentication failed with upstream provider');
+      expect(result).toBe('Invalid key: [REDACTED]');
     });
   });
 });
@@ -264,7 +453,7 @@ describe('classifyProviderError', () => {
           },
         }),
       )?.message,
-    ).toBe('Maximum context length exceeded for key=*** and Bearer ***');
+    ).toBe('Maximum context length exceeded for key=[REDACTED] and Bearer [REDACTED]');
   });
 
   it('does not classify generic input length validation errors as context overflow', () => {

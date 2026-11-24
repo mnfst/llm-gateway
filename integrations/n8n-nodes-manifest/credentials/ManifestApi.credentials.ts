@@ -4,6 +4,7 @@ import type {
 	ICredentialType,
 	INodeProperties,
 } from 'n8n-workflow';
+import { MANIFEST_ATTRIBUTION_HEADERS } from '../nodes/shared/attribution';
 
 export class ManifestApi implements ICredentialType {
 	name = 'manifestApi';
@@ -15,7 +16,7 @@ export class ManifestApi implements ICredentialType {
 		dark: 'file:../nodes/Manifest/manifest-logo.dark.svg',
 	} as const;
 
-	documentationUrl = 'https://manifest.build/docs';
+	documentationUrl = 'https://manifest.build/llm-gateway/docs/introduction/';
 
 	properties: INodeProperties[] = [
 		{
@@ -45,6 +46,7 @@ export class ManifestApi implements ICredentialType {
 		properties: {
 			headers: {
 				Authorization: '=Bearer {{$credentials.apiKey}}',
+				...MANIFEST_ATTRIBUTION_HEADERS,
 			},
 		},
 	};
@@ -56,6 +58,7 @@ export class ManifestApi implements ICredentialType {
 			url: '/v1/models',
 			headers: {
 				Authorization: '=Bearer {{$credentials.apiKey}}',
+				...MANIFEST_ATTRIBUTION_HEADERS,
 			},
 		},
 	};

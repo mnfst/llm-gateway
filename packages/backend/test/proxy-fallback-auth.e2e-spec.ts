@@ -222,18 +222,33 @@ describe('Proxy fallback success — auth_type/cost_usd attribution (#1173)', ()
       .send({ messages: [{ role: 'user', content: 'hello' }] })
       .expect(200);
 
-    // recordFallbackSuccess fires off the response — wait for it to flush.
-    await new Promise((r) => setTimeout(r, 200));
-
-    const rows = await ds.query(
-      `SELECT model, provider, auth_type, cost_usd, fallback_from_model, status, superseded
-         FROM agent_messages
-        WHERE agent_id = $1
-        ORDER BY timestamp DESC`,
-      [TEST_AGENT_ID],
-    );
-    const success = rows.find((r: { status: string }) => r.status === 'success');
+    // recordFallbackSuccess fires off the response — poll until it flushes
+    // (a fixed sleep was flaky on slow CI runners).
+    type AttemptRow = {
+      model: string;
+      provider: string;
+      auth_type: string;
+      cost_usd: string;
+      fallback_from_model: string | null;
+      status: string;
+      superseded: boolean;
+    };
+    const deadline = Date.now() + 10000;
+    let rows: AttemptRow[] = [];
+    let success: AttemptRow | undefined;
+    do {
+      rows = await ds.query(
+        `SELECT model, provider, auth_type, cost_usd, fallback_from_model, status, superseded
+           FROM agent_messages
+          WHERE agent_id = $1
+          ORDER BY timestamp DESC`,
+        [TEST_AGENT_ID],
+      );
+      success = rows.find((r) => r.status === 'success');
+      if (!success) await new Promise((r) => setTimeout(r, 100));
+    } while (!success && Date.now() < deadline);
     expect(success).toBeDefined();
+    if (!success) throw new Error('unreachable');
     // Without the fix, success.auth_type carried 'api_key' (the primary's)
     // and cost_usd was computed from token pricing — non-zero.
     expect(success.auth_type).toBe('subscription');
@@ -246,10 +261,10 @@ describe('Proxy fallback success — auth_type/cost_usd attribution (#1173)', ()
     // superseded primary now stores the canonical `failed` status; the
     // recovered-hop signal lives on `superseded`, not the old `fallback_error`.
     const primaryFailure = rows.find(
-      (r: { status: string; superseded: boolean; fallback_from_model: string | null }) =>
-        r.status === 'failed' && r.superseded === true && r.fallback_from_model === null,
+      (r) => r.status === 'failed' && r.superseded === true && r.fallback_from_model === null,
     );
     expect(primaryFailure).toBeDefined();
+    if (!primaryFailure) throw new Error('unreachable');
     expect(primaryFailure.auth_type).toBe('api_key');
     expect(primaryFailure.model).toBe(PRIMARY_MODEL);
   });

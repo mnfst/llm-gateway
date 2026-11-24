@@ -45,7 +45,14 @@ const AgentDetail: ParentComponent = (props) => {
 
       <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 0;">
         <Show when={agentPlatformIcon()}>
-          <img src={agentPlatformIcon()!} alt="" width="28" height="28" style="flex-shrink: 0;" />
+          <img
+            src={agentPlatformIcon()!}
+            alt=""
+            width="28"
+            height="28"
+            class="platform-icon"
+            style="flex-shrink: 0;"
+          />
         </Show>
         <h1 class="page-header__title" style="margin: 0;">
           {agentDisplayName() ?? agentName()}

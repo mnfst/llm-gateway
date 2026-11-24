@@ -45,8 +45,8 @@ function parseEvent(payload: string): ParsedEvent | null {
 
 function terminalOutput(event: ParsedEvent): Record<string, unknown>[] | null {
   const response = isObjectRecord(event.data.response) ? event.data.response : undefined;
-  if (!response) return null;
-  return Array.isArray(response.output) ? response.output.filter(isObjectRecord) : [];
+  if (!response || !Array.isArray(response.output)) return null;
+  return response.output.filter(isObjectRecord);
 }
 
 function outputTextParts(item: Record<string, unknown>): { index: number; text: string }[] {
@@ -57,10 +57,6 @@ function outputTextParts(item: Record<string, unknown>): { index: number; text: 
     }
     return part.text ? [{ index, text: part.text }] : [];
   });
-}
-
-function hasUsableOutput(output: Record<string, unknown>[]): boolean {
-  return output.some((item) => item.type === 'function_call' || outputTextParts(item).length > 0);
 }
 
 function isDeliverable(event: ParsedEvent): boolean {
@@ -241,8 +237,9 @@ async function readWithTimeout(
 /**
  * The ChatGPT Codex endpoint reports protocol success inside an HTTP 200 SSE
  * body. Hold the body until it contains text/tool output (or a terminal event)
- * so fallback selection does not mistake an empty/failed generation for a
- * successful provider attempt.
+ * so fallback selection does not mistake a failed or stalled generation for a
+ * successful provider attempt. A completed generation with empty output is a
+ * success.
  */
 export async function qualifyChatGptResponse(
   response: Response,
@@ -300,14 +297,16 @@ export async function qualifyChatGptResponse(
       }
       if (event.type !== 'response.completed') continue;
 
+      // A completed response with no text or tool call is still a valid answer
+      // (the model chose to say nothing), so it is delivered, not failed (#3128).
       const terminal = terminalOutput(event);
-      if (!terminal || !hasUsableOutput(terminal)) {
+      if (!terminal) {
         await discard(reader);
         return errorResponse(
           response,
           502,
-          'ChatGPT Codex completed without text or tool output',
-          'empty_response',
+          'ChatGPT Codex completed without a response output list',
+          'malformed_response',
         );
       }
 

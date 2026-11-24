@@ -1,3 +1,4 @@
+import type { AgentScope } from './analytics-scope.service';
 import { Injectable, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, QueryRunner, Repository, SelectQueryBuilder } from 'typeorm';
@@ -26,6 +27,7 @@ import {
   sqlCastFloat,
   sqlSanitizeCost,
 } from '../../common/utils/postgres-sql';
+import { AgentUsageDailyService, type AgentUsageDailyRow } from './agent-usage-daily.service';
 
 interface TimeseriesBucketRow {
   hour?: string;
@@ -62,13 +64,15 @@ export class TimeseriesQueriesService {
     @Optional()
     @InjectDataSource()
     private readonly dataSource?: DataSource,
+    @Optional()
+    private readonly agentUsageDaily?: AgentUsageDailyService,
   ) {}
 
   async getTimeseries(
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
     authType?: string,
     provider?: string,
     excludePlayground = false,
@@ -76,6 +80,49 @@ export class TimeseriesQueriesService {
     tenantProviderId?: string,
     excludeDirect = false,
   ) {
+    const useDailyRows =
+      !hourly &&
+      !!tenantId &&
+      excludePlayground &&
+      !authType &&
+      !provider &&
+      !label &&
+      !tenantProviderId &&
+      this.agentUsageDaily?.supportsRange(tenantId, range);
+    if (useDailyRows) {
+      const rows = await this.agentUsageDaily!.getRangeRows(tenantId, range, {
+        agentScope,
+        excludeDirect,
+      });
+      const byDay = new Map<
+        string,
+        { input_tokens: number; output_tokens: number; cost: number; count: number }
+      >();
+      for (const row of rows) {
+        const current = byDay.get(row.day) ?? {
+          input_tokens: 0,
+          output_tokens: 0,
+          cost: 0,
+          count: 0,
+        };
+        current.input_tokens += Number(row.input_tokens);
+        current.output_tokens += Number(row.output_tokens);
+        current.cost += Number(row.cost_usd);
+        current.count += Number(row.request_count);
+        byDay.set(row.day, current);
+      }
+      const days = [...byDay.entries()].sort(([a], [b]) => a.localeCompare(b));
+      return {
+        tokenUsage: days.map(([date, row]) => ({
+          date,
+          input_tokens: row.input_tokens,
+          output_tokens: row.output_tokens,
+        })),
+        costUsage: days.map(([date, row]) => ({ date, cost: row.cost })),
+        messageUsage: days.map(([date, row]) => ({ date, count: row.count })),
+      };
+    }
+
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
     const bucketExpr = hourly ? sqlHourBucket('at.timestamp') : sqlDateBucket('at.timestamp');
@@ -89,7 +136,7 @@ export class TimeseriesQueriesService {
       .addSelect(`COALESCE(SUM(${sqlSanitizeCost('at.cost_usd')}), 0)`, 'cost')
       .addSelect(sqlCountMessages(), 'count')
       .where('at.timestamp >= :cutoff', { cutoff });
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     if (authType) qb.andWhere('at.auth_type = :authType', { authType });
     if (provider) qb.andWhere('at.provider = :provider', { provider });
     if (excludePlayground) excludePlaygroundAgents(qb);
@@ -108,15 +155,7 @@ export class TimeseriesQueriesService {
         .addSelect('COUNT(*)', 'count')
         .where('r.timestamp >= :requestCutoff', { requestCutoff: cutoff })
         .andWhere(sqlIsCompletedStatus('r.status'));
-      if (tenantId)
-        requestQb.andWhere('r.tenant_id = :requestTenantId', { requestTenantId: tenantId });
-      else requestQb.andWhere('1 = 0');
-      if (agentName && tenantId) {
-        requestQb.andWhere(
-          `r.agent_id = (SELECT id FROM agents WHERE tenant_id = :requestTenantId AND name = :requestAgentName AND deleted_at IS NULL LIMIT 1)`,
-          { requestAgentName: agentName },
-        );
-      }
+      addTenantFilter(requestQb, tenantId, agentScope, 'r');
       if (excludePlayground) {
         requestQb.andWhere(sqlExcludePlayground('r'));
       }
@@ -129,7 +168,7 @@ export class TimeseriesQueriesService {
         .where('at.request_id IS NULL')
         .andWhere('at.timestamp >= :unlinkedCutoff', { unlinkedCutoff: cutoff })
         .andWhere(sqlIsCompletedStatus('at.status'));
-      addTenantFilter(unlinkedQb, tenantId, agentName);
+      addTenantFilter(unlinkedQb, tenantId, agentScope);
       if (excludePlayground) excludePlaygroundAgents(unlinkedQb);
       unlinkedRowsQb = unlinkedQb.groupBy(bucketAlias).orderBy(bucketAlias, 'ASC');
     }
@@ -188,7 +227,7 @@ export class TimeseriesQueriesService {
   async getActiveSkills(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
     excludePlayground = false,
     excludeDirect = false,
   ) {
@@ -203,7 +242,7 @@ export class TimeseriesQueriesService {
       .addSelect('MAX(at.timestamp)', 'last_active_at')
       .where('at.timestamp >= :cutoff', { cutoff })
       .andWhere('at.skill_name IS NOT NULL');
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     if (excludePlayground) excludePlaygroundAgents(qb);
     if (excludeDirect) excludeDirectAttempts(qb);
     const rows = await qb.groupBy('at.skill_name').orderBy('run_count', 'DESC').getRawMany();
@@ -220,7 +259,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     limit = 5,
-    agentName?: string,
+    agentScope?: AgentScope,
     excludePlayground = false,
     excludeDirect = false,
   ) {
@@ -233,7 +272,7 @@ export class TimeseriesQueriesService {
       'at.timestamp >= :cutoff',
       { cutoff },
     );
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     if (excludePlayground) excludePlaygroundAgents(qb);
     if (excludeDirect) excludeDirectAttempts(qb);
     return qb.orderBy('at.timestamp', 'DESC').limit(limit).getRawMany();
@@ -242,7 +281,7 @@ export class TimeseriesQueriesService {
   async getCostByModel(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
     excludePlayground = false,
     excludeDirect = false,
   ) {
@@ -262,7 +301,7 @@ export class TimeseriesQueriesService {
       .where('at.timestamp >= :cutoff', { cutoff })
       .andWhere('at.model IS NOT NULL')
       .andWhere("at.model != ''");
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     if (excludePlayground) excludePlaygroundAgents(qb);
     if (excludeDirect) excludeDirectAttempts(qb);
     const rows = await qb
@@ -303,6 +342,15 @@ export class TimeseriesQueriesService {
     // via includePlayground so users can filter the log to Playground runs.
     if (!includePlayground) {
       agentQb.andWhere('a.is_playground = false');
+    }
+    agentQb.andWhere('a.is_active = true').orderBy('a.created_at', 'DESC');
+
+    if (this.agentUsageDaily?.readsEnabledFor(tenantId)) {
+      const [agents, rows] = await Promise.all([
+        agentQb.getMany(),
+        this.agentUsageDaily.getRows(tenantId),
+      ]);
+      return this.foldAgentUsageRows(agents, rows);
     }
 
     const statsCutoff = computeCutoff('30 days');
@@ -356,7 +404,6 @@ export class TimeseriesQueriesService {
       unlinkedCountsQb.groupBy('at.agent_id');
     }
 
-    agentQb.andWhere('a.is_active = true').orderBy('a.created_at', 'DESC');
     bucketsQb
       .groupBy('at.agent_id')
       .addGroupBy('date')
@@ -449,6 +496,58 @@ export class TimeseriesQueriesService {
         total_cost: stats?.total_cost ?? 0,
         total_tokens: stats?.total_tokens ?? 0,
         sparkline: sparkMap.get(a.id) ?? [],
+      };
+    });
+  }
+
+  private foldAgentUsageRows(agents: Agent[], rows: AgentUsageDailyRow[]) {
+    const sparkCutoff = new Date();
+    sparkCutoff.setUTCDate(sparkCutoff.getUTCDate() - 6);
+    const sparkCutoffDay = sparkCutoff.toISOString().slice(0, 10);
+    const stats = new Map<
+      string,
+      {
+        message_count: number;
+        total_cost: number;
+        total_tokens: number;
+        last_active: string;
+        sparkline: number[];
+      }
+    >();
+
+    for (const row of rows) {
+      const lastActive =
+        row.last_active_at instanceof Date
+          ? row.last_active_at.toISOString()
+          : String(row.last_active_at ?? '');
+      const current = stats.get(row.agent_id) ?? {
+        message_count: 0,
+        total_cost: 0,
+        total_tokens: 0,
+        last_active: '',
+        sparkline: [],
+      };
+      const tokens = Number(row.input_tokens ?? 0) + Number(row.output_tokens ?? 0);
+      current.message_count += Number(row.request_count ?? 0);
+      current.total_cost += Number(row.cost_usd ?? 0);
+      current.total_tokens += tokens;
+      if (lastActive > current.last_active) current.last_active = lastActive;
+      if (row.day >= sparkCutoffDay) current.sparkline.push(tokens);
+      stats.set(row.agent_id, current);
+    }
+
+    return agents.map((agent) => {
+      const usage = stats.get(agent.id);
+      return {
+        agent_name: agent.name,
+        display_name: agent.display_name ?? agent.name,
+        agent_category: agent.agent_category ?? null,
+        agent_platform: agent.agent_platform ?? null,
+        message_count: usage?.message_count ?? 0,
+        last_active: usage?.last_active || String(agent.created_at ?? ''),
+        total_cost: usage?.total_cost ?? 0,
+        total_tokens: usage?.total_tokens ?? 0,
+        sparkline: usage?.sparkline ?? [],
       };
     });
   }
@@ -634,6 +733,29 @@ export class TimeseriesQueriesService {
     label?: string,
     tenantProviderId?: string,
   ): Promise<UsageTimeseries> {
+    const useDailyRows =
+      !hourly &&
+      !!tenantId &&
+      !authType &&
+      !provider &&
+      !label &&
+      !tenantProviderId &&
+      this.agentUsageDaily?.supportsRange(tenantId, range);
+    if (useDailyRows) {
+      const rows = await this.agentUsageDaily!.getRangeRows(tenantId, range);
+      return pivotUsageRows(
+        rows.map((row) => ({
+          date: row.day,
+          agent_name: row.agent_name,
+          tokens: Number(row.input_tokens) + Number(row.output_tokens),
+          messages: Number(row.request_count),
+          cost: Number(row.cost_usd),
+        })),
+        'date',
+        'agent_name',
+      );
+    }
+
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
     const bucketExpr = hourly ? sqlHourBucket('at.timestamp') : sqlDateBucket('at.timestamp');
@@ -681,7 +803,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
   ) {
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
@@ -701,13 +823,13 @@ export class TimeseriesQueriesService {
     excludePlaygroundAgents(qb);
     // addTenantFilter also scopes to the LIVE agent owning the slug (id-based),
     // so a soft-deleted agent sharing the name doesn't leak its old rows.
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     // Scoped to one harness => that harness's routing only; a client-pinned
     // model bypassed it (see excludeDirectAttempts). These per-provider series
     // feed the KPI card sparklines on the harness Overview, so they must drop
     // exactly what the /overview widgets drop or a card and its sparkline
     // disagree. Unscoped (global Overview) keeps everything.
-    if (agentName) excludeDirectAttempts(qb);
+    if (agentScope) excludeDirectAttempts(qb);
 
     const rows = await qb
       .groupBy(bucketAlias)
@@ -722,7 +844,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
   ) {
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
@@ -741,9 +863,9 @@ export class TimeseriesQueriesService {
     excludePlaygroundAgents(qb);
     // addTenantFilter also scopes to the LIVE agent owning the slug (id-based),
     // so a soft-deleted agent sharing the name doesn't leak its old rows.
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     // Agent-scoped => this harness's routing only (see getPerProviderTimeseries).
-    if (agentName) excludeDirectAttempts(qb);
+    if (agentScope) excludeDirectAttempts(qb);
 
     const rows = await qb
       .groupBy(bucketAlias)
@@ -758,7 +880,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
   ) {
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
@@ -777,7 +899,7 @@ export class TimeseriesQueriesService {
     excludePlaygroundAgents(qb);
     // addTenantFilter also scopes to the LIVE agent owning the slug (id-based),
     // so a soft-deleted agent sharing the name doesn't leak its old rows.
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
 
     const rows = await qb
       .groupBy(bucketAlias)
@@ -792,7 +914,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
   ) {
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
@@ -810,7 +932,7 @@ export class TimeseriesQueriesService {
     excludePlaygroundAgents(qb);
     // addTenantFilter also scopes to the LIVE agent owning the slug (id-based),
     // so a soft-deleted agent sharing the name doesn't leak its old rows.
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
 
     const rows = await qb
       .groupBy(bucketAlias)
@@ -825,7 +947,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
   ) {
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
@@ -844,9 +966,9 @@ export class TimeseriesQueriesService {
     excludePlaygroundAgents(qb);
     // addTenantFilter also scopes to the LIVE agent owning the slug (id-based),
     // so a soft-deleted agent sharing the name doesn't leak its old rows.
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     // Agent-scoped => this harness's routing only (see getPerProviderTimeseries).
-    if (agentName) excludeDirectAttempts(qb);
+    if (agentScope) excludeDirectAttempts(qb);
     const rows = await qb
       .groupBy(bucketAlias)
       .addGroupBy(PROVIDER_SERIES_KEY_EXPR)
@@ -859,7 +981,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<UsageTimeseries> {
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
@@ -877,7 +999,7 @@ export class TimeseriesQueriesService {
       .where('at.timestamp >= :cutoff', { cutoff })
       .andWhere('at.provider IS NOT NULL');
     excludePlaygroundAgents(qb);
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     const rows = await qb
       .groupBy(bucketAlias)
       .addGroupBy(PROVIDER_SERIES_KEY_EXPR)
@@ -892,7 +1014,7 @@ export class TimeseriesQueriesService {
     range: string,
     tenantId: string | null,
     hourly: boolean,
-    agentName?: string,
+    agentScope?: AgentScope,
   ) {
     const interval = rangeToInterval(range);
     const cutoff = computeCutoff(interval);
@@ -910,7 +1032,7 @@ export class TimeseriesQueriesService {
     excludePlaygroundAgents(qb);
     // addTenantFilter also scopes to the LIVE agent owning the slug (id-based),
     // so a soft-deleted agent sharing the name doesn't leak its old rows.
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     const rows = await qb
       .groupBy(bucketAlias)
       .addGroupBy('at.model')

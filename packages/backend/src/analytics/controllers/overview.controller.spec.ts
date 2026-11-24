@@ -1,10 +1,11 @@
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
+import { mockScopeResolver, selectedAgent } from '../__tests__/scope.fixture';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CacheModule } from '@nestjs/cache-manager';
 import { OverviewController } from './overview.controller';
 import { AggregationService } from '../services/aggregation.service';
 import { TimeseriesQueriesService } from '../services/timeseries-queries.service';
 import { ProviderService } from '../../routing/routing-core/provider.service';
-import { ResolveAgentService } from '../../routing/routing-core/resolve-agent.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { AgentEnabledProvider } from '../../entities/agent-enabled-provider.entity';
 
@@ -62,7 +63,7 @@ describe('OverviewController', () => {
   let controller: OverviewController;
   let agg: Record<string, jest.Mock>;
   let ts: Record<string, jest.Mock>;
-  let mockResolveAgent: jest.Mock;
+  let mockScopeQuery: jest.Mock;
   let mockGetProviders: jest.Mock;
   let mockAccessFind: jest.Mock;
 
@@ -71,7 +72,7 @@ describe('OverviewController', () => {
   beforeEach(async () => {
     agg = mockAggregation();
     ts = mockTimeseries();
-    mockResolveAgent = jest.fn().mockResolvedValue({ id: 'agent-uuid-1' });
+    mockScopeQuery = jest.fn(async (_sql, parameters) => [{ id: parameters[1] }]);
     mockGetProviders = jest.fn().mockResolvedValue([]);
     mockAccessFind = jest.fn().mockResolvedValue([]);
 
@@ -79,10 +80,10 @@ describe('OverviewController', () => {
       imports: [CacheModule.register()],
       controllers: [OverviewController],
       providers: [
+        { provide: AnalyticsScopeService, useValue: mockScopeResolver(mockScopeQuery) },
         { provide: AggregationService, useValue: agg },
         { provide: TimeseriesQueriesService, useValue: ts },
         { provide: ProviderService, useValue: { getProviders: mockGetProviders } },
-        { provide: ResolveAgentService, useValue: { resolve: mockResolveAgent } },
         { provide: getRepositoryToken(AgentEnabledProvider), useValue: { find: mockAccessFind } },
       ],
     }).compile();
@@ -154,14 +155,112 @@ describe('OverviewController', () => {
     );
   });
 
+  it('returns the critical overview without waiting for detail queries', async () => {
+    const result = await controller.getOverview({ range: '90d', fast: 'true' }, ctx as never);
+
+    expect(result.summary.messages).toEqual({ value: 50, trend_pct: 11 });
+    expect(result.cost_by_model).toEqual([]);
+    expect(result.recent_activity).toEqual([]);
+    expect(result.request_reliability).toBeNull();
+    expect(result.has_data).toBe(true);
+    expect(agg.getPreviousWindowMetrics).toHaveBeenCalledWith(
+      '90d',
+      'tenant-123',
+      undefined,
+      true,
+      false,
+    );
+    expect(ts.getTimeseries).toHaveBeenCalledWith(
+      '90d',
+      'tenant-123',
+      false,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      false,
+    );
+    expect(agg.hasAnyData).toHaveBeenCalledWith('tenant-123', undefined, true, false);
+    expect(agg.getRequestReliability).not.toHaveBeenCalled();
+    expect(ts.getCostByModel).not.toHaveBeenCalled();
+    expect(ts.getRecentActivity).not.toHaveBeenCalled();
+    expect(ts.getActiveSkills).not.toHaveBeenCalled();
+  });
+
+  it('loads slow overview details independently', async () => {
+    const requestItems = [{ id: 'request-1' }];
+    const messagesQuery = { getMessages: jest.fn().mockResolvedValue({ items: requestItems }) };
+    const requestAwareController = new OverviewController(
+      mockScopeResolver(),
+      agg as never,
+      ts as never,
+      { getProviders: mockGetProviders } as never,
+      { find: mockAccessFind } as never,
+      messagesQuery as never,
+    );
+    ts.getCostByModel.mockResolvedValueOnce([{ model: 'gpt-5', tokens: 10 }]);
+
+    await expect(
+      requestAwareController.getOverviewDetails({ range: '365d' }, ctx as never),
+    ).resolves.toEqual({
+      cost_by_model: [{ model: 'gpt-5', tokens: 10 }],
+      recent_activity: requestItems,
+      request_reliability: expect.objectContaining({ total: 50 }),
+      active_skills: [],
+    });
+    expect(messagesQuery.getMessages).toHaveBeenCalledWith({
+      range: '365d',
+      tenantId: 'tenant-123',
+      agent_name: undefined,
+      agentScope: undefined,
+      limit: 5,
+      include_total: false,
+      include_filter_options: false,
+      exclude_playground: true,
+      exclude_direct: false,
+    });
+    expect(ts.getCostByModel).toHaveBeenCalledWith('365d', 'tenant-123', undefined, true, false);
+    expect(agg.getRequestReliability).toHaveBeenCalledWith(
+      '365d',
+      'tenant-123',
+      undefined,
+      true,
+      false,
+    );
+    expect(ts.getActiveSkills).toHaveBeenCalledWith('365d', 'tenant-123', undefined, true, false);
+  });
+
+  it('serves model usage on its own endpoint', async () => {
+    ts.getCostByModel.mockResolvedValueOnce([{ model: 'gpt-5', tokens: 10 }]);
+
+    await expect(controller.getModelUsage({ range: '30d' }, ctx as never)).resolves.toEqual([
+      { model: 'gpt-5', tokens: 10 },
+    ]);
+    expect(ts.getCostByModel).toHaveBeenCalledWith('30d', 'tenant-123', undefined, true, false);
+  });
+
+  it('defaults model usage to 24h and drops direct attempts when scoped to a harness', async () => {
+    await controller.getModelUsage({ agent_name: 'bot-1' }, ctx as never);
+
+    expect(ts.getCostByModel).toHaveBeenCalledWith(
+      '24h',
+      'tenant-123',
+      selectedAgent(ctx.tenantId, 'bot-1'),
+      true,
+      true,
+    );
+  });
+
   it('uses request rows for recent activity when the request query service is available', async () => {
     const requestItems = [{ id: 'request-1', status: 'ok' }];
     const messagesQuery = { getMessages: jest.fn().mockResolvedValue({ items: requestItems }) };
     const requestAwareController = new OverviewController(
+      mockScopeResolver(),
       agg as never,
       ts as never,
       { getProviders: mockGetProviders } as never,
-      { resolve: mockResolveAgent } as never,
       { find: mockAccessFind } as never,
       messagesQuery as never,
     );
@@ -176,6 +275,7 @@ describe('OverviewController', () => {
       range: '24h',
       tenantId: 'tenant-123',
       agent_name: 'bot-1',
+      agentScope: selectedAgent(ctx.tenantId, 'bot-1'),
       limit: 5,
       include_total: false,
       include_filter_options: false,
@@ -190,10 +290,10 @@ describe('OverviewController', () => {
     // Requests page — so the exclusion has to be opt-in per call, not baked in.
     const messagesQuery = { getMessages: jest.fn().mockResolvedValue({ items: [] }) };
     const requestAwareController = new OverviewController(
+      mockScopeResolver(),
       agg as never,
       ts as never,
       { getProviders: mockGetProviders } as never,
-      { resolve: mockResolveAgent } as never,
       { find: mockAccessFind } as never,
       messagesQuery as never,
     );
@@ -212,7 +312,12 @@ describe('OverviewController', () => {
 
   it('returns combined provider usage timeseries with agent scope', async () => {
     await controller.getOverviewProvidersUsage({ range: '7d', agent_name: 'bot-1' }, ctx as never);
-    expect(ts.getProviderUsageTimeseries).toHaveBeenCalledWith('7d', 'tenant-123', false, 'bot-1');
+    expect(ts.getProviderUsageTimeseries).toHaveBeenCalledWith(
+      '7d',
+      'tenant-123',
+      false,
+      selectedAgent('tenant-123', 'bot-1'),
+    );
   });
 
   it('defaults range to 24h when not specified', async () => {
@@ -233,14 +338,14 @@ describe('OverviewController', () => {
     expect(agg.getPreviousWindowMetrics).toHaveBeenCalledWith(
       '24h',
       'tenant-123',
-      'bot-1',
+      selectedAgent('tenant-123', 'bot-1'),
       true,
       true,
     );
     expect(agg.getRequestReliability).toHaveBeenCalledWith(
       '24h',
       'tenant-123',
-      'bot-1',
+      selectedAgent('tenant-123', 'bot-1'),
       true,
       true,
     );
@@ -248,7 +353,7 @@ describe('OverviewController', () => {
       '24h',
       'tenant-123',
       true,
-      'bot-1',
+      selectedAgent('tenant-123', 'bot-1'),
       undefined,
       undefined,
       true,
@@ -256,10 +361,34 @@ describe('OverviewController', () => {
       undefined,
       true,
     );
-    expect(ts.getCostByModel).toHaveBeenCalledWith('24h', 'tenant-123', 'bot-1', true, true);
-    expect(ts.getRecentActivity).toHaveBeenCalledWith('24h', 'tenant-123', 5, 'bot-1', true, true);
-    expect(ts.getActiveSkills).toHaveBeenCalledWith('24h', 'tenant-123', 'bot-1', true, true);
-    expect(agg.hasAnyData).toHaveBeenCalledWith('tenant-123', 'bot-1', true, true);
+    expect(ts.getCostByModel).toHaveBeenCalledWith(
+      '24h',
+      'tenant-123',
+      selectedAgent('tenant-123', 'bot-1'),
+      true,
+      true,
+    );
+    expect(ts.getRecentActivity).toHaveBeenCalledWith(
+      '24h',
+      'tenant-123',
+      5,
+      selectedAgent('tenant-123', 'bot-1'),
+      true,
+      true,
+    );
+    expect(ts.getActiveSkills).toHaveBeenCalledWith(
+      '24h',
+      'tenant-123',
+      selectedAgent('tenant-123', 'bot-1'),
+      true,
+      true,
+    );
+    expect(agg.hasAnyData).toHaveBeenCalledWith(
+      'tenant-123',
+      selectedAgent('tenant-123', 'bot-1'),
+      true,
+      true,
+    );
   });
 
   it('keeps client-pinned (direct) requests on the global overview', async () => {
@@ -308,25 +437,21 @@ describe('OverviewController', () => {
 
   it('returns has_providers true when agent has active providers', async () => {
     mockGetProviders.mockResolvedValueOnce([{ id: 'provider-1', is_active: true }]);
-    mockAccessFind.mockResolvedValueOnce([
-      { agent_id: 'agent-uuid-1', tenant_provider_id: 'provider-1' },
-    ]);
+    mockAccessFind.mockResolvedValueOnce([{ agent_id: 'bot-1', tenant_provider_id: 'provider-1' }]);
     const result = await controller.getOverview(
       { range: '24h', agent_name: 'bot-1' },
       ctx as never,
     );
 
     expect(result.has_providers).toBe(true);
-    expect(mockResolveAgent).toHaveBeenCalledWith('tenant-123', 'bot-1');
+    expect(mockScopeQuery).toHaveBeenCalledTimes(1);
     expect(mockGetProviders).toHaveBeenCalledWith('tenant-123');
-    expect(mockAccessFind).toHaveBeenCalledWith({ where: { agent_id: 'agent-uuid-1' } });
+    expect(mockAccessFind).toHaveBeenCalledWith({ where: { agent_id: 'bot-1' } });
   });
 
   it('returns has_providers false when active providers are not enabled for the agent', async () => {
     mockGetProviders.mockResolvedValueOnce([{ id: 'provider-1', is_active: true }]);
-    mockAccessFind.mockResolvedValueOnce([
-      { agent_id: 'agent-uuid-1', tenant_provider_id: 'provider-2' },
-    ]);
+    mockAccessFind.mockResolvedValueOnce([{ agent_id: 'bot-1', tenant_provider_id: 'provider-2' }]);
     const result = await controller.getOverview(
       { range: '24h', agent_name: 'bot-1' },
       ctx as never,
@@ -348,7 +473,7 @@ describe('OverviewController', () => {
     const result = await controller.getOverview({ range: '24h' }, ctx as never);
 
     expect(result.has_providers).toBe(false);
-    expect(mockResolveAgent).not.toHaveBeenCalled();
+    expect(mockScopeQuery).not.toHaveBeenCalled();
   });
 
   it('returns has_providers false when tenant is null', async () => {
@@ -359,11 +484,11 @@ describe('OverviewController', () => {
     );
 
     expect(result.has_providers).toBe(false);
-    expect(mockResolveAgent).not.toHaveBeenCalled();
+    expect(mockScopeQuery).not.toHaveBeenCalled();
   });
 
   it('returns has_providers false when agent resolution fails', async () => {
-    mockResolveAgent.mockRejectedValueOnce(new Error('Not found'));
+    mockScopeQuery.mockResolvedValueOnce([]);
     const result = await controller.getOverview(
       { range: '24h', agent_name: 'missing-agent' },
       ctx as never,
@@ -403,7 +528,12 @@ describe('OverviewController', () => {
         { range: '24h', agent_name: 'bot-1' },
         ctx as never,
       );
-      expect(ts.getPerProviderTimeseries).toHaveBeenCalledWith('24h', 'tenant-123', true, 'bot-1');
+      expect(ts.getPerProviderTimeseries).toHaveBeenCalledWith(
+        '24h',
+        'tenant-123',
+        true,
+        selectedAgent('tenant-123', 'bot-1'),
+      );
     });
 
     it('getPerProviderMessageTimeseries defaults range and undefined agent', async () => {
@@ -425,7 +555,7 @@ describe('OverviewController', () => {
         '30d',
         'tenant-123',
         false,
-        'bot-1',
+        selectedAgent('tenant-123', 'bot-1'),
       );
     });
 
@@ -443,7 +573,7 @@ describe('OverviewController', () => {
         '7d',
         'tenant-123',
         false,
-        'bot-1',
+        selectedAgent('tenant-123', 'bot-1'),
       );
     });
 
@@ -452,7 +582,12 @@ describe('OverviewController', () => {
         { range: '24h', agent_name: 'bot-1' },
         ctx as never,
       );
-      expect(ts.getPerModelCostTimeseries).toHaveBeenCalledWith('24h', 'tenant-123', true, 'bot-1');
+      expect(ts.getPerModelCostTimeseries).toHaveBeenCalledWith(
+        '24h',
+        'tenant-123',
+        true,
+        selectedAgent('tenant-123', 'bot-1'),
+      );
     });
 
     it('passes null tenantId straight through when unresolved', async () => {

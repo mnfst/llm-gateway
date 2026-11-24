@@ -1,70 +1,87 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import { Request } from 'express';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { Request } from 'express';
-import { Tenant } from '../entities/tenant.entity';
-import { WaitlistClaim } from '../entities/waitlist-claim.entity';
-import { TenantCtx, TenantContext } from '../common/decorators/tenant-context.decorator';
 import { Public } from '../common/decorators/public.decorator';
-import { WaitlistSyncService } from './waitlist-sync.service';
-import { WaitlistClaimDto } from './dto/waitlist-claim.dto';
-import { AutofixService } from '../routing/autofix/autofix.service';
+import { WaitlistClaim } from '../entities/waitlist-claim.entity';
+import { DEFAULT_PIVOT_CLAIM_SOURCE, PivotClaimDto } from './dto/pivot-claim.dto';
+
+/**
+ * Same-origin check for the sourceless fallback: a stale cloud bundle from
+ * before the source field posts same-origin to its own backend, while
+ * self-hosted dashboards post cross-origin. Explicit sources bypass this.
+ */
+export function claimRequestIsSameOrigin(headers: {
+  origin?: string | string[];
+  host?: string | string[];
+}): boolean {
+  const origin = headers.origin;
+  const host = headers.host;
+  if (typeof origin !== 'string' || typeof host !== 'string') return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false;
+  }
+}
 
 @Controller('api/v1/waitlist')
 export class WaitlistController {
   constructor(
-    @InjectRepository(Tenant)
-    private readonly tenantRepo: Repository<Tenant>,
     @InjectRepository(WaitlistClaim)
     private readonly claimRepo: Repository<WaitlistClaim>,
-    private readonly waitlistSync: WaitlistSyncService,
-    private readonly autofixService: AutofixService,
   ) {}
 
-  @Get('autofix')
-  async getStatus(
-    @TenantCtx() ctx: TenantContext,
-  ): Promise<{ joined: boolean; joinedAt: string | null }> {
-    if (!ctx.tenantId) return { joined: false, joinedAt: null };
-    const tenant = await this.tenantRepo.findOne({
-      where: { id: ctx.tenantId },
-      select: ['autofix_waitlist_at'],
-    });
-    return {
-      joined: tenant?.autofix_waitlist_at != null,
-      joinedAt: tenant?.autofix_waitlist_at ?? null,
-    };
-  }
-
-  @Post('autofix')
-  @HttpCode(HttpStatus.OK)
-  async join(
-    @TenantCtx() ctx: TenantContext,
-    @Req() req: Request & { user?: { email?: string } },
-  ): Promise<{ joined: boolean; joinedAt: string }> {
-    if (!ctx.tenantId) {
-      return { joined: false, joinedAt: '' };
-    }
-    const now = new Date().toISOString();
-    await this.tenantRepo.update(ctx.tenantId, { autofix_waitlist_at: now });
-    // Joining grants Auto-fix early access — drop the cached decision so the
-    // toggle shows up right away instead of after the cache TTL.
-    this.autofixService.invalidateAccess(ctx.tenantId);
-
-    const email = req.user?.email ?? '';
-    this.waitlistSync.syncClaim(email).catch(() => {});
-
-    return { joined: true, joinedAt: now };
-  }
-
+  /**
+   * Compatibility endpoint for self-hosted versions that predate Autofix GA.
+   * Keep returning 200 during the deprecation window, but do not retain new
+   * waitlist claims now that every tenant has access.
+   */
   @Public()
   @Post('autofix/claim')
   @HttpCode(HttpStatus.OK)
-  async receiveClaim(@Body() dto: WaitlistClaimDto): Promise<{ ok: boolean }> {
-    await this.claimRepo.upsert(
-      { email: dto.email, source: 'self-hosted', claimed_at: new Date().toISOString() },
-      { conflictPaths: ['email'] },
-    );
+  receiveClaim(): { ok: boolean } {
+    return { ok: true };
+  }
+
+  /**
+   * Pivot waiting-list claim. Public and CORS-open on purpose: cloud posts
+   * same-origin and self-hosted dashboards post here straight from the
+   * browser, so any locally-registered user can join with a corrected email.
+   * The upsert dedupes by email and the latest claim wins, source included:
+   * attribution reflects where the person last joined from, matching the
+   * historical phone-home behavior. The global throttler still applies.
+   */
+  @Public()
+  @Post('pivot/claim')
+  @HttpCode(HttpStatus.OK)
+  async receivePivotClaim(
+    @Body() dto: PivotClaimDto,
+    @Req() req: Request,
+  ): Promise<{ ok: boolean }> {
+    // An explicit source always wins; a sourceless same-origin post is the
+    // cloud dashboard (a cached pre-source bundle) talking to its own
+    // backend, anything else defaults to self-hosted.
+    const source =
+      dto.source ?? (claimRequestIsSameOrigin(req.headers) ? 'cloud' : DEFAULT_PIVOT_CLAIM_SOURCE);
+    await this.claimRepo
+      .createQueryBuilder()
+      .insert()
+      .into(WaitlistClaim)
+      .values({
+        email: dto.email.trim().toLowerCase(),
+        source,
+        claimed_at: new Date().toISOString(),
+      })
+      // Latest claim wins among the sources this route owns; a website row
+      // (Peacock's own form) is never overwritten by this public endpoint.
+      .orUpdate(['source', 'claimed_at'], ['email'], {
+        overwriteCondition: {
+          where: '"waitlist_claims"."source" != :websiteSource',
+          parameters: { websiteSource: 'website' },
+        },
+      })
+      .execute();
     return { ok: true };
   }
 }

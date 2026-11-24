@@ -1,5 +1,5 @@
 import { For, Show, type Component, type JSX } from 'solid-js';
-import { useSearchParams } from '@solidjs/router';
+import { useLocation, useSearchParams } from '@solidjs/router';
 import { authClient } from '../services/auth-client.js';
 import { buildSocialAuthUrls } from '../services/auth-redirects.js';
 import { setLastAuthMethod } from '../services/last-auth-method.js';
@@ -56,15 +56,23 @@ const providerIcons: Record<Provider, () => JSX.Element> = {
   ),
 };
 
-const SocialButtons: Component<{ enabledProviders?: string[]; lastUsed?: string | null }> = (
-  props,
-) => {
+interface SocialButtonsProps {
+  enabledProviders?: string[];
+  lastUsed?: string | null;
+  callbackURL?: string;
+}
+
+const SocialButtons: Component<SocialButtonsProps> = (props) => {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const visible = () => {
     if (!props.enabledProviders) return allProviders;
     return allProviders.filter((p) => props.enabledProviders!.includes(p.id));
   };
-  const authUrls = () => buildSocialAuthUrls(searchParams);
+  const authUrls = () => ({
+    ...buildSocialAuthUrls(searchParams, location.search),
+    ...(props.callbackURL ? { callbackURL: props.callbackURL } : {}),
+  });
 
   return (
     <Show when={visible().length > 0}>

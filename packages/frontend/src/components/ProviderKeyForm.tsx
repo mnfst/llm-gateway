@@ -74,6 +74,11 @@ export interface ProviderKeyFormProps {
   providers?: RoutingProvider[];
   addKeyOpen?: Accessor<boolean>;
   setAddKeyOpen?: Setter<boolean>;
+  /**
+   * False hides the single-key "Disconnect provider" action. A custom
+   * provider is removed with its definition, never by dropping its last key.
+   */
+  canDisconnect?: boolean;
   onBack: () => void;
   onUpdate: () => void;
 }
@@ -423,31 +428,33 @@ const ProviderKeyForm: Component<ProviderKeyFormProps> = (props) => {
               >
                 Change
               </button>
-              <button
-                class="provider-detail__disconnect-icon"
-                disabled={props.busy()}
-                onClick={() => handleDisconnect()}
-                aria-label="Disconnect provider"
-                title="Disconnect"
-              >
-                <Show when={!props.busy()} fallback={<span class="spinner" />}>
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M3 6h18" />
-                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                  </svg>
-                </Show>
-              </button>
+              <Show when={props.canDisconnect !== false}>
+                <button
+                  class="provider-detail__disconnect-icon"
+                  disabled={props.busy()}
+                  onClick={() => handleDisconnect()}
+                  aria-label="Disconnect provider"
+                  title="Disconnect"
+                >
+                  <Show when={!props.busy()} fallback={<span class="spinner" />}>
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 6h18" />
+                      <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+                      <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+                    </svg>
+                  </Show>
+                </button>
+              </Show>
             </div>
             <Show when={supportsMultiKey() && activeKeys().length < MAX_KEYS_PER_PROVIDER}>
               <AddAnotherKeyAction

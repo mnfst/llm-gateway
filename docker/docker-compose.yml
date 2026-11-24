@@ -65,12 +65,22 @@ services:
       # credentials. When unset, the backend falls back to BETTER_AUTH_SECRET.
       - MANIFEST_ENCRYPTION_KEY=${MANIFEST_ENCRYPTION_KEY:-}
       - BETTER_AUTH_URL=${BETTER_AUTH_URL:-http://localhost:${HOST_PORT:-${PORT:-2099}}}
+      # Extra hosts that may serve the dashboard/API, comma-separated. The
+      # OAuth callback and session cookie follow the request host, so set this
+      # when the same instance answers on more than one domain.
+      - BETTER_AUTH_ALLOWED_HOSTS=${BETTER_AUTH_ALLOWED_HOSTS:-}
+      - MCP_ENABLED=${MCP_ENABLED:-}
       # Defaults to the host-installed Ollama. Override in .env if your
       # Ollama runs elsewhere (e.g. on another host on your LAN).
       - OLLAMA_HOST=${OLLAMA_HOST:-http://host.docker.internal:11434}
       - PROVIDER_TIMEOUT_MS=${PROVIDER_TIMEOUT_MS:-180000}
       - STREAM_WARMUP_MS=${STREAM_WARMUP_MS:-15000}
       - CODEX_SEMANTIC_OUTPUT_TIMEOUT_MS=${CODEX_SEMANTIC_OUTPUT_TIMEOUT_MS:-60000}
+      # Per-tenant concurrent in-flight request limit for this backend process.
+      - MANIFEST_CONCURRENCY_MAX=${MANIFEST_CONCURRENCY_MAX:-10}
+      # Per-tenant (M201) and per-IP (M202) requests/minute for this backend process.
+      - MANIFEST_RATE_MAX_REQUESTS=${MANIFEST_RATE_MAX_REQUESTS:-200}
+      - MANIFEST_IP_RATE_MAX_REQUESTS=${MANIFEST_IP_RATE_MAX_REQUESTS:-500}
       # Both are deliberately hardcoded, not `${VAR:-default}`. The image is a
       # production artifact: NODE_ENV=production is what makes it one, and the
       # seeder refuses to run under it anyway (database-seeder.service.ts logs
@@ -123,8 +133,8 @@ services:
       - THROTTLE_LIMIT=${THROTTLE_LIMIT:-100}
       # Database tuning. DB_POOL_MAX sizes the app pool, AUTH_DB_POOL_MAX the
       # separate pool Better Auth opens for itself.
-      - DB_POOL_MAX=${DB_POOL_MAX:-30}
-      - AUTH_DB_POOL_MAX=${AUTH_DB_POOL_MAX:-10}
+      - DB_POOL_MAX=${DB_POOL_MAX:-10}
+      - AUTH_DB_POOL_MAX=${AUTH_DB_POOL_MAX:-5}
       - DB_TUNE_SESSION=${DB_TUNE_SESSION:-}
       # Set false for multi-replica deploys where only one instance should run
       # migrations. A single-container compose install wants the default.
@@ -146,9 +156,19 @@ services:
       - SENTRY_RELEASE=${SENTRY_RELEASE:-}
       # Anonymous usage telemetry (opt-out). Set MANIFEST_TELEMETRY_DISABLED=1
       # to disable, or point TELEMETRY_ENDPOINT at your own collector. See
-      # https://manifest.build/docs/self-hosted#telemetry for the payload shape.
+      # https://manifest.build/llm-gateway/docs/self-hosted/#telemetry for the payload shape.
       - MANIFEST_TELEMETRY_DISABLED=${MANIFEST_TELEMETRY_DISABLED:-0}
       - TELEMETRY_ENDPOINT=${TELEMETRY_ENDPOINT:-}
+      # Daily Harness usage rollup. Reads stay off until backfill parity passes.
+      - AGENT_USAGE_DAILY_WORKER=${AGENT_USAGE_DAILY_WORKER:-}
+      - AGENT_USAGE_DAILY_READS=${AGENT_USAGE_DAILY_READS:-}
+      - AGENT_USAGE_DAILY_READ_TENANTS=${AGENT_USAGE_DAILY_READ_TENANTS:-}
+      - AGENT_USAGE_DAILY_BATCH_SIZE=${AGENT_USAGE_DAILY_BATCH_SIZE:-}
+      - AGENT_USAGE_DAILY_RUN_BUDGET_MS=${AGENT_USAGE_DAILY_RUN_BUDGET_MS:-}
+      # Update check (opt-out). Once a day the dashboard asks GitHub for the
+      # latest Manifest release so it can show a "new version available"
+      # badge. Set MANIFEST_UPDATE_CHECK_DISABLED=1 on air-gapped installs.
+      - MANIFEST_UPDATE_CHECK_DISABLED=${MANIFEST_UPDATE_CHECK_DISABLED:-0}
     depends_on:
       postgres:
         condition: service_healthy

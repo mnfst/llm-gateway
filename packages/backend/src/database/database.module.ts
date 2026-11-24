@@ -24,6 +24,7 @@ import { DbTuningService } from './db-tuning.service';
 import { ModelPricesModule } from '../model-prices/model-prices.module';
 import { shouldRetryDbConnection } from '../common/utils/db-retry';
 import { RequestRecordingRetentionService } from './request-recording-retention.service';
+import { SecretReencryptionService } from './secret-reencryption.service';
 
 @Module({
   imports: [
@@ -58,7 +59,7 @@ import { RequestRecordingRetentionService } from './request-recording-retention.
         toRetry: shouldRetryDbConnection,
         logging: false,
         extra: {
-          // app.config.ts always resolves dbPoolMax (default 20), so there is no
+          // app.config.ts always resolves dbPoolMax (default 10), so there is no
           // undefined case to fall back from — keep that file the single source
           // of truth for the pool size.
           max: config.get<number>('app.dbPoolMax'),
@@ -90,7 +91,12 @@ import { RequestRecordingRetentionService } from './request-recording-retention.
     ]),
     ModelPricesModule,
   ],
-  providers: [DatabaseSeederService, DbTuningService, RequestRecordingRetentionService],
+  providers: [
+    DatabaseSeederService,
+    DbTuningService,
+    RequestRecordingRetentionService,
+    SecretReencryptionService,
+  ],
   exports: [DatabaseSeederService],
 })
 export class DatabaseModule {}

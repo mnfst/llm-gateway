@@ -5,7 +5,7 @@ import {
 } from '../src/autofix-status';
 
 describe('deriveAutofixStatus', () => {
-  it('uses null for requests with no recorded Auto-fix flow', () => {
+  it('uses null for requests with no recorded Autofix flow', () => {
     expect(deriveAutofixStatus(undefined)).toBeNull();
     expect(deriveAutofixStatus(null)).toBeNull();
   });

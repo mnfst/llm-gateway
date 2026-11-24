@@ -45,6 +45,26 @@ export interface SharedProviderEntry {
   tileOnly?: boolean;
 }
 
+export interface MetaModelApiModel {
+  id: string;
+  displayName: string;
+}
+
+export const META_MODEL_API_CONTEXT_WINDOW = 1_048_576;
+
+export const META_MODEL_API_MODELS: readonly MetaModelApiModel[] = [
+  { id: 'muse-spark-1.2', displayName: 'Muse Spark 1.2' },
+  {
+    id: 'muse-spark-1.2-contributor',
+    displayName: 'Muse Spark 1.2 Contributor (inputs and outputs may train Meta)',
+  },
+  { id: 'muse-spark-1.1', displayName: 'Muse Spark 1.1' },
+];
+
+export const META_MODEL_API_MODEL_BY_ID: ReadonlyMap<string, MetaModelApiModel> = new Map(
+  META_MODEL_API_MODELS.map((model) => [model.id, model]),
+);
+
 export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
   {
     id: 'qwen',
@@ -81,6 +101,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: '',
     minKeyLength: 100,
     keyPlaceholder: 'ABSK...',
+  },
+  {
+    id: 'vertex',
+    displayName: 'Google Vertex AI',
+    aliases: ['google-vertex', 'google vertex', 'vertex-ai', 'vertex ai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#4285f4',
+    keyPrefix: 'AQ.',
+    minKeyLength: 40,
+    keyPlaceholder: 'AQ...',
   },
   {
     id: 'byteplus',
@@ -257,6 +289,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     keyPrefix: 'sk-',
     minKeyLength: 30,
     keyPlaceholder: 'sk-...',
+  },
+  {
+    id: 'meta',
+    displayName: 'Meta',
+    aliases: [],
+    openRouterPrefixes: ['meta'],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#0668E1',
+    keyPrefix: 'LLM_',
+    minKeyLength: 20,
+    keyPlaceholder: 'LLM_...',
   },
   {
     id: 'xiaomi',

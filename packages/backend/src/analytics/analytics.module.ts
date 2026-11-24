@@ -1,8 +1,10 @@
+import { AnalyticsScopeService } from './services/analytics-scope.service';
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AgentMessage } from '../entities/agent-message.entity';
 import { ManifestRequest } from '../entities/request.entity';
 import { Agent } from '../entities/agent.entity';
+import { InstallMetadata } from '../entities/install-metadata.entity';
 import { Tenant } from '../entities/tenant.entity';
 import { CustomProvider } from '../entities/custom-provider.entity';
 import { TenantProvider } from '../entities/tenant-provider.entity';
@@ -41,6 +43,7 @@ import { AutofixStatsService } from './services/autofix-stats.service';
 import { RequestVolumeService } from './services/request-volume.service';
 import { BillingModule } from '../billing/billing.module';
 import { AutofixModule } from '../routing/autofix/autofix.module';
+import { AgentUsageDailyService } from './services/agent-usage-daily.service';
 
 @Module({
   imports: [
@@ -48,6 +51,7 @@ import { AutofixModule } from '../routing/autofix/autofix.module';
       AgentMessage,
       ManifestRequest,
       Agent,
+      InstallMetadata,
       Tenant,
       CustomProvider,
       TenantProvider,
@@ -77,6 +81,7 @@ import { AutofixModule } from '../routing/autofix/autofix.module';
     AutofixAnalyticsController,
   ],
   providers: [
+    AnalyticsScopeService,
     AggregationService,
     AgentDuplicationService,
     AgentLifecycleService,
@@ -91,7 +96,16 @@ import { AutofixModule } from '../routing/autofix/autofix.module';
     AttemptStatsService,
     AutofixStatsService,
     RequestVolumeService,
+    AgentUsageDailyService,
   ],
-  exports: [SpecificityFeedbackService, ProviderUsageService],
+  exports: [
+    AnalyticsScopeService,
+    SpecificityFeedbackService,
+    ProviderUsageService,
+    AgentLifecycleService,
+    TimeseriesQueriesService,
+    MessagesQueryService,
+    AutofixStatsService,
+  ],
 })
 export class AnalyticsModule {}

@@ -10,8 +10,16 @@ const {
 	withoutRouteManagedStream,
 } = require('../dist/nodes/Manifest/Manifest.node.js');
 
-test('keeps codex metadata valid in package and repository files', () => {
-	const expectedNode = `${require('../package.json').name}.${new Manifest().description.name}`;
+const ATTRIBUTION_HEADERS = {
+	Authorization: 'Bearer manifest_test_key',
+	'User-Agent': 'n8n-nodes-manifest',
+	'X-Title': 'n8n',
+	'HTTP-Referer': 'https://n8n.io',
+};
+
+test('keeps node metadata valid in package and repository files', () => {
+	const packageName = require('../package.json').name;
+	const manifestDescription = new Manifest().description;
 	const allowedFields = new Set([
 		'alias',
 		'categories',
@@ -21,12 +29,17 @@ test('keeps codex metadata valid in package and repository files', () => {
 		'resources',
 	]);
 	const codexFiles = [
-		'../nodes/Manifest/Manifest.node.json',
-		'../dist/nodes/Manifest/Manifest.node.json',
-		'../../../nodes/Manifest/Manifest.node.json',
+		['../nodes/Manifest/Manifest.node.json', `${packageName}.${manifestDescription.name}`],
+		['../dist/nodes/Manifest/Manifest.node.json', `${packageName}.${manifestDescription.name}`],
+		['../../../nodes/Manifest/Manifest.node.json', `${packageName}.${manifestDescription.name}`],
+		['../nodes/LmChatManifest/LmChatManifest.node.json', `${packageName}.lmChatManifest`],
+		['../dist/nodes/LmChatManifest/LmChatManifest.node.json', `${packageName}.lmChatManifest`],
+		['../../../nodes/LmChatManifest/LmChatManifest.node.json', `${packageName}.lmChatManifest`],
 	];
 
-	for (const relativePath of codexFiles) {
+	assert.equal(manifestDescription.usableAsTool, true);
+
+	for (const [relativePath, expectedNode] of codexFiles) {
 		const codex = JSON.parse(fs.readFileSync(path.join(__dirname, relativePath), 'utf8'));
 
 		assert.equal(codex.node, expectedNode);
@@ -127,6 +140,25 @@ test('preserves a non-JSON buffered response as text', () => {
 	assert.equal(response, 'plain text');
 });
 
+test('attaches Manifest attribution headers when listing models', async () => {
+	const requests = [];
+	const context = executionContext(
+		{ operation: 'listModels' },
+		{
+			body: '{"data":[]}',
+			headers: { 'content-type': 'application/json' },
+			statusCode: 200,
+		},
+		requests,
+	);
+
+	await new Manifest().execute.call(context);
+
+	assert.deepEqual(requests[0].headers, ATTRIBUTION_HEADERS);
+	assert.equal(requests[0].method, 'GET');
+	assert.equal(requests[0].url, 'http://manifest.test/v1/models');
+});
+
 test('executes chat completions without overriding the route response mode', async () => {
 	const requests = [];
 	const context = executionContext(
@@ -151,7 +183,7 @@ test('executes chat completions without overriding the route response mode', asy
 		{
 			method: 'POST',
 			url: 'http://manifest.test/v1/chat/completions',
-			headers: { Authorization: 'Bearer manifest_test_key' },
+			headers: ATTRIBUTION_HEADERS,
 			encoding: 'text',
 			returnFullResponse: true,
 			json: true,
@@ -185,6 +217,7 @@ test('executes Responses API calls with parsed streaming output', async () => {
 
 	const result = await new Manifest().execute.call(context);
 
+	assert.deepEqual(requests[0].headers, ATTRIBUTION_HEADERS);
 	assert.deepEqual(requests[0].body, {
 		max_output_tokens: 20,
 		model: 'auto',
@@ -210,4 +243,18 @@ test('executes Responses API calls with parsed streaming output', async () => {
 			},
 		],
 	]);
+});
+
+test('sends requests to the app API when no base URL was saved', async () => {
+	const requests = [];
+	const context = executionContext(
+		{ operation: 'listModels' },
+		{ body: '{"data":[]}', headers: { 'content-type': 'application/json' }, statusCode: 200 },
+		requests,
+	);
+	context.getCredentials = async () => ({ apiKey: 'manifest_test_key' });
+
+	await new Manifest().execute.call(context);
+
+	assert.equal(requests[0].url, 'https://app.manifest.build/v1/models');
 });

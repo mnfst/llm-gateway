@@ -51,14 +51,13 @@ vi.mock('../../src/services/formatters.js', async (importOriginal) => ({
   customProviderColor: () => '#000',
 }));
 
-const { mockRefreshModels, mockRefreshProviderModels, mockToastSuccess, mockToastError } = vi.hoisted(
-  () => ({
+const { mockRefreshModels, mockRefreshProviderModels, mockToastSuccess, mockToastError } =
+  vi.hoisted(() => ({
     mockRefreshModels: vi.fn(),
     mockRefreshProviderModels: vi.fn(),
     mockToastSuccess: vi.fn(),
     mockToastError: vi.fn(),
-  }),
-);
+  }));
 
 vi.mock('../../src/services/api.js', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -162,6 +161,7 @@ const tiers: TierAssignment[] = [
 describe('ModelPickerModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    sessionStorage.clear();
     mockRefreshModels.mockResolvedValue({ ok: true });
     mockRefreshProviderModels.mockResolvedValue({
       ok: true,
@@ -171,15 +171,36 @@ describe('ModelPickerModal', () => {
     });
   });
 
+  it('places Flash before M3 even when display labels sort in the opposite order', () => {
+    const models = ['MiniMax-M3', 'MiniMax-M3.1-Flash'].map((id) => ({
+      ...baseModels[0],
+      provider: 'minimax',
+      model_name: id,
+      display_name: id,
+    }));
+    const { container } = render(() => (
+      <ModelPickerModal
+        tierId="default"
+        models={models}
+        tiers={[]}
+        onSelect={vi.fn()}
+        onClose={vi.fn()}
+      />
+    ));
+    const text = container.textContent!;
+    expect(text.indexOf('MiniMax-M3.1-Flash')).toBeGreaterThanOrEqual(0);
+    expect(text.indexOf('MiniMax-M3.1-Flash')).toBeLessThan(text.lastIndexOf('MiniMax-M3'));
+  });
+
   describe('automatic daily refresh', () => {
-    it('refreshes all provider models when the popup first opens with stale models', async () => {
+    it('refreshes stale models only once per agent and browser session each day', async () => {
       const onProviderRefreshed = vi.fn();
       const staleProviders = apiKeyOnly.map((provider) => ({
         ...provider,
         models_fetched_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
       }));
 
-      render(() => (
+      const first = render(() => (
         <ModelPickerModal
           tierId="default"
           agentName="demo-agent"
@@ -197,21 +218,35 @@ describe('ModelPickerModal', () => {
         expect(mockRefreshModels).toHaveBeenCalledWith('demo-agent');
         expect(onProviderRefreshed).toHaveBeenCalledOnce();
       });
-    });
 
-    it('does not refresh again when provider models were already fetched today', async () => {
-      const currentProviders = apiKeyOnly.map((provider) => ({
-        ...provider,
-        models_fetched_at: new Date().toISOString(),
-      }));
-
+      first.unmount();
       render(() => (
         <ModelPickerModal
           tierId="default"
           agentName="demo-agent"
           models={baseModels}
           tiers={[]}
-          connectedProviders={currentProviders}
+          connectedProviders={staleProviders}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+          onProviderRefreshed={onProviderRefreshed}
+        />
+      ));
+
+      await Promise.resolve();
+      expect(mockRefreshModels).toHaveBeenCalledOnce();
+      expect(onProviderRefreshed).toHaveBeenCalledOnce();
+      expect(screen.getByRole('dialog')).toBeDefined();
+    });
+
+    it('does not refresh when provider models were already fetched today', async () => {
+      render(() => (
+        <ModelPickerModal
+          tierId="default"
+          agentName="demo-agent"
+          models={baseModels}
+          tiers={[]}
+          connectedProviders={apiKeyOnly}
           onSelect={vi.fn()}
           onClose={vi.fn()}
         />
@@ -219,6 +254,43 @@ describe('ModelPickerModal', () => {
 
       await Promise.resolve();
       expect(mockRefreshModels).not.toHaveBeenCalled();
+    });
+
+    it('does not retry a failed refresh when the picker reopens that day', async () => {
+      mockRefreshModels.mockRejectedValueOnce(new Error('refresh failed'));
+      const staleProviders = apiKeyOnly.map((provider) => ({
+        ...provider,
+        models_fetched_at: new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(),
+      }));
+
+      const first = render(() => (
+        <ModelPickerModal
+          tierId="default"
+          agentName="demo-agent"
+          models={baseModels}
+          tiers={[]}
+          connectedProviders={staleProviders}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+      await waitFor(() => expect(mockRefreshModels).toHaveBeenCalledOnce());
+
+      first.unmount();
+      render(() => (
+        <ModelPickerModal
+          tierId="default"
+          agentName="demo-agent"
+          models={baseModels}
+          tiers={[]}
+          connectedProviders={staleProviders}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+
+      await Promise.resolve();
+      expect(mockRefreshModels).toHaveBeenCalledOnce();
     });
 
     it('stays open while refreshed model data is loading after the user scrolls', async () => {
@@ -1396,5 +1468,93 @@ describe('ModelPickerModal', () => {
     ) as HTMLButtonElement;
     fireEvent.click(localTab);
     expect(localTab.getAttribute('aria-selected')).toBe('true');
+  });
+
+  describe('large catalogs', () => {
+    const manyModels: AvailableModel[] = Array.from({ length: 200 }, (_, i) => ({
+      ...baseModels[0]!,
+      model_name: `gpt-4o-${i}`,
+      display_name: `GPT-4o ${String(i).padStart(3, '0')}`,
+    }));
+
+    it('does not mount every model row when the catalog is large', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+
+      const rows = container.querySelectorAll('.routing-modal__model');
+      expect(rows.length).toBeGreaterThan(0);
+      expect(rows.length).toBeLessThan(80);
+      expect(container.textContent).not.toContain('GPT-4o 199');
+    });
+
+    it('reveals a late model after the list is scrolled', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+      const list = container.querySelector('.routing-modal__list') as HTMLElement;
+      Object.defineProperty(list, 'scrollTop', { configurable: true, writable: true, value: 7800 });
+      fireEvent.scroll(list);
+
+      expect(container.textContent).toContain('GPT-4o 199');
+      expect(container.textContent).not.toContain('GPT-4o 000');
+    });
+
+    it('search still brings a late model into the window', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+      const search = container.querySelector('.routing-modal__search') as HTMLInputElement;
+      fireEvent.input(search, { target: { value: 'GPT-4o 199' } });
+
+      expect(container.textContent).toContain('GPT-4o 199');
+      expect(container.querySelectorAll('.routing-modal__model').length).toBe(1);
+    });
+
+    it('resets to the top of the filtered list after the user had scrolled', () => {
+      const { container } = render(() => (
+        <ModelPickerModal
+          tierId="simple"
+          models={manyModels}
+          tiers={tiers}
+          connectedProviders={apiKeyOnly}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      ));
+      const list = container.querySelector('.routing-modal__list') as HTMLElement;
+      Object.defineProperty(list, 'scrollTop', { configurable: true, writable: true, value: 7800 });
+      fireEvent.scroll(list);
+
+      expect(container.textContent).not.toContain('GPT-4o 000');
+
+      const search = container.querySelector('.routing-modal__search') as HTMLInputElement;
+      // Matches every row, so shrink-clamp cannot explain a jump back to the top.
+      fireEvent.input(search, { target: { value: 'GPT-4o' } });
+
+      expect(container.textContent).toContain('GPT-4o 000');
+      expect(container.textContent).not.toContain('GPT-4o 199');
+    });
   });
 });

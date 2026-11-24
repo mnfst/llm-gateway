@@ -232,6 +232,85 @@ describe('pipeStream', () => {
     expect(res.end).toHaveBeenCalled();
   });
 
+  it('treats an upstream abort after finish_reason as a completed stream', async () => {
+    const { res, written } = mockResponse();
+    const encoder = new TextEncoder();
+    let sentTerminal = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sentTerminal) {
+          sentTerminal = true;
+          controller.enqueue(
+            encoder.encode(
+              'data: {"choices":[{"delta":{"content":"hello"}}]}\n\n' +
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+            ),
+          );
+          return;
+        }
+        controller.error(new Error('aborted'));
+      },
+    });
+
+    await expect(
+      pipeStream(stream, res as never, undefined, undefined, undefined, {
+        protocol: 'openai_chat_completions',
+      }),
+    ).resolves.toBeNull();
+    expect(written.join('')).toContain('"finish_reason":"stop"');
+    expect(res.end).toHaveBeenCalled();
+  });
+
+  it('still fails a Google stream aborted after a content chunk', async () => {
+    const { res } = mockResponse();
+    const encoder = new TextEncoder();
+    let sentContent = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sentContent) {
+          sentContent = true;
+          controller.enqueue(
+            encoder.encode('data: {"candidates":[{"content":{"parts":[{"text":"hi"}]}}]}\n\n'),
+          );
+          return;
+        }
+        controller.error(new Error('aborted'));
+      },
+    });
+
+    await expect(
+      pipeStream(stream, res as never, undefined, undefined, undefined, {
+        protocol: 'google_generate_content',
+      }),
+    ).rejects.toBeInstanceOf(UpstreamStreamError);
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
+  it('still fails when an upstream abort happens before a terminal event', async () => {
+    const { res } = mockResponse();
+    const encoder = new TextEncoder();
+    let sentContent = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sentContent) {
+          sentContent = true;
+          controller.enqueue(
+            encoder.encode('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'),
+          );
+          return;
+        }
+        controller.error(new Error('aborted'));
+      },
+    });
+
+    await expect(
+      pipeStream(stream, res as never, undefined, undefined, undefined, {
+        protocol: 'openai_chat_completions',
+      }),
+    ).rejects.toBeInstanceOf(UpstreamStreamError);
+    expect(res.end).not.toHaveBeenCalled();
+  });
+
   function createReadableStream(chunks: string[]): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     let index = 0;
@@ -1050,6 +1129,35 @@ describe('pipePassthrough', () => {
     expect(stream.locked).toBe(false);
     expect(res.end).not.toHaveBeenCalled();
   });
+
+  it('treats an upstream abort after message_stop as a completed stream', async () => {
+    const { res, written } = mockResponse();
+    const encoder = new TextEncoder();
+    let sentTerminal = false;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (!sentTerminal) {
+          sentTerminal = true;
+          controller.enqueue(
+            encoder.encode(
+              'event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"text":"hi"}}\n\n' +
+                'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+            ),
+          );
+          return;
+        }
+        controller.error(new Error('aborted'));
+      },
+    });
+
+    await expect(
+      pipePassthrough(stream, res as never, () => null, undefined, {
+        protocol: 'anthropic_messages',
+      }),
+    ).resolves.toBeNull();
+    expect(written.join('')).toContain('message_stop');
+    expect(res.end).toHaveBeenCalled();
+  });
 });
 
 describe('parseUsageObject', () => {
@@ -1210,6 +1318,69 @@ describe('parseUsageObject', () => {
       completion_tokens: 5,
       cache_read_tokens: undefined,
       cache_creation_tokens: 11,
+    });
+  });
+
+  it('passes through top-level cache_creation_input_tokens for the OpenAI-compat shape', () => {
+    expect(
+      parseUsageObject({
+        prompt_tokens: 20,
+        completion_tokens: 5,
+        cache_creation_input_tokens: 9,
+      }),
+    ).toEqual({
+      prompt_tokens: 20,
+      completion_tokens: 5,
+      cache_read_tokens: undefined,
+      cache_creation_tokens: 9,
+    });
+  });
+
+  it.each([
+    ['OpenAI cache_write_tokens', { cache_write_tokens: 7 }],
+    ['Qwen cache_creation_input_tokens', { cache_creation_input_tokens: 9 }],
+  ])('maps nested %s to cache creation usage', (_label, promptTokensDetails) => {
+    expect(
+      parseUsageObject({
+        prompt_tokens: 20,
+        completion_tokens: 5,
+        prompt_tokens_details: promptTokensDetails,
+      }),
+    ).toEqual({
+      prompt_tokens: 20,
+      completion_tokens: 5,
+      cache_read_tokens: undefined,
+      cache_creation_tokens: Object.values(promptTokensDetails)[0],
+    });
+  });
+
+  it('maps Responses cache_write_tokens to cache creation usage', () => {
+    expect(
+      parseUsageObject({
+        input_tokens: 20,
+        output_tokens: 5,
+        input_tokens_details: { cached_tokens: 4, cache_write_tokens: 6 },
+      }),
+    ).toEqual({
+      prompt_tokens: 20,
+      completion_tokens: 5,
+      cache_read_tokens: 4,
+      cache_creation_tokens: 6,
+    });
+  });
+
+  it('maps Responses cache_creation_input_tokens to cache creation usage', () => {
+    expect(
+      parseUsageObject({
+        input_tokens: 20,
+        output_tokens: 5,
+        input_tokens_details: { cached_tokens: 4, cache_creation_input_tokens: 6 },
+      }),
+    ).toEqual({
+      prompt_tokens: 20,
+      completion_tokens: 5,
+      cache_read_tokens: 4,
+      cache_creation_tokens: 6,
     });
   });
 

@@ -52,6 +52,7 @@ describe('ProxyMessageRecorder request parents', () => {
       requestId: 'request-1',
       provider: 'openai',
       model: 'gpt-4o',
+      apiMode: 'responses',
     });
 
     expect(execute).toHaveBeenCalledTimes(1);
@@ -61,9 +62,28 @@ describe('ProxyMessageRecorder request parents', () => {
         status: 'failed',
         autofix_status: null,
         error_origin: 'transport',
+        api_mode: 'responses',
       }),
     );
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ request_id: 'request-1' }));
+    recorder.onModuleDestroy();
+  });
+
+  it('stamps api_mode when a success terminal write creates the Request', async () => {
+    const { recorder, requestValues } = setup();
+
+    await recorder.recordSuccessMessage(
+      ctx,
+      'gpt-4o',
+      'standard',
+      'scored',
+      { prompt_tokens: 10, completion_tokens: 5 },
+      { requestId: 'request-success-first', provider: 'openai', apiMode: 'messages' },
+    );
+
+    expect(requestValues).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'request-success-first', api_mode: 'messages' }),
+    );
     recorder.onModuleDestroy();
   });
 
@@ -80,7 +100,7 @@ describe('ProxyMessageRecorder request parents', () => {
     recorder.onModuleDestroy();
   });
 
-  it('finishes a locally rejected Request without inserting a Provider Attempt', async () => {
+  it('records a locally rejected route as a failed attempt', async () => {
     const { recorder, insert, requestValues, execute } = setup();
     await recorder.recordProviderError(ctx, 429, 'route cooling down', {
       requestId: 'request-local-rejection',
@@ -93,7 +113,16 @@ describe('ProxyMessageRecorder request parents', () => {
     expect(requestValues).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'request-local-rejection', status: 'failed' }),
     );
-    expect(insert).not.toHaveBeenCalled();
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 'request-local-rejection',
+        provider: 'openai',
+        status: 'failed',
+        error_origin: 'policy',
+        error_class: 'rate_limit',
+        routing_reason: 'provider_cooldown',
+      }),
+    );
     recorder.onModuleDestroy();
   });
 
@@ -118,6 +147,129 @@ describe('ProxyMessageRecorder request parents', () => {
       }),
     );
     expect(insert).not.toHaveBeenCalled();
+    recorder.onModuleDestroy();
+  });
+
+  it.each(['chat_completions', 'responses', 'messages'] as const)(
+    'stamps the %s API surface on the pending Request',
+    async (apiMode) => {
+      const { recorder, requestValues } = setup();
+
+      await recorder.recordPendingRequest(ctx, {
+        requestId: `request-${apiMode}`,
+        timestamp: '2026-07-16T12:00:00.000Z',
+        apiMode,
+      });
+
+      expect(requestValues).toHaveBeenCalledWith(
+        expect.objectContaining({ id: `request-${apiMode}`, status: 'pending', api_mode: apiMode }),
+      );
+      recorder.onModuleDestroy();
+    },
+  );
+
+  it('leaves api_mode null when the surface was not supplied', async () => {
+    const { recorder, requestValues } = setup();
+
+    await recorder.recordPendingRequest(ctx, {
+      requestId: 'request-no-surface',
+      timestamp: '2026-07-16T12:00:00.000Z',
+    });
+
+    expect(requestValues).toHaveBeenCalledWith(expect.objectContaining({ api_mode: null }));
+    recorder.onModuleDestroy();
+  });
+
+  it.each([true, false] as const)(
+    'preserves the ingress api_mode through the terminal write (success=%s)',
+    async (succeeded) => {
+      const { recorder, requestValues, requestQb } = setup();
+      const requestId = `request-terminal-${succeeded}`;
+
+      await recorder.recordPendingRequest(ctx, {
+        requestId,
+        timestamp: '2026-07-16T12:00:00.000Z',
+        apiMode: 'messages',
+      });
+      if (succeeded) {
+        await recorder.recordSuccessMessage(
+          ctx,
+          'claude-sonnet',
+          'standard',
+          'scored',
+          { prompt_tokens: 10, completion_tokens: 5 },
+          { requestId, provider: 'anthropic' },
+        );
+      } else {
+        await recorder.recordProviderError(ctx, 503, 'upstream down', {
+          requestId,
+          provider: 'anthropic',
+          model: 'claude-sonnet',
+        });
+      }
+
+      expect(requestValues).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ status: 'pending', api_mode: 'messages' }),
+      );
+      expect(requestValues).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ status: succeeded ? 'success' : 'failed' }),
+      );
+      // The terminal upsert must not list api_mode, or a writer without the
+      // surface in scope would null out what ingress already recorded.
+      const updatedColumns = requestQb.orUpdate.mock.calls[0][0] as string[];
+      expect(updatedColumns).not.toContain('api_mode');
+      recorder.onModuleDestroy();
+    },
+  );
+
+  it('repairs api_mode when a terminal writer has the surface in scope', async () => {
+    const { recorder, requestQb, requestValues } = setup();
+
+    await recorder.recordProviderError(ctx, 503, 'upstream down', {
+      requestId: 'request-repaired-surface',
+      provider: 'openai',
+      model: 'gpt-4o',
+      apiMode: 'responses',
+    });
+
+    expect(requestValues).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'request-repaired-surface', api_mode: 'responses' }),
+    );
+    const updatedColumns = requestQb.orUpdate.mock.calls[0][0] as string[];
+    expect(updatedColumns).toContain('api_mode');
+    recorder.onModuleDestroy();
+  });
+
+  it('stamps api_mode when cancellation creates the Request', async () => {
+    const { recorder, requestValues } = setup();
+
+    await recorder.recordCancelledRequest(ctx, {
+      requestId: 'request-cancelled-surface',
+      apiMode: 'messages',
+    });
+
+    expect(requestValues).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'request-cancelled-surface', api_mode: 'messages' }),
+    );
+    recorder.onModuleDestroy();
+  });
+
+  it('stamps the API surface on a Manifest-blocked Request', async () => {
+    const { recorder, requestValues } = setup();
+
+    await recorder.recordManifestBlockedRequest(ctx, {
+      requestId: 'request-blocked-surface',
+      reason: 'no_provider_key',
+      errorMessage: 'No provider key',
+      errorCode: 'M100',
+      apiMode: 'responses',
+    });
+
+    expect(requestValues).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'request-blocked-surface', api_mode: 'responses' }),
+    );
     recorder.onModuleDestroy();
   });
 
@@ -149,7 +301,7 @@ describe('ProxyMessageRecorder request parents', () => {
     ['retry_succeeded', [{ attempt: 1, origin: 'autofix', request: {}, http_status: 200 }]],
     ['retry_failed', [{ attempt: 1, origin: 'autofix', request: {}, http_status: 422 }]],
     ['service_error', []],
-  ] as const)('records the %s Auto-fix outcome on the request', async (expected, chain) => {
+  ] as const)('records the %s Autofix outcome on the request', async (expected, chain) => {
     const { recorder, requestValues } = setup();
     const autofix: AutofixRecord = {
       groupId: 'autofix-1',
@@ -169,7 +321,7 @@ describe('ProxyMessageRecorder request parents', () => {
     recorder.onModuleDestroy();
   });
 
-  it('records a Manifest rejection with zero provider attempts', async () => {
+  it('records a Manifest rejection as a failed attempt', async () => {
     const { recorder, insert, requestValues } = setup();
     await recorder.recordManifestBlockedRequest(ctx, {
       requestId: 'request-2',
@@ -187,125 +339,79 @@ describe('ProxyMessageRecorder request parents', () => {
         duration_ms: 42,
       }),
     );
-    expect(insert).not.toHaveBeenCalled();
-    recorder.onModuleDestroy();
-  });
-
-  it('stores a failed M302 heal outcome on its zero-attempt Request', async () => {
-    const { recorder, insert, requestValues } = setup();
-    await recorder.recordManifestBlockedRequest(ctx, {
-      requestId: 'request-m302-no-patch',
-      reason: 'model_not_available',
-      errorMessage: 'Model unavailable',
-      errorCode: 'M302',
-      autofix: {
-        groupId: 'autofix-m302-no-patch',
-        outcome: 'unfixable',
-        original_http_status: 404,
-        chain: [
-          {
-            attempt: 0,
-            origin: 'original',
-            request: { model: 'ghost-model' },
-            http_status: 404,
-            error: { message: 'model not found' },
-            phoenix_status: 'no_patch',
-          },
-        ],
-      },
-    });
-
-    expect(requestValues).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: 'request-m302-no-patch',
-        status: 'failed',
-        autofix_status: 'no_patch',
-        error_code: 'M302',
-      }),
-    );
-    expect(insert).not.toHaveBeenCalled();
-    recorder.onModuleDestroy();
-  });
-
-  it('records a healed M302 as one Request with only the real provider retry Attempt', async () => {
-    const { recorder, insert, requestValues } = setup();
-    const requestId = 'request-healed-m302';
-    await recorder.recordPendingRequest(ctx, {
-      requestId,
-      timestamp: '2026-07-24T12:00:00.000Z',
-      requestedModel: 'ghost-model',
-    });
-
-    const autofix: AutofixRecord = {
-      groupId: 'autofix-m302',
-      outcome: 'healed',
-      original_http_status: 404,
-      chain: [
-        {
-          attempt: 0,
-          origin: 'original',
-          request: { model: 'ghost-model' },
-          http_status: 404,
-          error: { message: 'model not found' },
-        },
-        {
-          attempt: 1,
-          origin: 'autofix',
-          request: { model: 'gpt-4o-mini' },
-          http_status: 200,
-        },
-      ],
-      manifestOrigin: {
-        code: 'M302',
-        message: '[🦚 Manifest M302] Model "ghost-model" is not available.',
-        model: 'ghost-model',
-      },
-    };
-    await recorder.recordSuccessMessage(
-      ctx,
-      'gpt-4o-mini',
-      'direct',
-      'direct',
-      { prompt_tokens: 2, completion_tokens: 1 },
-      {
-        requestId,
-        provider: 'openai',
-        autofix,
-        attempt: {
-          id: 'attempt-healed-m302',
-          attemptNumber: 1,
-          startedAtMs: 1_000,
-          startedAt: '1970-01-01T00:00:01.000Z',
-          completedAtMs: 1_050,
-          pendingWrite: Promise.resolve(false),
-        },
-      },
-    );
-
-    expect(requestValues).toHaveBeenNthCalledWith(
-      1,
-      expect.objectContaining({
-        id: requestId,
-        status: 'pending',
-        requested_model: 'ghost-model',
-      }),
-    );
-    expect(requestValues).toHaveBeenNthCalledWith(
-      2,
-      expect.objectContaining({
-        id: requestId,
-        status: 'success',
-        autofix_status: 'retry_succeeded',
-      }),
-    );
-    expect(insert).toHaveBeenCalledTimes(1);
     expect(insert).toHaveBeenCalledWith(
       expect.objectContaining({
-        id: 'attempt-healed-m302',
-        request_id: requestId,
-        model: 'gpt-4o-mini',
-        status: 'success',
-        autofix_role: 'retry',
+        request_id: 'request-2',
+        status: 'failed',
+        error_origin: 'config',
+        error_class: 'no_provider_key',
+        routing_reason: 'no_provider_key',
+      }),
+    );
+    recorder.onModuleDestroy();
+  });
+
+  it('records a cooled-down fallback as a failed attempt', async () => {
+    const { recorder, insert } = setup();
+
+    await recorder.recordFailedFallbacks(
+      ctx,
+      'default',
+      'claude-fable-5',
+      [
+        {
+          model: 'deepseek-v4-flash',
+          provider: 'deepseek',
+          fallbackIndex: 0,
+          status: 429,
+          errorBody: 'Provider route temporarily cooling down after an upstream 429',
+          providerCallStarted: false,
+        },
+      ],
+      { requestId: 'request-cooldown-fallback' },
+    );
+
+    expect(insert).toHaveBeenCalledWith([
+      expect.objectContaining({
+        request_id: 'request-cooldown-fallback',
+        provider: 'deepseek',
+        model: 'deepseek-v4-flash',
+        status: 'failed',
+        error_origin: 'policy',
+        error_class: 'rate_limit',
+        routing_reason: 'provider_cooldown',
+        fallback_index: 0,
+      }),
+    ]);
+    recorder.onModuleDestroy();
+  });
+
+  it('records a cooled-down primary route as a failed attempt', async () => {
+    const { recorder, insert } = setup();
+
+    await recorder.recordPrimaryFailure(
+      ctx,
+      'default',
+      'claude-fable-5',
+      'Provider route temporarily cooling down after an upstream 429',
+      '2026-08-04T16:17:55.000Z',
+      'subscription',
+      {
+        requestId: 'request-cooldown-primary',
+        provider: 'anthropic',
+        skipAttempt: true,
+      },
+    );
+
+    expect(insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 'request-cooldown-primary',
+        provider: 'anthropic',
+        model: 'claude-fable-5',
+        status: 'failed',
+        error_origin: 'policy',
+        error_class: 'rate_limit',
+        routing_reason: 'provider_cooldown',
       }),
     );
     recorder.onModuleDestroy();

@@ -1,14 +1,18 @@
 import { For, Show, createMemo, createSignal, onCleanup, type Component } from 'solid-js';
+import { Portal } from 'solid-js/web';
 import {
   coerceContentToText,
   extractRecordedConversationMessages,
-  extractResponseToolCalls,
+  extractRequestTools,
   normalizeRole,
   type ChatMessage,
+  type ChatTool,
   type Role,
   type ToolCall,
 } from 'manifest-shared';
 import type { AttemptRecording } from '../services/api/messages.js';
+import MarkdownContent from './playground/MarkdownContent.js';
+import JsonBlock from './JsonBlock.js';
 
 type Recording = AttemptRecording;
 export type RecordingView = 'messages' | 'tools' | 'raw';
@@ -52,22 +56,71 @@ function approxTokens(text: string): number {
   return Math.max(1, Math.round(text.length / 4));
 }
 
+const TruncatedId: Component<{ id: string }> = (props) => {
+  const [pos, setPos] = createSignal<{ top: number; left: number } | null>(null);
+  let ref: HTMLElement | undefined;
+
+  const show = () => {
+    if (!ref) return;
+    const r = ref.getBoundingClientRect();
+    setPos({ top: r.top - 8, left: r.left + r.width / 2 });
+  };
+  const hide = () => setPos(null);
+  onCleanup(hide);
+
+  return (
+    <code
+      ref={ref}
+      class="request-messages__tool-id"
+      onMouseEnter={show}
+      onMouseLeave={hide}
+    >
+      {props.id}
+      <Show when={pos()}>
+        <Portal>
+          <span
+            class="info-tooltip__bubble"
+            role="tooltip"
+            style={{
+              position: 'fixed',
+              top: `${pos()!.top}px`,
+              left: `${pos()!.left}px`,
+              transform: 'translate(-50%, -100%)',
+              'font-family': 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+              'word-break': 'break-all',
+              'max-width': '320px',
+            }}
+          >
+            {props.id}
+          </span>
+        </Portal>
+      </Show>
+    </code>
+  );
+};
+
+const ToolIcon = () => (
+  <span class="request-messages__tool-icon" aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" viewBox="0 0 24 24">
+      <path d="M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5m7.43-2.92c.04-.3.07-.61.07-.93s-.03-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.3-.07.62-.07.94s.03.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.21.07-.47-.12-.61l-2.01-1.58z" />
+    </svg>
+  </span>
+);
+
 const ToolCalls: Component<{ calls: ToolCall[] }> = (props) => (
   <div class="request-messages__tool-calls">
     <For each={props.calls}>
       {(call) => (
         <div class="request-messages__tool-call">
           <div class="request-messages__tool-call-head">
-            <span class="request-messages__tool-icon" aria-hidden="true">
-              ↳
-            </span>
-            <strong>{call.function?.name ?? 'Unknown tool'}</strong>
+            <ToolIcon />
+            <strong class="request-messages__tool-name">{call.function?.name ?? 'Unknown tool'}</strong>
             <Show when={call.id}>
-              <code>{call.id}</code>
+              <TruncatedId id={call.id!} />
             </Show>
           </div>
           <Show when={call.function?.arguments != null}>
-            <pre>{pretty(call.function?.arguments)}</pre>
+            <JsonBlock value={toolArguments(call.function?.arguments)} />
           </Show>
         </div>
       )}
@@ -87,6 +140,16 @@ const MessageTurn: Component<{
   const role = () => normalizeRole(props.message.role);
   const content = () => coerceContentToText(props.message.content);
   const toolCalls = () => props.message.tool_calls ?? [];
+
+  const parsedJson = () => {
+    const text = content().trim();
+    if (!text.startsWith('{') && !text.startsWith('[')) return null;
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return null;
+    }
+  };
   const preview = () => previewStr(content());
   const isCappable = () => content().length > CAP_CHARS || toolCalls().length > 3;
 
@@ -138,7 +201,11 @@ const MessageTurn: Component<{
           classList={{ 'request-message__body--capped': isCappable() && capped() }}
         >
           <Show when={content()}>
-            <div class="request-message__content">{content()}</div>
+            {parsedJson() != null ? (
+              <JsonBlock class="request-message__content" value={parsedJson()} />
+            ) : (
+              <MarkdownContent class="request-message__content" text={content()} />
+            )}
           </Show>
           <Show when={toolCalls().length > 0}>
             <ToolCalls calls={toolCalls()} />
@@ -326,7 +393,10 @@ const RequestMessages: Component<{ recording: Recording | null; view?: Recording
         )
       : [],
   );
-  const toolCalls = createMemo(() => extractResponseToolCalls(props.recording?.response_body));
+  const toolCalls = createMemo(() => messages().flatMap((m) => m.tool_calls ?? []));
+  const availableTools = createMemo(() =>
+    props.recording ? extractRequestTools(props.recording.request_body) : [],
+  );
 
   return (
     <Show
@@ -336,8 +406,8 @@ const RequestMessages: Component<{ recording: Recording | null; view?: Recording
           <div class="request-messages__empty-icon" aria-hidden="true">
             ◌
           </div>
-          <strong>No messages recorded</strong>
-          <span>Message recording was not enabled when this attempt ran.</span>
+          <strong>No logs for this attempt</strong>
+          <span>Logs were off when this attempt ran. Enable logs in Settings to inspect future requests.</span>
         </div>
       }
     >
@@ -358,32 +428,82 @@ const RequestMessages: Component<{ recording: Recording | null; view?: Recording
 
           <Show when={view() === 'tools'}>
             <div class="request-messages__scroll-area">
-              <Show
-                when={toolCalls().length > 0}
-                fallback={<div class="request-messages__empty">No tools were called.</div>}
-              >
-                <div class="request-messages__tools">
-                  <For each={toolCalls()}>
-                    {(call) => (
-                      <article class="request-tool">
-                        <div class="request-tool__head">
-                          <span class="request-messages__tool-icon" aria-hidden="true">
-                            ↳
-                          </span>
-                          <strong>{call.function?.name ?? 'Unknown tool'}</strong>
-                          <span class="request-tool__type">{call.type ?? 'function'}</span>
-                          <Show when={call.id}>
-                            <code>{call.id}</code>
-                          </Show>
-                        </div>
-                        <Show when={call.function?.arguments != null}>
-                          <pre>{pretty(toolArguments(call.function?.arguments))}</pre>
-                        </Show>
-                      </article>
-                    )}
-                  </For>
-                </div>
-              </Show>
+              <div class="request-messages__tools-page">
+                {/* Called tools */}
+                <section class="request-tools-section">
+                  <h4 class="request-tools-section__title">
+                    Called
+                    <span class="request-tools-section__count">{toolCalls().length}</span>
+                  </h4>
+                  <Show
+                    when={toolCalls().length > 0}
+                    fallback={
+                      <div class="request-messages__empty request-messages__empty--sm">
+                        No tools were called in this conversation.
+                      </div>
+                    }
+                  >
+                    <div class="request-messages__tools">
+                      <For each={toolCalls()}>
+                        {(call) => (
+                          <article class="request-tool">
+                            <div class="request-tool__head">
+                              <ToolIcon />
+                              <strong class="request-messages__tool-name">
+                                {call.function?.name ?? 'Unknown tool'}
+                              </strong>
+                              <span class="request-tool__type">{call.type ?? 'function'}</span>
+                              <Show when={call.id}>
+                                <TruncatedId id={call.id!} />
+                              </Show>
+                            </div>
+                            <Show when={call.function?.arguments != null}>
+                              <JsonBlock value={toolArguments(call.function?.arguments)} />
+                            </Show>
+                          </article>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </section>
+
+                {/* Available tools */}
+                <section class="request-tools-section">
+                  <h4 class="request-tools-section__title">
+                    Available
+                    <span class="request-tools-section__count">{availableTools().length}</span>
+                  </h4>
+                  <Show
+                    when={availableTools().length > 0}
+                    fallback={
+                      <div class="request-messages__empty request-messages__empty--sm">
+                        No tools were offered in this request.
+                      </div>
+                    }
+                  >
+                    <div class="request-messages__tools">
+                      <For each={availableTools()}>
+                        {(tool: ChatTool) => (
+                          <article class="request-tool request-tool--available">
+                            <div class="request-tool__head">
+                              <strong class="request-messages__tool-name">
+                                {tool.function?.name ?? 'Unknown tool'}
+                              </strong>
+                              <span class="request-tool__type">{tool.type ?? 'function'}</span>
+                            </div>
+                            <Show when={tool.function?.description}>
+                              <p class="request-tool__description">{tool.function!.description}</p>
+                            </Show>
+                            <Show when={tool.function?.parameters != null}>
+                              <JsonBlock value={tool.function?.parameters} />
+                            </Show>
+                          </article>
+                        )}
+                      </For>
+                    </div>
+                  </Show>
+                </section>
+              </div>
             </div>
           </Show>
 
@@ -392,11 +512,11 @@ const RequestMessages: Component<{ recording: Recording | null; view?: Recording
               <div class="request-messages__raw">
                 <section>
                   <h4>Request</h4>
-                  <pre>{pretty(recording().request_body)}</pre>
+                  <JsonBlock value={recording().request_body} />
                 </section>
                 <section>
                   <h4>Response</h4>
-                  <pre>{pretty(recording().response_body)}</pre>
+                  <JsonBlock value={recording().response_body} />
                 </section>
               </div>
             </div>

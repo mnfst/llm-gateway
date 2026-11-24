@@ -196,9 +196,11 @@ export function invalidateAll(): void {
  * so the matching rules live with the cache they govern.
  */
 export const INVALIDATION_GROUPS = {
+  // Keep the message feed near-real-time without forcing every aggregate chart
+  // to refetch at the feed's faster cadence.
+  message: ['/messages'],
   // A new/changed message moves every usage-derived chart, summary, and table.
-  message: [
-    '/messages',
+  analytics: [
     '/overview',
     '/costs',
     '/tokens',

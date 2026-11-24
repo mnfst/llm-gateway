@@ -5,6 +5,40 @@
   gap: 16px;
 }
 
+/* Embedded in the onboarding wizard: no full-viewport height, no fixed
+   floating prompt (which is anchored to the dashboard sidebar and overlaps
+   the wizard's own sidebar), and tighter columns for a compact preview. */
+.playground--embedded {
+  min-height: 0;
+  gap: 12px;
+}
+
+.playground--embedded .playground-prompt-wrapper,
+.playground--embedded .playground-prompt-wrapper--history-open {
+  position: static;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  padding: 0;
+  margin-top: 4px;
+  pointer-events: auto;
+}
+
+.playground--embedded .playground-prompt {
+  max-width: none;
+  box-shadow: none;
+}
+
+.playground--embedded .playground-column {
+  flex-basis: 320px;
+  min-height: 300px;
+  max-height: 46vh;
+}
+
+.playground--embedded .playground__add {
+  min-height: 300px;
+}
+
 .playground__columns {
   display: flex;
   flex-wrap: nowrap;

@@ -58,6 +58,26 @@ describe('classifyCaller', () => {
     expect(result?.sdkVersion).toBe('1.6.0');
   });
 
+  it('classifies the n8n community node', () => {
+    const result = classifyCaller({
+      'user-agent': 'n8n-nodes-manifest',
+      'x-title': 'n8n',
+      'http-referer': 'https://n8n.io',
+    });
+    expect(result).toEqual({
+      sdk: 'n8n-nodes-manifest',
+      userAgent: 'n8n-nodes-manifest',
+      appName: 'n8n',
+      appUrl: 'https://n8n.io',
+    });
+  });
+
+  it('classifies a versioned n8n community node User-Agent', () => {
+    const result = classifyCaller({ 'user-agent': 'n8n-nodes-manifest/0.2.2' });
+    expect(result?.sdk).toBe('n8n-nodes-manifest');
+    expect(result?.sdkVersion).toBe('0.2.2');
+  });
+
   it('falls back to stainless-{lang} when UA does not match a known pattern', () => {
     const result = classifyCaller({
       'user-agent': 'mystery-client/1.2.3',

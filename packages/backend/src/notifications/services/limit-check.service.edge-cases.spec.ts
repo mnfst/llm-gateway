@@ -9,13 +9,11 @@
  *
  * Split out from limit-check.service.spec.ts to keep each file under the 300-line cap.
  */
-import { Subject } from 'rxjs';
 import { LimitCheckService } from './limit-check.service';
 import { NotificationRulesService } from './notification-rules.service';
 import { NotificationEmailService } from './notification-email.service';
 import { EmailProviderConfigService } from './email-provider-config.service';
 import { NotificationLogService } from './notification-log.service';
-import { IngestEventBusService } from '../../common/services/ingest-event-bus.service';
 import { ManifestRuntimeService } from '../../common/services/manifest-runtime.service';
 
 const TENANT = 'tenant-1';
@@ -39,7 +37,6 @@ describe('LimitCheckService — edge cases', () => {
   let mockHasAlreadySent: jest.Mock;
   let mockInsertLog: jest.Mock;
   let mockResolveRecipientEmail: jest.Mock;
-  let ingestSubject: Subject<string>;
 
   beforeEach(() => {
     mockGetActiveBlockRules = jest.fn().mockResolvedValue([BLOCK_RULE]);
@@ -64,11 +61,6 @@ describe('LimitCheckService — edge cases', () => {
       getAuthBaseUrl: jest.fn().mockReturnValue('http://localhost:3001'),
     } as unknown as ManifestRuntimeService;
 
-    ingestSubject = new Subject<string>();
-    const ingestBus = {
-      all: () => ingestSubject.asObservable(),
-    } as unknown as IngestEventBusService;
-
     mockHasAlreadySent = jest.fn().mockResolvedValue(false);
     mockInsertLog = jest.fn().mockResolvedValue(undefined);
     mockResolveRecipientEmail = jest.fn().mockResolvedValue(null);
@@ -82,16 +74,12 @@ describe('LimitCheckService — edge cases', () => {
       rulesService,
       emailService,
       emailProviderConfig,
-      ingestBus,
       runtime,
       notificationLog,
     );
-    service.onModuleInit();
   });
 
   afterEach(() => {
-    service.onModuleDestroy();
-    ingestSubject.complete();
     jest.restoreAllMocks();
   });
 

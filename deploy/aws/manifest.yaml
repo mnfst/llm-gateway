@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Deploy Manifest on AWS with ECS Fargate, RDS PostgreSQL, an
-  Application Load Balancer, and Secrets Manager. The load balancer is
+  Deploy Manifest on AWS with ECS Fargate, RDS PostgreSQL, S3 request
+  recording storage, an Application Load Balancer, and Secrets Manager. The load balancer is
   HTTP-only by default; configure TLS with your own domain and ACM
   certificate before sending production auth traffic through it.
 
@@ -264,6 +264,21 @@ Resources:
         IncludeSpace: false
         PasswordLength: 64
 
+  RecordingBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
   Database:
     Type: AWS::RDS::DBInstance
     DeletionPolicy: Delete
@@ -326,6 +341,28 @@ Resources:
                   - !Ref BetterAuthSecret
                   - !Ref ManifestEncryptionKey
 
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ManageManifestRequestRecordings
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:DeleteObject
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: !Sub "${RecordingBucket.Arn}/request-recordings/*"
+
   LoadBalancer:
     Type: AWS::ElasticLoadBalancingV2::LoadBalancer
     Properties:
@@ -381,6 +418,12 @@ Resources:
               Value: "5"
             - Name: BETTER_AUTH_URL
               Value: !Sub "http://${LoadBalancer.DNSName}"
+            - Name: REQUEST_RECORDING_STORAGE
+              Value: s3
+            - Name: REQUEST_RECORDING_S3_BUCKET
+              Value: !Ref RecordingBucket
+            - Name: REQUEST_RECORDING_S3_REGION
+              Value: !Ref AWS::Region
           Essential: true
           Image: !Ref ImageUrl
           LogConfiguration:
@@ -407,6 +450,7 @@ Resources:
       NetworkMode: awsvpc
       RequiresCompatibilities:
         - FARGATE
+      TaskRoleArn: !GetAtt TaskRole.Arn
 
   Service:
     Type: AWS::ECS::Service
@@ -445,3 +489,6 @@ Outputs:
   DatabaseUrlSecretArn:
     Description: Secrets Manager ARN containing DATABASE_URL.
     Value: !Ref DatabaseUrlSecret
+  RecordingBucketName:
+    Description: Private S3 bucket containing compressed request recordings.
+    Value: !Ref RecordingBucket

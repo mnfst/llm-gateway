@@ -97,6 +97,14 @@ describe('proxy-transport', () => {
       expect(isTransportError(new Error('fetch failed'))).toBe(true);
     });
 
+    it('returns true for undici "terminated" body errors without a coded cause', () => {
+      expect(isTransportError(new TypeError('terminated'))).toBe(true);
+    });
+
+    it('does not match "terminated" inside another word', () => {
+      expect(isTransportError(new Error('unterminated string'))).toBe(false);
+    });
+
     it('returns true for "failed to parse url" message', () => {
       expect(isTransportError(new TypeError('Failed to parse URL from ...'))).toBe(true);
     });

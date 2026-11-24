@@ -45,7 +45,13 @@ describe('AgentAnalyticsService', () => {
   describe('getUsage', () => {
     it('returns token usage with trend', async () => {
       mockGetRawOne
-        .mockResolvedValueOnce({ input: 3000, output: 2000, cache_read: 500, messages: 10 })
+        .mockResolvedValueOnce({
+          input: 3000,
+          output: 2000,
+          cache_read: 500,
+          cache_creation: 300,
+          messages: 10,
+        })
         .mockResolvedValueOnce({ total: 4000 });
 
       const result = await service.getUsage('24h', scope);
@@ -55,13 +61,22 @@ describe('AgentAnalyticsService', () => {
       expect(result.input_tokens).toBe(3000);
       expect(result.output_tokens).toBe(2000);
       expect(result.cache_read_tokens).toBe(500);
+      expect(result.cache_creation_tokens).toBe(300);
+      expect(result.cache_read_rate).toBeCloseTo(1 / 6);
+      expect(result.cache_write_rate).toBe(0.1);
       expect(result.message_count).toBe(10);
       expect(result.trend_pct).toBe(25);
     });
 
     it('handles zero previous period', async () => {
       mockGetRawOne
-        .mockResolvedValueOnce({ input: 100, output: 50, cache_read: 0, messages: 1 })
+        .mockResolvedValueOnce({
+          input: 100,
+          output: 50,
+          cache_read: 0,
+          cache_creation: 0,
+          messages: 1,
+        })
         .mockResolvedValueOnce({ total: 0 });
 
       const result = await service.getUsage('24h', scope);
@@ -71,13 +86,36 @@ describe('AgentAnalyticsService', () => {
 
     it('passes tenant and agent params to queries', async () => {
       mockGetRawOne
-        .mockResolvedValueOnce({ input: 0, output: 0, cache_read: 0, messages: 0 })
+        .mockResolvedValueOnce({
+          input: 0,
+          output: 0,
+          cache_read: 0,
+          cache_creation: 0,
+          messages: 0,
+        })
         .mockResolvedValueOnce({ total: 0 });
 
       await service.getUsage('7d', scope);
 
       // Both calls should have been made (current and previous)
       expect(mockGetRawOne).toHaveBeenCalledTimes(2);
+    });
+
+    it('returns zero cache rates when there are no input tokens', async () => {
+      mockGetRawOne
+        .mockResolvedValueOnce({
+          input: 0,
+          output: 0,
+          cache_read: 0,
+          cache_creation: 0,
+          messages: 0,
+        })
+        .mockResolvedValueOnce({ total: 0 });
+
+      const result = await service.getUsage('24h', scope);
+
+      expect(result.cache_read_rate).toBe(0);
+      expect(result.cache_write_rate).toBe(0);
     });
   });
 

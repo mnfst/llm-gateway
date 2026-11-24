@@ -2,9 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@solidjs/testing-library';
 
 const mockSignUpEmail = vi.fn().mockResolvedValue({});
+const mockSignInSocial = vi.fn().mockResolvedValue({});
 const mockSendVerificationEmail = vi.fn().mockResolvedValue({});
 const mockSubscriptionUpgrade = vi.fn().mockResolvedValue({});
 const mockGetBillingStatus = vi.fn().mockResolvedValue({ enabled: false, plan: 'free' });
+const mockCheckIsSelfHosted = vi.fn().mockResolvedValue(false);
+const mockCheckSocialProviders = vi.fn().mockResolvedValue([]);
 const mockNavigate = vi.fn();
 const mockToastError = vi.fn();
 let mockLocationSearch = '';
@@ -33,6 +36,7 @@ vi.mock('../../src/services/auth-client.js', () => ({
       isPending: false,
     }),
     signUp: { email: (...args: unknown[]) => mockSignUpEmail(...args) },
+    signIn: { social: (...args: unknown[]) => mockSignInSocial(...args) },
     sendVerificationEmail: (...args: unknown[]) => mockSendVerificationEmail(...args),
     subscription: { upgrade: (...args: unknown[]) => mockSubscriptionUpgrade(...args) },
   },
@@ -51,7 +55,8 @@ vi.mock('../../src/services/toast-store.js', () => ({
 }));
 
 vi.mock('../../src/services/setup-status.js', () => ({
-  checkSocialProviders: vi.fn().mockResolvedValue([]),
+  checkSocialProviders: (...args: unknown[]) => mockCheckSocialProviders(...args),
+  checkIsSelfHosted: (...args: unknown[]) => mockCheckIsSelfHosted(...args),
 }));
 
 import Register from '../../src/pages/Register';
@@ -61,8 +66,11 @@ describe('Register', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSignUpEmail.mockResolvedValue({});
+    mockSignInSocial.mockResolvedValue({});
     mockSubscriptionUpgrade.mockResolvedValue({});
     mockGetBillingStatus.mockResolvedValue({ enabled: false, plan: 'free' });
+    mockCheckIsSelfHosted.mockResolvedValue(false);
+    mockCheckSocialProviders.mockResolvedValue([]);
     mockLocationSearch = '';
     mockSearchParams = {};
     localStorage.clear();
@@ -134,7 +142,7 @@ describe('Register', () => {
         name: 'Test',
         email: 'test@test.com',
         password: 'pass123',
-        callbackURL: '/upgrade',
+        callbackURL: '/welcome',
       });
     });
   });
@@ -193,7 +201,7 @@ describe('Register', () => {
     expect(container.querySelector('a[href="/reset-password"]')).not.toBeNull();
   });
 
-  it('opens the plan step when signup returns a token and billing is enabled', async () => {
+  it('redirects directly to /welcome when signup returns a token', async () => {
     const locationSpy = vi.spyOn(window, 'location', 'get').mockReturnValue({
       ...window.location,
       href: '',
@@ -201,11 +209,6 @@ describe('Register', () => {
     const hrefSetter = vi.fn();
     Object.defineProperty(window.location, 'href', { set: hrefSetter, configurable: true });
 
-    mockGetBillingStatus.mockResolvedValue({
-      enabled: true,
-      plan: 'free',
-      priceMonthly: { amount: 20, currency: 'USD', interval: 'month' },
-    });
     mockSignUpEmail.mockResolvedValue({
       data: { token: 'tok', user: { id: 'u1' } },
       error: null,
@@ -220,8 +223,78 @@ describe('Register', () => {
     });
     fireEvent.submit(container.querySelector('form')!);
     await vi.waitFor(() => {
-      expect(hrefSetter).toHaveBeenCalledWith('/register?step=plan');
+      expect(hrefSetter).toHaveBeenCalledWith('/welcome');
     });
+
+    locationSpy.mockRestore();
+  });
+
+  it('routes self-hosted email signups through the discovery step', async () => {
+    mockCheckIsSelfHosted.mockResolvedValue(true);
+    mockSignUpEmail.mockResolvedValue({ error: null });
+    const { container } = render(() => <Register />);
+    // Let onMount resolve checkIsSelfHosted before submitting.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.input(container.querySelector('input[type="text"]')!, { target: { value: 'Test' } });
+    fireEvent.input(container.querySelector('input[type="email"]')!, {
+      target: { value: 'test@test.com' },
+    });
+    fireEvent.input(container.querySelector('input[type="password"]')!, {
+      target: { value: 'pass123' },
+    });
+    fireEvent.submit(container.querySelector('form')!);
+    await vi.waitFor(() => {
+      expect(mockSignUpEmail).toHaveBeenCalledWith({
+        name: 'Test',
+        email: 'test@test.com',
+        password: 'pass123',
+        callbackURL: '/discovery?next=%2Fwelcome',
+      });
+    });
+  });
+
+  it('routes self-hosted social signups through the discovery step', async () => {
+    mockCheckIsSelfHosted.mockResolvedValue(true);
+    mockCheckSocialProviders.mockResolvedValue(['github']);
+    render(() => <Register />);
+
+    await fireEvent.click(await screen.findByText('Continue with GitHub'));
+
+    expect(mockSignInSocial).toHaveBeenCalledWith({
+      provider: 'github',
+      callbackURL: '/discovery?next=%2Fwelcome&signup=1',
+      errorCallbackURL: '/login?oauth=failed',
+    });
+  });
+
+  it('redirects self-hosted token signups to the discovery step', async () => {
+    const locationSpy = vi.spyOn(window, 'location', 'get').mockReturnValue({
+      ...window.location,
+      href: '',
+    });
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window.location, 'href', { set: hrefSetter, configurable: true });
+
+    mockCheckIsSelfHosted.mockResolvedValue(true);
+    mockSignUpEmail.mockResolvedValue({
+      data: { token: 'tok', user: { id: 'u1' } },
+      error: null,
+    });
+    const { container } = render(() => <Register />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    fireEvent.input(container.querySelector('input[type="text"]')!, { target: { value: 'Test' } });
+    fireEvent.input(container.querySelector('input[type="email"]')!, {
+      target: { value: 'new@test.com' },
+    });
+    fireEvent.input(container.querySelector('input[type="password"]')!, {
+      target: { value: 'pass12345' },
+    });
+    fireEvent.submit(container.querySelector('form')!);
+    await vi.waitFor(() => {
+      expect(hrefSetter).toHaveBeenCalledWith('/discovery?next=%2Fwelcome');
+    });
+    // The pending marker lets the guards route Back presses to the form.
+    expect(localStorage.getItem('manifest_discovery_pending_u1')).toBe('/welcome');
 
     locationSpy.mockRestore();
   });
@@ -259,8 +332,8 @@ describe('Register', () => {
 
     const freeCard = Array.from(
       container.querySelectorAll<HTMLButtonElement>('.plan-picker__card'),
-    ).find((card) => card.textContent?.includes('Free'));
-    if (!freeCard) throw new Error('Free plan card not found');
+    ).find((card) => card.textContent?.includes('Self-hosted'));
+    if (!freeCard) throw new Error('Self-hosted plan card not found');
     fireEvent.click(freeCard);
     fireEvent.click(container.querySelector('.plan-picker__cta')!);
 
@@ -371,7 +444,7 @@ describe('Register', () => {
       await vi.waitFor(() => {
         expect(mockSendVerificationEmail).toHaveBeenCalledWith({
           email: 'test@test.com',
-          callbackURL: '/upgrade',
+          callbackURL: '/welcome',
         });
       });
     }
@@ -469,7 +542,7 @@ describe('Register', () => {
     await vi.waitFor(() => {
       expect(screen.getByText('Choose your plan')).toBeDefined();
     });
-    expect(screen.getByText(/Manifest now offers Free and Pro plans/)).toBeDefined();
+    expect(screen.getByText(/Manifest Cloud is \$19\/month/)).toBeDefined();
   });
 
   it('shows "Create an account" title without context=login (email signup)', async () => {

@@ -1,3 +1,5 @@
+import { resolveToolCallIndex } from './tool-call-index';
+
 export type Role = 'system' | 'user' | 'assistant' | 'tool' | 'unknown';
 
 export interface ToolCall {
@@ -80,7 +82,10 @@ function anthropicMessage(message: JsonRecord): ChatMessage[] {
   const role = typeof message.role === 'string' ? message.role : 'unknown';
   // Callers only route array-form Anthropic content here.
   const content = message.content as unknown[];
-  const toolCalls: ToolCall[] = [];
+  // OpenAI-style messages can pair array content with top-level tool calls.
+  const toolCalls: ToolCall[] = Array.isArray(message.tool_calls)
+    ? (message.tool_calls.filter(isRecord) as ToolCall[])
+    : [];
   const normalContent: unknown[] = [];
   const toolResults: ChatMessage[] = [];
 
@@ -114,6 +119,8 @@ function anthropicMessage(message: JsonRecord): ChatMessage[] {
     result.push({
       role,
       content: normalContent.length > 0 ? normalContent : null,
+      ...(typeof message.name === 'string' ? { name: message.name } : {}),
+      ...(typeof message.tool_call_id === 'string' ? { tool_call_id: message.tool_call_id } : {}),
       ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
     });
   }
@@ -201,11 +208,17 @@ export function extractRequestMessages(
   requestBody: Record<string, unknown> | null | undefined,
 ): ChatMessage[] {
   if (!requestBody) return [];
+  if (isRecord(requestBody.request) && Array.isArray(requestBody.request.contents)) {
+    requestBody = requestBody.request;
+  }
   const messages: ChatMessage[] = [];
 
   if (requestBody.system != null) messages.push(...systemMessages(requestBody.system));
   if (typeof requestBody.instructions === 'string' && requestBody.instructions.trim()) {
     messages.push({ role: 'system', content: requestBody.instructions });
+  }
+  if (isRecord(requestBody.systemInstruction)) {
+    messages.push(...systemMessages(requestBody.systemInstruction.parts));
   }
 
   if (Array.isArray(requestBody.messages)) {
@@ -234,8 +247,24 @@ export function extractRequestMessages(
 export function extractRequestTools(
   requestBody: Record<string, unknown> | null | undefined,
 ): ChatTool[] {
+  // Gemini Code Assist wraps the request in a `{ request }` envelope.
+  if (isRecord(requestBody?.request) && Array.isArray(requestBody.request.tools)) {
+    requestBody = requestBody.request;
+  }
   if (!Array.isArray(requestBody?.tools)) return [];
-  return requestBody.tools.filter(isRecord).map((tool) => {
+  return requestBody.tools.filter(isRecord).flatMap((tool): ChatTool | ChatTool[] => {
+    // One Gemini tool object can hold several function declarations.
+    if (Array.isArray(tool.functionDeclarations)) {
+      return tool.functionDeclarations.filter(isRecord).map((declaration) => ({
+        type: 'function',
+        function: {
+          name: typeof declaration.name === 'string' ? declaration.name : undefined,
+          description:
+            typeof declaration.description === 'string' ? declaration.description : undefined,
+          parameters: declaration.parameters ?? declaration.parametersJsonSchema,
+        },
+      }));
+    }
     if (isRecord(tool.function)) {
       return {
         type: typeof tool.type === 'string' ? tool.type : 'function',
@@ -278,6 +307,40 @@ function extractJsonResponse(body: JsonRecord): ChatMessage[] {
   return [];
 }
 
+function parseSseJson(data: string): JsonRecord | undefined {
+  const trimmed = data.trim();
+  if (!trimmed || trimmed === '[DONE]') return undefined;
+  try {
+    const payload: unknown = JSON.parse(trimmed);
+    return isRecord(payload) ? payload : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parses SSE events (blank-line separated, `data:` lines joined with "\n") into JSON payloads. */
+function sseJsonPayloads(rawSse: string): JsonRecord[] {
+  const payloads: JsonRecord[] = [];
+  for (const event of rawSse.split(/\r?\n\r?\n/)) {
+    const data = event
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith('data:'))
+      .map((line) => line.slice(5).replace(/^ /, ''));
+    const payload = parseSseJson(data.join('\n'));
+    if (payload) {
+      payloads.push(payload);
+      continue;
+    }
+    // Recordings without blank lines between events: read each data line on its own.
+    if (data.length < 2) continue;
+    for (const line of data) {
+      const linePayload = parseSseJson(line);
+      if (linePayload) payloads.push(linePayload);
+    }
+  }
+  return payloads;
+}
+
 function extractStreamResponse(rawSse: string): ChatMessage[] {
   let text = '';
   const toolCalls: ToolCall[] = [];
@@ -285,6 +348,7 @@ function extractStreamResponse(rawSse: string): ChatMessage[] {
     function: { name?: string; arguments?: unknown };
   };
   const callsByKey = new Map<string, MutableToolCall>();
+  let latestChatCall: { index: number; id?: string } | undefined;
 
   const callFor = (key: string): MutableToolCall => {
     const existing = callsByKey.get(key);
@@ -300,92 +364,95 @@ function extractStreamResponse(rawSse: string): ChatMessage[] {
     call.function.arguments = `${typeof current === 'string' ? current : ''}${fragment}`;
   };
 
-  for (const line of rawSse.split(/\r?\n/)) {
-    if (!line.startsWith('data:')) continue;
-    const data = line.slice(5).trim();
-    if (!data || data === '[DONE]') continue;
-    try {
-      const payload = JSON.parse(data) as JsonRecord;
-      const choices = Array.isArray(payload.choices) ? payload.choices : [];
-      const choice = choices.find(isRecord);
-      const delta = choice && isRecord(choice.delta) ? choice.delta : undefined;
-      if (typeof delta?.content === 'string') text += delta.content;
-      if (Array.isArray(delta?.tool_calls)) {
-        for (const rawCall of delta.tool_calls) {
-          if (!isRecord(rawCall)) continue;
-          const index = typeof rawCall.index === 'number' ? rawCall.index : 0;
-          const call = callFor(`chat:${index}`);
-          if (typeof rawCall.id === 'string') call.id = rawCall.id;
-          if (typeof rawCall.type === 'string') call.type = rawCall.type;
-          if (isRecord(rawCall.function)) {
-            if (typeof rawCall.function.name === 'string') {
-              call.function.name = `${call.function.name ?? ''}${rawCall.function.name}`;
-            }
-            if (typeof rawCall.function.arguments === 'string') {
-              appendArguments(call, rawCall.function.arguments);
-            }
+  for (const payload of sseJsonPayloads(rawSse)) {
+    const choices = Array.isArray(payload.choices) ? payload.choices : [];
+    const choice = choices.find(isRecord);
+    const delta = choice && isRecord(choice.delta) ? choice.delta : undefined;
+    if (typeof delta?.content === 'string') text += delta.content;
+    if (Array.isArray(payload.candidates)) {
+      // Gemini chunks are complete candidates: reuse the JSON normalization.
+      const message = extractJsonResponse(payload)[0];
+      if (Array.isArray(message?.content)) {
+        for (const part of message.content) {
+          if (isRecord(part) && typeof part.text === 'string') text += part.text;
+        }
+      }
+      if (message?.tool_calls) toolCalls.push(...message.tool_calls);
+    }
+    if (Array.isArray(delta?.tool_calls)) {
+      for (const rawCall of delta.tool_calls) {
+        if (!isRecord(rawCall)) continue;
+        const index = resolveToolCallIndex(rawCall, latestChatCall);
+        const call = callFor(`chat:${index}`);
+        if (typeof rawCall.id === 'string') call.id = rawCall.id;
+        if (typeof rawCall.type === 'string') call.type = rawCall.type;
+        if (isRecord(rawCall.function)) {
+          if (typeof rawCall.function.name === 'string') {
+            call.function.name = `${call.function.name ?? ''}${rawCall.function.name}`;
+          }
+          if (typeof rawCall.function.arguments === 'string') {
+            appendArguments(call, rawCall.function.arguments);
           }
         }
+        latestChatCall = { index, id: call.id };
       }
-      if (payload.type === 'response.output_text.delta' && typeof payload.delta === 'string') {
-        text += payload.delta;
-      }
-      if (
-        (payload.type === 'response.output_item.added' ||
-          payload.type === 'response.output_item.done') &&
-        isRecord(payload.item) &&
-        payload.item.type === 'function_call'
-      ) {
-        const item = payload.item;
-        const itemKey =
-          typeof item.id === 'string'
-            ? item.id
-            : typeof item.call_id === 'string'
-              ? item.call_id
-              : String(payload.output_index ?? 0);
-        const call = callFor(`response:${itemKey}`);
-        call.id =
-          typeof item.call_id === 'string'
+    }
+    if (payload.type === 'response.output_text.delta' && typeof payload.delta === 'string') {
+      text += payload.delta;
+    }
+    if (
+      (payload.type === 'response.output_item.added' ||
+        payload.type === 'response.output_item.done') &&
+      isRecord(payload.item) &&
+      payload.item.type === 'function_call'
+    ) {
+      const item = payload.item;
+      const itemKey =
+        typeof item.id === 'string'
+          ? item.id
+          : typeof item.call_id === 'string'
             ? item.call_id
-            : typeof item.id === 'string'
-              ? item.id
-              : call.id;
-        if (typeof item.name === 'string') call.function.name = item.name;
-        if (typeof item.arguments === 'string') call.function.arguments = item.arguments;
-      }
+            : String(payload.output_index ?? 0);
+      const call = callFor(`response:${itemKey}`);
+      call.id =
+        typeof item.call_id === 'string'
+          ? item.call_id
+          : typeof item.id === 'string'
+            ? item.id
+            : call.id;
+      if (typeof item.name === 'string') call.function.name = item.name;
+      if (typeof item.arguments === 'string') call.function.arguments = item.arguments;
+    }
+    if (
+      payload.type === 'response.function_call_arguments.delta' &&
+      typeof payload.delta === 'string'
+    ) {
+      const itemKey =
+        typeof payload.item_id === 'string' ? payload.item_id : String(payload.output_index ?? 0);
+      appendArguments(callFor(`response:${itemKey}`), payload.delta);
+    }
+    if (
+      payload.type === 'content_block_start' &&
+      isRecord(payload.content_block) &&
+      payload.content_block.type === 'tool_use'
+    ) {
+      const block = payload.content_block;
+      const call = callFor(`anthropic:${String(payload.index ?? 0)}`);
+      if (typeof block.id === 'string') call.id = block.id;
+      if (typeof block.name === 'string') call.function.name = block.name;
+      if (block.input != null) call.function.arguments = block.input;
+    }
+    if (payload.type === 'content_block_delta' && isRecord(payload.delta)) {
+      if (typeof payload.delta.text === 'string') text += payload.delta.text;
       if (
-        payload.type === 'response.function_call_arguments.delta' &&
-        typeof payload.delta === 'string'
+        payload.delta.type === 'input_json_delta' &&
+        typeof payload.delta.partial_json === 'string'
       ) {
-        const itemKey =
-          typeof payload.item_id === 'string' ? payload.item_id : String(payload.output_index ?? 0);
-        appendArguments(callFor(`response:${itemKey}`), payload.delta);
+        appendArguments(
+          callFor(`anthropic:${String(payload.index ?? 0)}`),
+          payload.delta.partial_json,
+        );
       }
-      if (
-        payload.type === 'content_block_start' &&
-        isRecord(payload.content_block) &&
-        payload.content_block.type === 'tool_use'
-      ) {
-        const block = payload.content_block;
-        const call = callFor(`anthropic:${String(payload.index ?? 0)}`);
-        if (typeof block.id === 'string') call.id = block.id;
-        if (typeof block.name === 'string') call.function.name = block.name;
-        if (block.input != null) call.function.arguments = block.input;
-      }
-      if (payload.type === 'content_block_delta' && isRecord(payload.delta)) {
-        if (typeof payload.delta.text === 'string') text += payload.delta.text;
-        if (
-          payload.delta.type === 'input_json_delta' &&
-          typeof payload.delta.partial_json === 'string'
-        ) {
-          appendArguments(
-            callFor(`anthropic:${String(payload.index ?? 0)}`),
-            payload.delta.partial_json,
-          );
-        }
-      }
-    } catch {
-      // Keep parsing later events when one provider emits a non-JSON line.
     }
   }
   return text || toolCalls.length > 0

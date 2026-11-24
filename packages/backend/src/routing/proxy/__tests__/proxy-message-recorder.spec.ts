@@ -41,12 +41,14 @@ describe('ProxyMessageRecorder', () => {
   let insertMock: jest.Mock;
   let updateMock: jest.Mock;
   let getByModelMock: jest.Mock;
+  let getProvidersMock: jest.Mock;
   let emitMock: jest.Mock;
 
   beforeEach(() => {
     insertMock = jest.fn();
     updateMock = jest.fn();
     getByModelMock = jest.fn().mockReturnValue(undefined);
+    getProvidersMock = jest.fn().mockResolvedValue([]);
     emitMock = jest.fn();
     const repo = {
       insert: insertMock,
@@ -71,12 +73,14 @@ describe('ProxyMessageRecorder', () => {
       getCostPerRequest: jest.fn().mockReturnValue(null),
       resolveCostPerRequest: jest.fn().mockResolvedValue(null),
     } as never;
+    const providerService = { getProviders: getProvidersMock } as never;
     recorder = new ProxyMessageRecorder(
       repo,
       pricingCache,
       eventBus,
       customProviders,
       opencodeGoCatalog,
+      providerService,
     );
   });
 
@@ -101,6 +105,7 @@ describe('ProxyMessageRecorder', () => {
           model: 'gpt-4o',
           authType: 'api_key',
           tenantProviderId: 'connection-1',
+          keyLabel: 'Work',
         }),
       ).resolves.toBe(true);
       await recorder.completePendingProviderFailure(attempt, 429, 'rate limited', true);
@@ -113,6 +118,7 @@ describe('ProxyMessageRecorder', () => {
           status: 'pending',
           auth_type: 'api_key',
           tenant_provider_id: 'connection-1',
+          provider_key_label: 'Work',
         }),
       );
       expect(updateMock).toHaveBeenCalledWith(
@@ -201,6 +207,7 @@ describe('ProxyMessageRecorder', () => {
           provider: 'openai',
           model: 'gpt-5',
           authType: 'subscription',
+          keyLabel: 'Work',
         },
         requestDurationMs: 150,
         traceId: 'trace-cancelled',
@@ -215,10 +222,79 @@ describe('ProxyMessageRecorder', () => {
           provider: 'openai',
           model: 'gpt-5',
           auth_type: 'subscription',
+          // A cancelled row has no terminal writer to fill this in, so it has
+          // to come from the attempt start.
+          provider_key_label: 'Work',
           duration_ms: 125,
         }),
       );
       expect(emitMock).toHaveBeenCalledWith('tenant-1', 'message', 'user-1');
+    });
+
+    it('cancels only still-pending Attempts whose pending row was written', async () => {
+      const written: ProviderAttemptRef = {
+        id: 'attempt-left-pending',
+        attemptNumber: 1,
+        startedAtMs: 1_000,
+        startedAt: '1970-01-01T00:00:01.000Z',
+        completedAtMs: 1_250,
+        pendingWrite: Promise.resolve(true),
+      };
+      const inFlight: ProviderAttemptRef = {
+        id: 'attempt-in-flight',
+        attemptNumber: 2,
+        startedAtMs: Date.now(),
+        startedAt: new Date().toISOString(),
+        pendingWrite: Promise.resolve(true),
+      };
+      const neverInserted: ProviderAttemptRef = {
+        id: 'attempt-insert-failed',
+        attemptNumber: 3,
+        startedAtMs: 1_000,
+        startedAt: '1970-01-01T00:00:01.000Z',
+        pendingWrite: Promise.reject(new Error('insert failed')),
+      };
+
+      updateMock.mockResolvedValue({});
+
+      await recorder.cancelPendingProviderAttempts([written, inFlight, neverInserted]);
+
+      expect(updateMock).toHaveBeenCalledTimes(2);
+      expect(updateMock).toHaveBeenCalledWith(
+        { id: 'attempt-left-pending', status: 'pending' },
+        {
+          status: 'cancelled',
+          error_message: null,
+          error_code: null,
+          error_http_status: null,
+          duration_ms: 250,
+        },
+      );
+      expect(updateMock).toHaveBeenCalledWith(
+        { id: 'attempt-in-flight', status: 'pending' },
+        expect.objectContaining({ status: 'cancelled', duration_ms: expect.any(Number) }),
+      );
+    });
+
+    it('keeps cancelling the other Attempts when one update fails', async () => {
+      const attempt = (id: string): ProviderAttemptRef => ({
+        id,
+        attemptNumber: 1,
+        startedAtMs: 1_000,
+        startedAt: '1970-01-01T00:00:01.000Z',
+        completedAtMs: 1_100,
+        pendingWrite: Promise.resolve(true),
+      });
+      updateMock.mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce({});
+
+      await expect(
+        recorder.cancelPendingProviderAttempts([attempt('first'), attempt('second')]),
+      ).resolves.toBeUndefined();
+
+      expect(updateMock).toHaveBeenCalledWith(
+        { id: 'second', status: 'pending' },
+        expect.objectContaining({ status: 'cancelled' }),
+      );
     });
 
     it('updates the same pending row with terminal status and measured duration', async () => {
@@ -311,6 +387,63 @@ describe('ProxyMessageRecorder', () => {
       });
     });
 
+    it('stamps the Autofix retry columns when the fallback hop was healed', async () => {
+      await recorder.recordFallbackSuccess(ctx, 'deepseek-flash', 'standard', {
+        fallbackFromModel: 'gpt-4o',
+        fallbackIndex: 0,
+        timestamp: new Date().toISOString(),
+        authType: 'api_key',
+        fallbackAutofix: {
+          groupId: 'group-1',
+          outcome: 'healed',
+          original_http_status: 400,
+          chain: [
+            {
+              attempt: 0,
+              origin: 'original',
+              request: {},
+              http_status: 400,
+              issue_id: 'issue-1',
+              patch_id: 'patch-1',
+              operations: [{ type: 'drop_param' }],
+            },
+            { attempt: 1, origin: 'autofix', request: {}, http_status: 200 },
+          ],
+        },
+      });
+
+      expect(insertMock.mock.calls[0][0]).toMatchObject({
+        autofix_applied: true,
+        autofix_group_id: 'group-1',
+        autofix_role: 'retry',
+      });
+    });
+
+    it('does not stamp the primary Autofix record on an ordinary fallback success', async () => {
+      // Regression: a failed primary Autofix that later fell back must not leak
+      // its retry metadata onto the winning fallback's row.
+      await recorder.recordFallbackSuccess(ctx, 'gpt-4o', 'standard', {
+        fallbackFromModel: 'claude-opus',
+        fallbackIndex: 0,
+        timestamp: new Date().toISOString(),
+        authType: 'api_key',
+        autofix: {
+          groupId: 'primary-group',
+          outcome: 'exhausted',
+          original_http_status: 400,
+          chain: [
+            { attempt: 0, origin: 'original', request: {}, http_status: 400 },
+            { attempt: 1, origin: 'autofix', request: {}, http_status: 400 },
+          ],
+        },
+      });
+
+      const row = insertMock.mock.calls[0][0] as Record<string, unknown>;
+      expect(row.autofix_applied).toBeUndefined();
+      expect(row.autofix_group_id).toBeUndefined();
+      expect(row.autofix_role).toBeUndefined();
+    });
+
     it('inserts when only prompt_tokens is non-zero', async () => {
       await recorder.recordFallbackSuccess(ctx, 'gpt-4o', 'standard', {
         traceId: 'trace-1',
@@ -386,6 +519,60 @@ describe('ProxyMessageRecorder', () => {
       const inserted = insertMock.mock.calls[0][0];
       // 1000 * 0.0000025 + 500 * 0.00001 = 0.0075
       expect(inserted.cost_usd).toBeCloseTo(0.0075, 10);
+    });
+
+    it('bills peak-window pricing from the attempt timestamp, not the wall clock', async () => {
+      getByModelMock.mockReturnValue({
+        model_name: 'deepseek-v4-flash',
+        provider: 'DeepSeek',
+        input_price_per_token: 0.22 / 1_000_000,
+        output_price_per_token: 0.66 / 1_000_000,
+        time_tiers: [
+          {
+            windows: ['01:00-04:00', '06:00-10:00'],
+            input_price_per_token: 0.44 / 1_000_000,
+            output_price_per_token: 1.32 / 1_000_000,
+          },
+        ],
+        display_name: 'DeepSeek V4 Flash',
+      });
+
+      // Attempt started inside a peak window.
+      await recorder.recordFallbackSuccess(ctx, 'deepseek-v4-flash', 'standard', {
+        authType: 'api_key',
+        timestamp: '2026-08-17T02:30:00.000Z',
+        usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 },
+      });
+      expect(insertMock.mock.calls[0][0].cost_usd).toBeCloseTo(0.44 + 1.32, 10);
+
+      // Same usage off-peak bills the base rate.
+      await recorder.recordFallbackSuccess(ctx, 'deepseek-v4-flash', 'standard', {
+        authType: 'api_key',
+        timestamp: '2026-08-17T12:00:00.000Z',
+        usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 },
+      });
+      expect(insertMock.mock.calls[1][0].cost_usd).toBeCloseTo(0.22 + 0.66, 10);
+
+      // The provider attempt start wins over the synthetic fallback timestamp:
+      // the attempt ran in-peak even though the delayed write stamps off-peak.
+      const attempt: ProviderAttemptRef = {
+        id: 'attempt-peak',
+        attemptNumber: 1,
+        startedAtMs: Date.parse('2026-08-17T02:30:00.000Z'),
+        startedAt: '2026-08-17T02:30:00.000Z',
+        pendingWrite: Promise.resolve(true),
+      };
+      await recorder.recordFallbackSuccess(ctx, 'deepseek-v4-flash', 'standard', {
+        authType: 'api_key',
+        attempt,
+        timestamp: '2026-08-17T12:00:00.000Z',
+        usage: { prompt_tokens: 1_000_000, completion_tokens: 1_000_000 },
+      });
+      // The resolved pendingWrite routes this through the update path.
+      expect(updateMock).toHaveBeenCalledWith(
+        { id: 'attempt-peak' },
+        expect.objectContaining({ cost_usd: expect.closeTo(0.44 + 1.32, 10) }),
+      );
     });
 
     it('computes cost_usd with cache-read pricing when usage has cached tokens', async () => {
@@ -575,6 +762,29 @@ describe('ProxyMessageRecorder', () => {
       });
     });
 
+    it('keeps Anthropic extra-usage errors as HTTP 400 but classifies them as billing', async () => {
+      const errorBody = JSON.stringify({
+        type: 'error',
+        error: {
+          type: 'invalid_request_error',
+          message: 'You are out of extra usage. Add more at claude.ai to keep going.',
+        },
+      });
+
+      await recorder.recordProviderError(ctx, 400, errorBody, {
+        provider: 'anthropic',
+        model: 'claude-sonnet-4',
+        authType: 'subscription',
+      });
+
+      expect(insertMock.mock.calls[0][0]).toMatchObject({
+        status: 'failed',
+        error_http_status: 400,
+        error_class: 'billing',
+        error_origin: 'provider',
+      });
+    });
+
     it('records rate_limited status for 429 and emits SSE event', async () => {
       await recorder.recordProviderError(ctx, 429, 'Rate limited');
       expect(insertMock).toHaveBeenCalledTimes(1);
@@ -674,6 +884,33 @@ describe('ProxyMessageRecorder', () => {
         provider: null,
         routing_tier: null,
         error_http_status: null,
+      });
+    });
+
+    it('stamps the routing classification of a post-routing failure without claiming a provider', async () => {
+      await recorder.recordManifestBlockedRequest(ctx, {
+        errorMessage: 'adapter bug',
+        errorCode: 'M500',
+        reason: 'manifest_internal_error',
+        httpStatus: 500,
+        routing: {
+          tier: 'standard',
+          specificityCategory: 'coding',
+          headerTierId: 'header-tier-1',
+          headerTierName: 'Program Weeks',
+          headerTierColor: 'indigo',
+        },
+      });
+
+      expect(insertMock.mock.calls[0][0]).toMatchObject({
+        error_code: 'M500',
+        provider: null,
+        auth_type: null,
+        routing_tier: 'standard',
+        specificity_category: 'coding',
+        header_tier_id: 'header-tier-1',
+        header_tier_name: 'Program Weeks',
+        header_tier_color: 'indigo',
       });
     });
 
@@ -946,6 +1183,53 @@ describe('ProxyMessageRecorder', () => {
       );
     });
 
+    // Connection attribution on failure rows: the label must follow the key
+    // each hop actually used, and only fall back to the primary's for legacy
+    // rows that carry none.
+    it('stamps each failed fallback with its own connection label', async () => {
+      const failures = [
+        {
+          model: 'claude-sonnet-4',
+          provider: 'anthropic',
+          status: 502,
+          errorBody: 'boom',
+          fallbackIndex: 0,
+          keyLabel: 'Personal',
+        },
+        {
+          model: 'gemini-2.5-flash',
+          provider: 'gemini',
+          status: 502,
+          errorBody: 'boom',
+          fallbackIndex: 1,
+        },
+      ];
+
+      await recorder.recordFailedFallbacks(ctx, 'standard', 'primary-model', failures, {
+        providerKeyLabel: 'Work',
+      });
+
+      const rows = insertMock.mock.calls[0][0];
+      expect(rows[0]).toMatchObject({ provider: 'anthropic', provider_key_label: 'Personal' });
+      expect(rows[1]).toMatchObject({ provider: 'gemini', provider_key_label: 'Work' });
+    });
+
+    it('leaves provider_key_label null when neither the hop nor the primary has one', async () => {
+      const failures = [
+        {
+          model: 'claude-sonnet-4',
+          provider: 'anthropic',
+          status: 502,
+          errorBody: 'boom',
+          fallbackIndex: 0,
+        },
+      ];
+
+      await recorder.recordFailedFallbacks(ctx, 'standard', 'primary-model', failures);
+
+      expect(insertMock.mock.calls[0][0][0]).toMatchObject({ provider_key_label: null });
+    });
+
     it('stamps error_code on mid-chain Manifest credential failures', async () => {
       const failures = [
         {
@@ -955,7 +1239,7 @@ describe('ProxyMessageRecorder', () => {
           errorBody: JSON.stringify({
             error: {
               message:
-                '[🦚 Manifest M100] No anthropic API key yet. Add one here: https://x/routing See https://manifest.build/docs/errors/M100',
+                '[🦚 Manifest M100] No anthropic API key yet. Add one here: https://x/routing See https://manifest.build/llm-gateway/docs/errors/M100/',
             },
           }),
           fallbackIndex: 0,
@@ -986,7 +1270,7 @@ describe('ProxyMessageRecorder', () => {
           errorBody: JSON.stringify({
             error: {
               message:
-                '[🦚 Manifest M102] anthropic subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/docs/errors/M102',
+                '[🦚 Manifest M102] anthropic subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/llm-gateway/docs/errors/M102/',
             },
           }),
           fallbackIndex: 0,
@@ -1242,7 +1526,7 @@ describe('ProxyMessageRecorder', () => {
       const body = JSON.stringify({
         error: {
           message:
-            '[🦚 Manifest M102] openai subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/docs/errors/M102',
+            '[🦚 Manifest M102] openai subscription credentials could not be refreshed. Reconnect OAuth here: https://x/routing See https://manifest.build/llm-gateway/docs/errors/M102/',
         },
       });
       await recorder.recordPrimaryFailure(
@@ -1262,6 +1546,36 @@ describe('ProxyMessageRecorder', () => {
         provider: 'openai',
       });
       expect(insertMock.mock.calls[0][0].error_message).toContain('M102');
+    });
+
+    it('stamps the connection label on the failed primary row', async () => {
+      await recorder.recordPrimaryFailure(
+        ctx,
+        'default',
+        'gpt-4o',
+        'upstream error',
+        '2025-01-01T00:00:00.000Z',
+        'api_key',
+        { provider: 'openai', tenantProviderId: 'up-work', providerKeyLabel: 'Work' },
+      );
+
+      expect(insertMock.mock.calls[0][0]).toMatchObject({
+        status: 'failed',
+        tenant_provider_id: 'up-work',
+        provider_key_label: 'Work',
+      });
+    });
+
+    it('leaves provider_key_label null when the primary failure carries no label', async () => {
+      await recorder.recordPrimaryFailure(
+        ctx,
+        'default',
+        'gpt-4o',
+        'upstream error',
+        '2025-01-01T00:00:00.000Z',
+      );
+
+      expect(insertMock.mock.calls[0][0]).toMatchObject({ provider_key_label: null });
     });
 
     it('persists the provider column when passed a provider', async () => {
@@ -1388,6 +1702,237 @@ describe('ProxyMessageRecorder', () => {
       });
     });
 
+    it('computes Copilot subscription cost from the selected connection token prices', async () => {
+      getProvidersMock.mockResolvedValue([
+        {
+          id: 'copilot-connection',
+          provider: 'copilot',
+          cached_models: [
+            {
+              id: 'copilot/gpt-5.6-terra',
+              displayName: 'gpt-5.6-terra',
+              inputPricePerToken: 1 / 1_000_000,
+              outputPricePerToken: 5 / 1_000_000,
+              cacheReadPricePerToken: 0.1 / 1_000_000,
+            },
+          ],
+        },
+      ]);
+
+      await recorder.recordSuccessMessage(
+        ctx,
+        'copilot/gpt-5.6-terra',
+        'default',
+        'default',
+        {
+          prompt_tokens: 80_200,
+          completion_tokens: 852,
+          cache_read_tokens: 72_300,
+          reported_cost_usd: 1,
+        },
+        {
+          provider: 'copilot',
+          authType: 'subscription',
+          tenantProviderId: 'copilot-connection',
+        },
+      );
+
+      expect(insertMock.mock.calls[0][0].cost_usd).toBeCloseTo(0.01939, 10);
+      expect(getByModelMock).not.toHaveBeenCalled();
+    });
+
+    it('switches Copilot pricing only above the long-context prompt threshold', async () => {
+      getProvidersMock.mockResolvedValue([
+        {
+          id: 'copilot-connection',
+          provider: 'copilot',
+          cached_models: [
+            {
+              id: 'copilot/gpt-5.6-terra',
+              displayName: 'gpt-5.6-terra',
+              inputPricePerToken: 1 / 1_000_000,
+              outputPricePerToken: 5 / 1_000_000,
+              cacheReadPricePerToken: 0.1 / 1_000_000,
+              cacheWritePricePerToken: 1.25 / 1_000_000,
+              longContextPricing: {
+                thresholdTokens: 100_000,
+                inputPricePerToken: 2 / 1_000_000,
+                outputPricePerToken: 8 / 1_000_000,
+                cacheReadPricePerToken: 0.2 / 1_000_000,
+                cacheWritePricePerToken: 2.5 / 1_000_000,
+              },
+            },
+          ],
+        },
+      ]);
+
+      const options = {
+        provider: 'copilot',
+        authType: 'subscription' as const,
+        tenantProviderId: 'copilot-connection',
+      };
+
+      await recorder.recordSuccessMessage(
+        ctx,
+        'copilot/gpt-5.6-terra',
+        'default',
+        'default',
+        {
+          prompt_tokens: 100_000,
+          completion_tokens: 100,
+          cache_read_tokens: 60_000,
+          cache_creation_tokens: 10_000,
+        },
+        options,
+      );
+      await recorder.recordSuccessMessage(
+        ctx,
+        'copilot/gpt-5.6-terra',
+        'default',
+        'default',
+        {
+          prompt_tokens: 100_001,
+          completion_tokens: 100,
+          cache_read_tokens: 60_000,
+          cache_creation_tokens: 10_000,
+        },
+        options,
+      );
+
+      expect(insertMock.mock.calls[0][0].cost_usd).toBeCloseTo(0.049, 10);
+      expect(insertMock.mock.calls[1][0].cost_usd).toBeCloseTo(0.097802, 10);
+    });
+
+    it('uses billable long-context prices when Copilot default prices are zero', async () => {
+      getProvidersMock.mockResolvedValue([
+        {
+          id: 'copilot-connection',
+          provider: 'copilot',
+          cached_models: [
+            {
+              id: 'copilot/gpt-5.6-terra',
+              displayName: 'gpt-5.6-terra',
+              inputPricePerToken: 0,
+              outputPricePerToken: 0,
+              longContextPricing: {
+                thresholdTokens: 100,
+                inputPricePerToken: 2 / 1_000_000,
+                outputPricePerToken: 8 / 1_000_000,
+              },
+            },
+          ],
+        },
+      ]);
+
+      await recorder.recordSuccessMessage(
+        ctx,
+        'copilot/gpt-5.6-terra',
+        'default',
+        'default',
+        { prompt_tokens: 101, completion_tokens: 10 },
+        {
+          provider: 'copilot',
+          authType: 'subscription',
+          tenantProviderId: 'copilot-connection',
+        },
+      );
+
+      expect(insertMock.mock.calls[0][0].cost_usd).toBeCloseTo(0.000282, 10);
+    });
+
+    it('falls back to default Copilot prices when its long-context tier is invalid', async () => {
+      getProvidersMock.mockResolvedValue([
+        {
+          id: 'copilot-connection',
+          cached_models: [
+            {
+              id: 'copilot/gpt-5.6-terra',
+              inputPricePerToken: 1 / 1_000_000,
+              outputPricePerToken: 5 / 1_000_000,
+              longContextPricing: {
+                thresholdTokens: 100,
+                inputPricePerToken: 0,
+                outputPricePerToken: 0,
+              },
+            },
+          ],
+        },
+      ]);
+
+      await recorder.recordSuccessMessage(
+        ctx,
+        'copilot/gpt-5.6-terra',
+        'default',
+        'default',
+        { prompt_tokens: 101, completion_tokens: 10 },
+        {
+          provider: 'copilot',
+          authType: 'subscription',
+          tenantProviderId: 'copilot-connection',
+        },
+      );
+
+      expect(insertMock.mock.calls[0][0].cost_usd).toBeCloseTo(0.000151, 10);
+    });
+
+    it('keeps Copilot at zero when no selected connection id is available', async () => {
+      await recorder.recordSuccessMessage(
+        ctx,
+        'copilot/gpt-5-mini',
+        'default',
+        'default',
+        { prompt_tokens: 1000, completion_tokens: 100 },
+        { provider: 'copilot', authType: 'subscription' },
+      );
+
+      expect(insertMock.mock.calls[0][0].cost_usd).toBe(0);
+      expect(getProvidersMock).not.toHaveBeenCalled();
+    });
+
+    it('keeps Copilot at zero when its selected connection has no token pricing', async () => {
+      getProvidersMock.mockResolvedValue([
+        {
+          id: 'copilot-connection',
+          provider: 'copilot',
+          cached_models: [
+            {
+              id: 'copilot/gpt-4o',
+              inputPricePerToken: 0,
+              outputPricePerToken: 0,
+            },
+          ],
+        },
+      ]);
+
+      await recorder.recordFallbackSuccess(ctx, 'gpt-4o', 'default', {
+        provider: 'copilot',
+        authType: 'subscription',
+        tenantProviderId: 'copilot-connection',
+        usage: { prompt_tokens: 1000, completion_tokens: 100 },
+      });
+
+      expect(insertMock.mock.calls[0][0].cost_usd).toBe(0);
+    });
+
+    it('keeps Copilot recording available when cached provider lookup fails', async () => {
+      getProvidersMock.mockRejectedValue(new Error('database unavailable'));
+
+      await recorder.recordSuccessMessage(
+        ctx,
+        'copilot/gpt-4o',
+        'default',
+        'default',
+        { prompt_tokens: 1000, completion_tokens: 100 },
+        {
+          provider: 'copilot',
+          authType: 'subscription',
+          tenantProviderId: 'copilot-connection',
+        },
+      );
+
+      expect(insertMock.mock.calls[0][0].cost_usd).toBe(0);
+    });
+
     it('records message even when tokens are zero', async () => {
       await recorder.recordSuccessMessage(ctx, 'gpt-4o', 'standard', 'scored', {
         prompt_tokens: 0,
@@ -1403,7 +1948,7 @@ describe('ProxyMessageRecorder', () => {
     });
 
     it('produces N separate inserts for N successive calls with identical usage, model and agent', async () => {
-      // The regression pinned by mnfst/manifest#2513: ProxyMessageDedup used to
+      // The regression pinned by mnfst/llm-gateway#2513: ProxyMessageDedup used to
       // treat "same tenant/agent/model/usage within a short window" as a
       // duplicate and silently drop it via an update-into-existing-row path.
       // Distinct requests that happen to look alike must each persist their
@@ -1650,7 +2195,7 @@ describe('ProxyMessageRecorder', () => {
       expect(row.autofix_operations).toEqual(operations);
     });
 
-    it('recordProviderError keeps a no-patch Phoenix audit without claiming Auto-fix', async () => {
+    it('recordProviderError keeps a no-patch Phoenix audit without claiming Autofix', async () => {
       const noPatch: AutofixRecord = {
         groupId: 'grp-no-patch',
         outcome: 'unfixable',
@@ -1778,7 +2323,7 @@ describe('ProxyMessageRecorder', () => {
 
     it('recordAutofixOriginal carries the Phoenix explanation onto autofix_decision', async () => {
       // Phoenix's human-readable "why" is persisted alongside the ids so the
-      // dashboard Auto-fix card can render it (not re-derive it locally).
+      // dashboard Autofix card can render it (not re-derive it locally).
       const explanation = {
         summary: 'Renamed the "max_tokens" parameter to "max_output_tokens".',
         operations: [
@@ -2107,6 +2652,34 @@ describe('ProxyMessageRecorder with real CustomProviderService', () => {
         provider: 'llamacpp',
         model: 'llamacpp/qwen2.5-0.5b-q4.gguf',
       });
+    } finally {
+      recorder.onModuleDestroy();
+    }
+  });
+
+  it('costs a tile-connected llama.cpp run at a known zero, not an unknown null', async () => {
+    // llama.cpp and LM Studio are `tileOnly`, so they reach the recorder as
+    // `custom:<uuid>` and only become `llamacpp` after canonicalization. A
+    // local-provider check run on the raw string misses them entirely and the
+    // row falls through to `null` — "we don't know" for inference that is
+    // free by construction.
+    const { recorder, insertMock } = wire({
+      id: 'cp-llamacpp',
+      name: 'llama.cpp',
+      agent_id: 'agent-1',
+    });
+    try {
+      await recorder.recordSuccessMessage(
+        ctx,
+        'custom:cp-llamacpp/qwen2.5-0.5b-q4.gguf',
+        'default',
+        'test',
+        { prompt_tokens: 1000, completion_tokens: 500 } as never,
+        { provider: 'custom:cp-llamacpp' },
+      );
+
+      expect(insertMock).toHaveBeenCalled();
+      expect(insertMock.mock.calls[0][0]).toMatchObject({ cost_usd: 0 });
     } finally {
       recorder.onModuleDestroy();
     }

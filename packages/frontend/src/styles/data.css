@@ -102,7 +102,7 @@
   cursor: pointer;
 }
 
-/* Auto-fix: the failed original of a healed pair. Orange (not red) — it failed
+/* Autofix: the failed original of a healed pair. Orange (not red) — it failed
    but was recovered. */
 .status-badge--auto_fixed {
   background: hsl(25 95% 53% / 0.15);
@@ -128,7 +128,7 @@
   cursor: pointer;
 }
 
-/* Auto-fix icon: white sparkle inside a multi-shape gradient square */
+/* Autofix icon: white sparkle inside a multi-shape gradient square */
 .autofix-icon {
   display: inline-flex;
   align-items: center;
@@ -260,7 +260,7 @@ a.status-badge:hover {
   display: inline-flex;
   align-items: center;
   vertical-align: middle;
-  font-size: var(--font-size-2xs, 10px);
+  font-size: var(--font-size-3xs);
   padding: 1px 6px;
   border-radius: var(--radius-sm);
   font-weight: 500;
@@ -1076,7 +1076,7 @@ table.msg-detail__table td {
   vertical-align: middle;
 }
 
-/* ── Auto-fix card (accordion detail) ─────────────────────────────────── */
+/* ── Autofix card (accordion detail) ─────────────────────────────────── */
 
 .autofix-card-row {
   display: block;
@@ -1181,7 +1181,7 @@ table.msg-detail__table td {
   color: hsl(var(--muted-foreground) / 0.6);
 }
 
-/* ── Error + Auto-fix side-by-side row ────────────────────────────────── */
+/* ── Error + Autofix side-by-side row ────────────────────────────────── */
 
 .error-autofix-row {
   display: grid;

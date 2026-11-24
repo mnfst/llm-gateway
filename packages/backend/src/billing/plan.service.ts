@@ -1,9 +1,17 @@
-import { BadRequestException, HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  HttpStatus,
+  Injectable,
+  Logger,
+  OnModuleInit,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { MANIFEST_ERROR_ORIGINS, PLAN_LIMITS, UNLIMITED_PLAN_LIMITS } from 'manifest-shared';
 import type {
   BillingEmailPreferences,
+  BillingPlanStatus,
   BillingPrice,
   BillingStatus,
   Plan,
@@ -19,6 +27,7 @@ import {
   normalizeBillingEmailPreferences,
 } from './billing-email-preferences';
 import { REQUEST_USAGE_CUTOVER_STATE, requestQuotaWindowStartMs } from './request-quota-window';
+import { PAID_SUBSCRIPTION_STATUS_SQL_LIST } from './subscription-status';
 
 const PRICE_CACHE_TTL_MS = 60 * 60 * 1000;
 const BILLING_PRICE_UNAVAILABLE: BillingPrice = Object.freeze({
@@ -63,20 +72,42 @@ interface BillingSnapshotRow {
   billingEmailPreferences: Partial<BillingEmailPreferences> | null;
 }
 
+function canonicalTimeZone(timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone }).resolvedOptions().timeZone;
+}
+
+function currentProcessTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+}
+
 @Injectable()
-export class PlanService {
+export class PlanService implements OnModuleInit {
   private readonly logger = new Logger(PlanService.name);
   private priceCache: { value: BillingPrice; fetchedAt: number } | null = null;
   private lastCountFailureWarnAtMs = 0;
   private suppressedCountFailureWarns = 0;
   private lastLimitFailureWarnAtMs = 0;
   private suppressedLimitFailureWarns = 0;
-  private readonly requestUsageInitializations = new Map<string, Promise<number>>();
+  /** In-flight baseline initializations keyed by tenant+window. Never awaited on
+   * the admission/billing hot path — only used for single-flight coalescing. */
+  private readonly requestUsageInitializations = new Map<string, Promise<void>>();
 
   constructor(
     @InjectRepository(Tenant) private readonly tenantRepo: Repository<Tenant>,
     private readonly dataSource: DataSource,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    if (!isBillingEnabled()) return;
+
+    const storageTimeZone = await this.readRequestStorageTimeZone();
+    const processTimeZone = currentProcessTimeZone();
+    if (canonicalTimeZone(storageTimeZone) !== canonicalTimeZone(processTimeZone)) {
+      throw new Error(
+        `Request quota storage timezone mismatch: trigger=${storageTimeZone}, process=${processTimeZone}`,
+      );
+    }
+  }
 
   /**
    * Billing attaches to the tenant. The Stripe subscription row is keyed by
@@ -108,7 +139,7 @@ export class PlanService {
           SELECT "plan", "cancelAtPeriodEnd", "periodEnd"
             FROM "subscription"
            WHERE "referenceId" = COALESCE(t."owner_user_id", $2)
-             AND "status" IN ('active', 'trialing')
+             AND "status" IN (${PAID_SUBSCRIPTION_STATUS_SQL_LIST})
         ORDER BY "periodEnd" DESC NULLS LAST
            LIMIT 1
          ) s
@@ -133,6 +164,15 @@ export class PlanService {
   /** Resolve the tenant's plan from better-auth's webhook-synced subscription table. */
   async getPlan(ctx: TenantContext): Promise<Plan> {
     return (await this.getBillingSnapshot(ctx)).plan;
+  }
+
+  /**
+   * Light plan lookup for UI gating (range locks, AuthGuard bootstrap). One
+   * snapshot query — never touches the usage counter or Stripe.
+   */
+  async getPlanStatus(ctx: TenantContext): Promise<BillingPlanStatus> {
+    if (!isBillingEnabled()) return { enabled: false, plan: 'free' };
+    return { enabled: true, plan: await this.getPlan(ctx) };
   }
 
   private limitsForSnapshot(snapshot: BillingSnapshot): PlanLimits {
@@ -169,9 +209,14 @@ export class PlanService {
 
   /**
    * Routed requests recorded for the tenant in the effective monthly quota
-   * window. The steady-state admission path is one PK read. The first request
-   * for a tenant/window lazily adds its pre-cutover baseline exactly once; the
-   * trigger can keep adding live requests while that initialization runs.
+   * window. Hot path is one PK read of `tenant_request_usage`.
+   *
+   * When the pre-cutover baseline has not been applied yet (`baseline_counted =
+   * false`, or the row is missing), this returns the live post-cutover counter
+   * immediately and schedules the historical baseline scan in the background.
+   * Waiting on that scan used to block `/billing/status` and free-tier
+   * admission for tens of seconds on high-volume tenants. Undercounting until
+   * the baseline lands is fail-open — the same posture as a COUNT failure.
    */
   async countRequestsSince(tenantId: string | null, monthStartMs: number): Promise<number> {
     if (!tenantId) return 0;
@@ -187,19 +232,35 @@ export class PlanService {
       );
     if (rows[0]?.baseline_counted) return Number(rows[0].n);
 
-    const initializationKey = `${tenantId}:${windowStart}`;
-    const existing = this.requestUsageInitializations.get(initializationKey);
-    if (existing) return existing;
+    // Live trigger increments only (or 0 if the row does not exist yet). Kick
+    // the one-shot historical baseline off the hot path so dashboard/admission
+    // stay O(1) even for large pre-cutover histories.
+    this.scheduleRequestUsageInitialization(tenantId, windowStartMs, windowStart);
+    return Number(rows[0]?.n ?? 0);
+  }
 
-    const pending = this.initializeRequestUsage(tenantId, windowStartMs, windowStart).finally(
-      () => {
+  /** Single-flight background baseline init. Errors are logged, not thrown. */
+  private scheduleRequestUsageInitialization(
+    tenantId: string,
+    windowStartMs: number,
+    windowStart: string,
+  ): void {
+    const initializationKey = `${tenantId}:${windowStart}`;
+    if (this.requestUsageInitializations.has(initializationKey)) return;
+
+    const pending = this.initializeRequestUsage(tenantId, windowStartMs, windowStart)
+      .then(() => undefined)
+      .catch((err: Error) => {
+        this.logger.warn(
+          `Request usage baseline init failed for tenant ${tenantId}: ${err.message}`,
+        );
+      })
+      .finally(() => {
         if (this.requestUsageInitializations.get(initializationKey) === pending) {
           this.requestUsageInitializations.delete(initializationKey);
         }
-      },
-    );
+      });
     this.requestUsageInitializations.set(initializationKey, pending);
-    return pending;
   }
 
   private async initializeRequestUsage(
@@ -302,6 +363,21 @@ export class PlanService {
     return Number(initializedRows[0]?.n ?? baseline);
   }
 
+  private async readRequestStorageTimeZone(): Promise<string> {
+    const rows: Array<{ definition: string | null }> = await this.dataSource.query(`
+      SELECT pg_get_functiondef(
+               to_regprocedure('"count_tenant_request_usage"()')
+             ) AS "definition"
+    `);
+    const storageTimeZone = rows[0]?.definition?.match(
+      /(?:OLD|NEW|prior|r)\."timestamp"\s+AT TIME ZONE '([^']+)'/,
+    )?.[1];
+    if (!storageTimeZone) {
+      throw new Error('Could not read request quota timezone from installed trigger');
+    }
+    return storageTimeZone;
+  }
+
   /** Routed requests for the tenant so far this calendar month (UTC). */
   async countRequestsThisMonth(tenantId: string | null): Promise<number> {
     return this.countRequestsSince(tenantId, this.monthStartMsUtc(new Date()));
@@ -400,11 +476,14 @@ export class PlanService {
     const limits = this.limitsForSnapshot(snapshot);
     const emailPreferences = normalizeBillingEmailPreferences(snapshot.billingEmailPreferences);
     const now = new Date();
-    const requestsUsed = await this.countRequestsSince(ctx.tenantId, this.monthStartMsUtc(now));
+    const [requestsUsed, priceMonthly] = await Promise.all([
+      this.countRequestsSince(ctx.tenantId, this.monthStartMsUtc(now)),
+      this.getProPrice(),
+    ]);
     return {
       enabled: true,
       plan: snapshot.plan,
-      priceMonthly: await this.getProPrice(),
+      priceMonthly,
       emailPreferences,
       requests: {
         used: requestsUsed,

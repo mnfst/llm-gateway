@@ -1,6 +1,13 @@
 import { lookupKnownModalities } from './known-model-modalities';
 
 describe('lookupKnownModalities', () => {
+  it('keeps Flash image input available when catalogs lag', () => {
+    expect(lookupKnownModalities('minimax', 'MiniMax-M3.1-Flash')).toEqual({
+      input: ['text', 'image'],
+      output: ['text'],
+      capabilities: ['text', 'image', 'tools', 'stream'],
+    });
+  });
   it('identifies gpt-5.3-codex-spark as text-only, case-insensitively', () => {
     expect(lookupKnownModalities('OpenAI', 'GPT-5.3-Codex-Spark')).toEqual({
       input: ['text'],
@@ -24,6 +31,21 @@ describe('lookupKnownModalities', () => {
         capabilities: ['text', 'image', 'tools', 'stream'],
       });
     }
+  });
+
+  it('identifies Kimi Coding Plan models as accepting image (and video) input', () => {
+    for (const modelId of ['k3', 'kimi-for-coding', 'kimi-for-coding-highspeed']) {
+      expect(lookupKnownModalities('moonshot', modelId)).toEqual({
+        input: ['text', 'image', 'video'],
+        output: ['text'],
+        capabilities: ['text', 'image', 'video', 'tools', 'stream'],
+      });
+    }
+    expect(lookupKnownModalities('moonshot', 'k3-256k')).toEqual({
+      input: ['text', 'image'],
+      output: ['text'],
+      capabilities: ['text', 'image', 'tools', 'stream'],
+    });
   });
 
   it('returns undefined for models without a curated entry', () => {

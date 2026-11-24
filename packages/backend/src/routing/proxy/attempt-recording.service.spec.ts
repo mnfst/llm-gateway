@@ -1,3 +1,10 @@
+const ORIGINAL_ENCRYPTION_KEY = process.env['MANIFEST_ENCRYPTION_KEY'];
+process.env['MANIFEST_ENCRYPTION_KEY'] ??= 'test-recording-secret-at-least-32-characters';
+afterAll(() => {
+  if (ORIGINAL_ENCRYPTION_KEY === undefined) delete process.env['MANIFEST_ENCRYPTION_KEY'];
+  else process.env['MANIFEST_ENCRYPTION_KEY'] = ORIGINAL_ENCRYPTION_KEY;
+});
+
 import { decodeRequestRecording } from '../../common/utils/request-recording-codec';
 import type { StoredAttemptRecording } from './attempt-recording.types';
 import { AttemptRecordingService } from './attempt-recording.service';

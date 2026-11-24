@@ -27,6 +27,13 @@ describe("ClaudeCodeSetup", () => {
     expect(labels).toContain("auto");
   });
 
+  it("explains how to get a 1M context window through the gateway", () => {
+    const { container } = render(() => <ClaudeCodeSetup {...baseProps} />);
+    const text = container.textContent ?? "";
+    expect(text).toContain("assumes a 200k context window");
+    expect(text).toContain("/model claude-opus-5-5[1m]");
+  });
+
   it("renders the JSON settings block with Manifest auto model and ANTHROPIC vars", () => {
     const { container } = render(() => <ClaudeCodeSetup {...baseProps} />);
     const text = container.textContent ?? "";

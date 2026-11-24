@@ -12,6 +12,11 @@ export class BillingController {
     return this.planService.getBillingStatus(ctx);
   }
 
+  @Get('billing/plan')
+  async plan(@TenantCtx() ctx: TenantContext) {
+    return this.planService.getPlanStatus(ctx);
+  }
+
   @Patch('billing/email-preferences')
   async updateEmailPreferences(
     @TenantCtx() ctx: TenantContext,

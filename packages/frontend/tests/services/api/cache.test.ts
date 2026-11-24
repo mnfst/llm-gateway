@@ -303,17 +303,17 @@ describe('api SWR cache', () => {
   });
 
   describe('invalidateGroup', () => {
-    it('invalidates every fragment in a group', async () => {
-      // Seed one key per fragment of the message group, plus an unrelated key.
-      for (const fragment of INVALIDATION_GROUPS.message) {
+    it('invalidates every analytics fragment', async () => {
+      // Seed one key per aggregate group fragment, plus an unrelated key.
+      for (const fragment of INVALIDATION_GROUPS.analytics) {
         await cachedFetch(`/api/v1${fragment}`, () => Promise.resolve(1));
       }
       await cachedFetch('/api/v1/model-prices', () => Promise.resolve(99));
 
-      invalidateGroup('message');
+      invalidateGroup('analytics');
 
-      // Every message-group key refetches.
-      for (const fragment of INVALIDATION_GROUPS.message) {
+      // Every analytics-group key refetches.
+      for (const fragment of INVALIDATION_GROUPS.analytics) {
         const fetcher = vi.fn().mockResolvedValue(2);
         await cachedFetch(`/api/v1${fragment}`, fetcher);
         expect(fetcher).toHaveBeenCalledTimes(1);
@@ -322,6 +322,20 @@ describe('api SWR cache', () => {
       const modelPricesFetcher = vi.fn().mockResolvedValue(100);
       await cachedFetch('/api/v1/model-prices', modelPricesFetcher);
       expect(modelPricesFetcher).not.toHaveBeenCalled();
+    });
+
+    it('keeps analytics cached when only the message feed is invalidated', async () => {
+      await cachedFetch('/api/v1/messages', () => Promise.resolve(1));
+      await cachedFetch('/api/v1/overview', () => Promise.resolve(2));
+
+      invalidateGroup('message');
+
+      const messagesFetcher = vi.fn().mockResolvedValue(10);
+      const overviewFetcher = vi.fn().mockResolvedValue(20);
+      await cachedFetch('/api/v1/messages', messagesFetcher);
+      await cachedFetch('/api/v1/overview', overviewFetcher);
+      expect(messagesFetcher).toHaveBeenCalledTimes(1);
+      expect(overviewFetcher).not.toHaveBeenCalled();
     });
 
     it('routing group invalidates routing/provider keys', async () => {

@@ -5,6 +5,7 @@ import { PlanService } from './plan.service';
 describe('BillingController', () => {
   let controller: BillingController;
   const getBillingStatus = jest.fn();
+  const getPlanStatus = jest.fn();
   const updateBillingEmailPreferences = jest.fn();
 
   beforeEach(async () => {
@@ -13,7 +14,7 @@ describe('BillingController', () => {
       providers: [
         {
           provide: PlanService,
-          useValue: { getBillingStatus, updateBillingEmailPreferences },
+          useValue: { getBillingStatus, getPlanStatus, updateBillingEmailPreferences },
         },
       ],
     }).compile();
@@ -28,6 +29,15 @@ describe('BillingController', () => {
     const result = await controller.status(ctx as never);
     expect(getBillingStatus).toHaveBeenCalledWith(ctx);
     expect(result).toBe(status);
+  });
+
+  it('returns the light plan status for the request tenant context', async () => {
+    const planStatus = { enabled: true, plan: 'pro' };
+    getPlanStatus.mockResolvedValue(planStatus);
+    const ctx = { tenantId: 't1', userId: 'u1' };
+    const result = await controller.plan(ctx as never);
+    expect(getPlanStatus).toHaveBeenCalledWith(ctx);
+    expect(result).toBe(planStatus);
   });
 
   it('updates billing email preferences for the request tenant context', async () => {

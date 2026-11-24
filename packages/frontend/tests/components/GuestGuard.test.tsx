@@ -4,12 +4,15 @@ import { createSignal } from 'solid-js';
 
 const mockNavigate = vi.fn();
 const mockCheckNeedsSetup = vi.fn();
+const mockLocationAssign = vi.fn();
 let mockSessionData: any = { data: null, isPending: false };
 let mockSearchParams: Record<string, string | string[]> = {};
+let mockLocation = { search: '' };
 let setMockSession: ((v: any) => void) | undefined;
 
 vi.mock('@solidjs/router', () => ({
   useNavigate: () => mockNavigate,
+  useLocation: () => mockLocation,
   useSearchParams: () => [mockSearchParams],
 }));
 
@@ -28,8 +31,10 @@ import GuestGuard from '../../src/components/GuestGuard';
 describe('GuestGuard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mockSessionData = { data: null, isPending: false };
     mockSearchParams = {};
+    mockLocation = { search: '' };
     mockCheckNeedsSetup.mockResolvedValue(false);
   });
 
@@ -41,6 +46,39 @@ describe('GuestGuard', () => {
     ));
     await vi.waitFor(() => {
       expect(screen.getByText('Guest content')).not.toBeNull();
+    });
+  });
+
+  it('redirects to the discovery step when it is still pending for the user', async () => {
+    localStorage.setItem('manifest_discovery_pending_u1', '/welcome');
+    mockSessionData = {
+      data: { user: { id: 'u1', name: 'Test' } },
+      isPending: false,
+    };
+    render(() => (
+      <GuestGuard>
+        <span>Guest content</span>
+      </GuestGuard>
+    ));
+    await vi.waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/discovery?next=%2Fwelcome', { replace: true });
+    });
+  });
+
+  it('ignores a pending discovery step already marked done', async () => {
+    localStorage.setItem('manifest_discovery_pending_u1', '/welcome');
+    localStorage.setItem('manifest_discovery_done_u1', '1');
+    mockSessionData = {
+      data: { user: { id: 'u1', name: 'Test' } },
+      isPending: false,
+    };
+    render(() => (
+      <GuestGuard>
+        <span>Guest content</span>
+      </GuestGuard>
+    ));
+    await vi.waitFor(() => {
+      expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });
     });
   });
 
@@ -91,6 +129,37 @@ describe('GuestGuard', () => {
         replace: true,
       });
     });
+  });
+
+  it('preserves signed MCP authorization during the authenticated redirect', async () => {
+    vi.stubGlobal('location', { assign: mockLocationAssign });
+    localStorage.setItem('manifest_discovery_pending_u1', '/welcome');
+    mockSessionData = {
+      data: { user: { id: 'u1', name: 'Test' } },
+      isPending: false,
+    };
+    mockSearchParams = {
+      client_id: 'client',
+      redirect_uri: 'http://127.0.0.1/callback',
+      ba_param: ['client_id', 'redirect_uri'],
+      sig: 'abc',
+    };
+    mockLocation = {
+      search:
+        '?client_id=client&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&ba_param=client_id&ba_param=redirect_uri&sig=abc',
+    };
+    render(() => (
+      <GuestGuard>
+        <span>Guest content</span>
+      </GuestGuard>
+    ));
+    await vi.waitFor(() => {
+      expect(mockLocationAssign).toHaveBeenCalledWith(
+        '/api/auth/oauth2/authorize?client_id=client&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&ba_param=client_id&ba_param=redirect_uri&sig=abc',
+      );
+    });
+    expect(mockNavigate).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 
   it('lets authenticated users finish the plan step before redirecting', async () => {

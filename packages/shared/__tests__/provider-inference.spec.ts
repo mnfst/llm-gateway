@@ -36,6 +36,10 @@ describe('inferProviderFromModel', () => {
     ['open-mistral-nemo', 'mistral'],
     ['kimi-k2', 'moonshot'],
     ['moonshot-v1', 'moonshot'],
+    ['k3', 'moonshot'],
+    ['k3-256k', 'moonshot'],
+    ['kimi-for-coding', 'moonshot'],
+    ['kimi-for-coding-highspeed', 'moonshot'],
     ['MiniMax-M2.5', 'minimax'],
     ['mimo-v2.5-pro', 'xiaomi'],
     ['mimo-v2-flash', 'xiaomi'],
@@ -84,6 +88,12 @@ describe('inferProviderFromModel', () => {
 
   it('returns undefined for unrecognized models', () => {
     expect(inferProviderFromModel('unknown-model')).toBeUndefined();
+  });
+
+  it('matches only exact k3 or k3-<suffix>, not unrelated k3-prefixed ids', () => {
+    expect(inferProviderFromModel('k3pro')).toBeUndefined();
+    expect(inferProviderFromModel('k30')).toBeUndefined();
+    expect(inferProviderFromModel('k3.5-turbo')).toBeUndefined();
   });
 });
 

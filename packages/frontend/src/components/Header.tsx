@@ -4,7 +4,6 @@ import {
   createSignal,
   createEffect,
   createResource,
-  lazy,
   onCleanup,
   onMount,
   type Component,
@@ -26,14 +25,12 @@ import {
 import { providerIcon } from './ProviderIcon.jsx';
 import DuplicateAgentModal from './DuplicateAgentModal.jsx';
 
-const DevAutofixToggle = __DEV_MODE__ ? lazy(() => import('./DevAutofixToggle.jsx')) : null;
-
-const GITHUB_REPO = 'mnfst/manifest';
+const GITHUB_REPO = 'mnfst/llm-gateway';
 const STAR_DISMISSED_KEY = 'github-star-dismissed';
 const STAR_CACHE_KEY = 'github-star-count';
 const STAR_CACHE_TS_KEY = 'github-star-ts';
 const STAR_CACHE_TTL = 3600000; // 1 hour
-const DOCS_BASE_URL = 'https://manifest.build/docs';
+const DOCS_BASE_URL = 'https://manifest.build/llm-gateway/docs';
 
 interface HeaderProps {
   showMobileNavToggle?: boolean;
@@ -100,16 +97,17 @@ const Header: Component<HeaderProps> = (props) => {
   const effectiveName = () => user()?.name ?? 'User';
   const docsUrl = () => {
     const p = location.pathname;
-    if (p.includes('/guardrails') || p.includes('/limits')) return `${DOCS_BASE_URL}/set-limits`;
-    if (p.includes('/routing')) return `${DOCS_BASE_URL}/routing`;
+    if (p.includes('/guardrails') || p.includes('/limits'))
+      return `${DOCS_BASE_URL}/observability/`;
+    if (p.includes('/routing')) return `${DOCS_BASE_URL}/llm-gateway/`;
     if (p.startsWith('/providers/subscriptions')) {
-      return `${DOCS_BASE_URL}/providers/subscription-based-providers`;
+      return `${DOCS_BASE_URL}/providers/subscription-based-providers/`;
     }
     if (p.startsWith('/providers/usage-based'))
-      return `${DOCS_BASE_URL}/providers/api-key-providers`;
-    if (p.startsWith('/providers/local')) return `${DOCS_BASE_URL}/providers/local-models`;
-    if (p.includes('/providers')) return `${DOCS_BASE_URL}/providers/api-key-providers`;
-    return `${DOCS_BASE_URL}/introduction`;
+      return `${DOCS_BASE_URL}/providers/api-key-providers/`;
+    if (p.startsWith('/providers/local')) return `${DOCS_BASE_URL}/providers/local-models/`;
+    if (p.includes('/providers')) return `${DOCS_BASE_URL}/providers/api-key-providers/`;
+    return `${DOCS_BASE_URL}/introduction/`;
   };
 
   const initials = () => {
@@ -145,29 +143,19 @@ const Header: Component<HeaderProps> = (props) => {
         <A href="/" class="header__logo">
           <img
             src="/logotype-white.svg"
-            alt="Manifest"
-            width="104"
+            alt="Manifest LLM Gateway"
             class="header__logo-img header__logo-img--light"
           />
-          <img
-            src="/logotype-dark.svg"
-            alt=""
-            width="104"
-            class="header__logo-img header__logo-img--dark"
-          />
+          <img src="/logotype-dark.svg" alt="" class="header__logo-img header__logo-img--dark" />
         </A>
         <Show when={isSelfHosted()}>
           <span class="header__mode-badge" title="Running on the self-hosted version of Manifest">
             Self-hosted
           </span>
         </Show>
-        {__DEV_MODE__ && DevAutofixToggle && <DevAutofixToggle />}
         <Show when={getAgentName()}>
           <span class="header__separator">/</span>
-          <A
-            href="/harnesses"
-            style="color: hsl(var(--muted-foreground)); text-decoration: none; font-size: var(--font-size-sm); font-weight: 500;"
-          >
+          <A href="/harnesses" class="header__breadcrumb-link" style="font-weight: 500;">
             Harnesses
           </A>
           <span class="header__separator">/</span>
@@ -255,22 +243,23 @@ const Header: Component<HeaderProps> = (props) => {
           <span class="header__separator">/</span>
           <A
             href={connectionBreadcrumbBackLink()}
-            style="color: hsl(var(--muted-foreground)); text-decoration: none; font-size: var(--font-size-sm); font-weight: 500;"
+            class="header__breadcrumb-link"
+            style="font-weight: 500;"
           >
             {connectionBreadcrumbBackLabel()}
           </A>
           <span class="header__separator">/</span>
-          <span style="display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-size-sm); font-weight: 500; color: hsl(var(--foreground));">
+          {/* Same classes as the harness crumb so the phone breakpoint hides the
+              parent link and truncates the name instead of wrapping it. */}
+          <span class="header__breadcrumb-current">
             <Show when={connectionBreadcrumbProviderId()}>
-              <span style="display: inline-flex; align-items: center; flex-shrink: 0;">
+              <span class="header__breadcrumb-provider-icon">
                 {providerIcon(connectionBreadcrumbProviderId()!, 14)}
               </span>
             </Show>
-            {connectionBreadcrumbName()}
+            <span>{connectionBreadcrumbName()}</span>
             <Show when={connectionBreadcrumbLabel()}>
-              <span style="color: hsl(var(--muted-foreground)); font-weight: 400;">
-                {connectionBreadcrumbLabel()}
-              </span>
+              <span class="header__breadcrumb-label">{connectionBreadcrumbLabel()}</span>
             </Show>
           </span>
         </Show>

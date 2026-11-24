@@ -116,7 +116,7 @@ describe('AttemptsCell', () => {
     const { container } = renderCell(baseRow({ attempt_count: 2, autofix_applied: true }));
     expect(container.querySelector('td')!.textContent).toContain('2');
     // Icons moved to SelfHealCell
-    expect(container.querySelector('[title="Auto-fix"]')).toBeNull();
+    expect(container.querySelector('[title="Autofix"]')).toBeNull();
   });
 
   it('renders just the attempt count (no icons) when fallback_from_model is set', () => {
@@ -152,10 +152,10 @@ describe('SelfHealCell', () => {
 
   it('renders autofix badge with icon and text when autofix_applied', () => {
     const { container } = renderCell(baseRow({ autofix_applied: true }));
-    const badge = container.querySelector('[title="Auto-fix"]') as HTMLElement;
+    const badge = container.querySelector('[title="Autofix"]') as HTMLElement;
     expect(badge).not.toBeNull();
     expect(badge.className).toContain('trigger-badge--autofix');
-    expect(badge.textContent).toContain('auto-fix');
+    expect(badge.textContent).toContain('autofix');
   });
 
   it('renders fallback badge with icon and text when fallback_from_model is set', () => {
@@ -170,7 +170,7 @@ describe('SelfHealCell', () => {
     const { container } = renderCell(
       baseRow({ autofix_applied: true, fallback_from_model: 'gpt-4o' }),
     );
-    expect(container.querySelector('[title="Auto-fix"]')).not.toBeNull();
+    expect(container.querySelector('[title="Autofix"]')).not.toBeNull();
     expect(container.querySelector('[title="Fallback"]')).not.toBeNull();
   });
 });

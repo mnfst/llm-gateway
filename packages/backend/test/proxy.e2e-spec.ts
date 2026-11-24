@@ -250,12 +250,9 @@ describe('Proxy E2E — /v1/chat/completions', () => {
       expect(res.headers['x-manifest-tier']).toBeDefined();
       expect(res.headers['x-manifest-model']).toBeDefined();
       expect(res.headers['x-manifest-provider']).toBeDefined();
-      // Body shape from handleProviderError() with the forwarded status echoed
-      // in `error.status`. A guard 401 would have type='auth_error', so this
-      // also discriminates the two paths.
-      expect(res.body?.error?.type).toBe(
-        res.status === 401 ? 'authentication_error' : 'permission_error',
-      );
+      // Body shape from handleProviderError() with the forwarded status and
+      // source echoed in the error. Provider-defined error types are preserved,
+      // so `source` discriminates this path from the guard's Manifest error.
       expect(res.body?.error?.status).toBe(res.status);
       expect(res.body?.error?.source).toBe('provider');
     } else if (res.status >= 500) {

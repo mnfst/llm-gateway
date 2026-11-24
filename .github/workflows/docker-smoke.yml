@@ -11,6 +11,7 @@ on:
     paths:
       - ".github/scripts/mock-openai-provider.py"
       - ".github/workflows/docker-smoke.yml"
+      - "contracts/gateway/**"
       - "docker/Dockerfile"
       - ".dockerignore"
       - "docker/docker-compose.yml"
@@ -34,6 +35,10 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24
 
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
@@ -128,6 +133,39 @@ jobs:
           (cd docker && docker compose logs manifest)
           exit 1
 
+      - name: Checkout baseline gateway contracts
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .gateway-contract-baseline
+          sparse-checkout: contracts/gateway
+
+      - name: Run baseline gateway contracts
+        if: github.event_name == 'pull_request'
+        env:
+          MANIFEST_BASE_URL: http://127.0.0.1:2099
+        run: |
+          shopt -s nullglob
+          tests=(.gateway-contract-baseline/contracts/gateway/tests/*.test.mjs)
+          if (( ${#tests[@]} == 0 )); then
+            echo "::notice::No gateway contracts exist in the base commit; running candidate contracts only."
+            exit 0
+          fi
+          node --test "${tests[@]}"
+
+      - name: Run candidate gateway contracts
+        env:
+          MANIFEST_BASE_URL: http://127.0.0.1:2099
+        run: |
+          shopt -s nullglob
+          tests=(contracts/gateway/tests/*.test.mjs)
+          if (( ${#tests[@]} == 0 )); then
+            echo "::error::The candidate contains no gateway contracts."
+            exit 1
+          fi
+          node --test "${tests[@]}"
+
       - name: Verify health payload shape
         run: |
           response=$(curl -sS http://127.0.0.1:2099/api/v1/health)
@@ -140,11 +178,11 @@ jobs:
           test -s /tmp/index.html
           grep -q '<title>Manifest</title>' /tmp/index.html
 
-      - name: Verify public stats are gated off by default
+      - name: Verify public error pages are gated off by default
         run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2099/api/v1/public/usage)
+          status=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:2099/api/v1/public/error-pages)
           if [[ "$status" != "404" ]]; then
-            echo "expected 404 for /public/usage when MANIFEST_PUBLIC_STATS is unset, got $status" >&2
+            echo "expected 404 for /public/error-pages when MANIFEST_PUBLIC_STATS is unset, got $status" >&2
             exit 1
           fi
 
@@ -231,10 +269,11 @@ jobs:
 
           docker run --rm --user 65532:65532 \
             -e RECORDING_KEY="$storage_key" \
+            -e RECORDING_PROMPT="$prompt" \
             -v manifest_request_recordings:/recordings:ro \
             --entrypoint /nodejs/bin/node \
             manifestdotbuild/manifest:latest \
-            -e "const fs=require('fs');const b=fs.readFileSync('/recordings/'+process.env.RECORDING_KEY);if(b[0]!==0x1f||b[1]!==0x8b)process.exit(1)"
+            -e "const fs=require('fs');const b=fs.readFileSync('/recordings/'+process.env.RECORDING_KEY);if(b.subarray(0,4).toString('ascii')!=='MRE1')process.exit(1);if(b.includes(process.env.RECORDING_PROMPT))process.exit(2)"
 
           docker compose up -d --force-recreate --no-deps manifest
           for i in $(seq 1 60); do
@@ -285,6 +324,156 @@ jobs:
           if [[ -f /tmp/mock-openai-provider.pid ]]; then
             kill "$(cat /tmp/mock-openai-provider.pid)" || true
           fi
+
+  upgrade-smoke:
+    name: Upgrade smoke test (populated DB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # The `smoke` job above always boots against a fresh, empty database, so
+    # it can never catch a dependency or migration change that only breaks
+    # when upgrading an existing install. That is exactly how the Better Auth
+    # 1.7 bump (#2757) shipped green and then crashed every populated
+    # deployment at auth startup (rolled back in #2801). This job replays the
+    # real upgrade path: boot the latest *published* image, populate the
+    # database through the actual setup + login flow, then swap in the
+    # PR-built image against the same Postgres volume and verify it comes up
+    # healthy with the existing data and session intact.
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Pull the published baseline image
+        run: |
+          docker pull manifestdotbuild/manifest:latest
+          docker tag manifestdotbuild/manifest:latest \
+            manifestdotbuild/manifest:published-baseline
+
+      - name: Build the PR image as manifestdotbuild/manifest:pr-candidate
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: false
+          load: true
+          tags: manifestdotbuild/manifest:pr-candidate
+          platforms: linux/amd64
+          cache-from: type=gha,scope=smoke-amd64
+          cache-to: type=gha,mode=max,scope=smoke-amd64
+
+      - name: Prepare .env from .env.example
+        working-directory: docker
+        run: |
+          cp .env.example .env
+          # Generate a real secret so BETTER_AUTH_SECRET=${VAR:?…} succeeds.
+          secret=$(openssl rand -hex 32)
+          # Replace the empty `BETTER_AUTH_SECRET=` line.
+          new=""
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" == "BETTER_AUTH_SECRET=" ]]; then
+              new+="BETTER_AUTH_SECRET=${secret}"$'\n'
+            else
+              new+="$line"$'\n'
+            fi
+          done < .env
+          printf '%s' "$new" > .env
+
+      - name: Boot the published baseline and populate the database
+        working-directory: docker
+        env:
+          MANIFEST_VERSION: published-baseline
+        run: |
+          docker compose up -d
+          for i in $(seq 1 60); do
+            if curl -sSf http://127.0.0.1:2099/api/v1/health >/dev/null; then
+              echo "baseline healthy after ${i} tries"
+              break
+            fi
+            if [[ "$i" -eq 60 ]]; then
+              echo "baseline never became healthy" >&2
+              docker compose logs manifest
+              exit 1
+            fi
+            sleep 2
+          done
+
+          base_url=http://127.0.0.1:2099
+          auth_origin=http://localhost:2099
+          cookie_jar=/tmp/upgrade-smoke.cookies
+
+          curl -sSf -X POST "$base_url/api/v1/setup/admin" \
+            -H 'Content-Type: application/json' \
+            -H "Origin: $auth_origin" \
+            --data '{"email":"upgrade-smoke@example.com","name":"Upgrade Smoke","password":"upgrade-smoke-password"}' \
+            >/dev/null
+          curl -sSf -c "$cookie_jar" -X POST "$base_url/api/auth/sign-in/email" \
+            -H 'Content-Type: application/json' \
+            -H "Origin: $auth_origin" \
+            --data '{"email":"upgrade-smoke@example.com","password":"upgrade-smoke-password"}' \
+            >/dev/null
+          test -s "$cookie_jar"
+
+          # Real application rows on top of the auth tables, so migrations
+          # in the PR run against populated app data too.
+          agent=$(curl -sSf -b "$cookie_jar" -X POST "$base_url/api/v1/agents" \
+            -H 'Content-Type: application/json' \
+            --data '{"name":"Upgrade Smoke Agent"}')
+          jq -er '.apiKey | select(startswith("mnfst_"))' <<<"$agent" >/dev/null
+
+      - name: Upgrade to the PR image on the same database
+        working-directory: docker
+        env:
+          MANIFEST_VERSION: pr-candidate
+        run: |
+          docker compose up -d --no-deps manifest
+          for i in $(seq 1 60); do
+            if curl -sSf http://127.0.0.1:2099/api/v1/health >/dev/null; then
+              echo "upgraded image healthy after ${i} tries"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "upgraded image never became healthy against the populated database" >&2
+          docker compose logs manifest
+          exit 1
+
+      - name: Verify existing data and auth survive the upgrade
+        run: |
+          base_url=http://127.0.0.1:2099
+          auth_origin=http://localhost:2099
+          cookie_jar=/tmp/upgrade-smoke.cookies
+
+          # The session minted on the baseline image must still validate.
+          curl -sSf -b "$cookie_jar" -H "Origin: $auth_origin" \
+            "$base_url/api/auth/get-session" |
+            jq -e '.user.email == "upgrade-smoke@example.com"' >/dev/null
+
+          # A fresh login through the upgraded image must work — this is the
+          # exact call that broke after the Better Auth 1.7 upgrade.
+          curl -sSf -c /tmp/upgrade-smoke-fresh.cookies \
+            -X POST "$base_url/api/auth/sign-in/email" \
+            -H 'Content-Type: application/json' \
+            -H "Origin: $auth_origin" \
+            --data '{"email":"upgrade-smoke@example.com","password":"upgrade-smoke-password"}' \
+            >/dev/null
+          test -s /tmp/upgrade-smoke-fresh.cookies
+
+          # Pre-upgrade application data is still readable.
+          curl -sSf -b "$cookie_jar" \
+            "$base_url/api/v1/agents/upgrade-smoke-agent" -o /tmp/upgrade-agent.json
+          grep -q 'Upgrade Smoke Agent' /tmp/upgrade-agent.json
+
+      - name: Dump backend logs on failure
+        if: failure()
+        working-directory: docker
+        run: |
+          docker compose logs manifest || true
+          docker compose logs postgres || true
+
+      - name: Tear down
+        if: always()
+        working-directory: docker
+        run: docker compose down -v
 
   install-script:
     name: install.sh end-to-end

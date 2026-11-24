@@ -1,3 +1,4 @@
+import { getEmailAssetUrl } from '../../common/utils/dashboard-url';
 import * as React from 'react';
 import {
   Html,
@@ -118,8 +119,8 @@ function subscriptionCopy(props: SubscriptionPlanEmailProps): {
           to {props.planName} features{end ? ` until ${end}` : ''}.
         </>,
         <>
-          After that date, your workspace will switch back to the Free plan with 10,000 routed
-          requests per month and 7-day dashboard retention.
+          After that date, your workspace keeps its dashboard and settings but stops routing
+          requests until you subscribe again.
         </>,
         <>
           If there's anything we can do, or if you'd like to discuss your needs, we're here to help.
@@ -150,7 +151,7 @@ function subscriptionCopy(props: SubscriptionPlanEmailProps): {
 }
 
 export function SubscriptionPlanEmail(props: SubscriptionPlanEmailProps) {
-  const logoUrl = props.logoUrl ?? 'https://app.manifest.build/manifest-logo.png';
+  const logoUrl = props.logoUrl ?? getEmailAssetUrl('manifest-logo.png', props.appUrl);
   const copy = subscriptionCopy(props);
   const accent = props.kind === 'cancellation_confirmed' ? '#ea580c' : '#0f766e';
   const accentBg = props.kind === 'cancellation_confirmed' ? '#fff7ed' : '#ecfdf5';
@@ -162,7 +163,7 @@ export function SubscriptionPlanEmail(props: SubscriptionPlanEmailProps) {
       <Body style={body}>
         <Container style={container}>
           <Section style={logoSection}>
-            <Img src={logoUrl} alt="Manifest" height="32" style={logoImg} />
+            <Img src={logoUrl} alt="Manifest LLM Gateway" width="174" height="32" style={logoImg} />
           </Section>
 
           <Section style={card}>
@@ -217,7 +218,7 @@ export function SubscriptionPlanEmail(props: SubscriptionPlanEmailProps) {
 }
 
 export function PlanUsageEmail(props: PlanUsageEmailProps) {
-  const logoUrl = props.logoUrl ?? 'https://app.manifest.build/manifest-logo.png';
+  const logoUrl = props.logoUrl ?? getEmailAssetUrl('manifest-logo.png', props.appUrl);
   const isLimit = props.kind === 'requests_limit_reached';
   const percentage = Math.min(100, Math.round((props.used / props.limit) * 100));
   const accent = isLimit ? '#dc2626' : '#ea580c';
@@ -236,7 +237,7 @@ export function PlanUsageEmail(props: PlanUsageEmailProps) {
       <Body style={body}>
         <Container style={container}>
           <Section style={logoSection}>
-            <Img src={logoUrl} alt="Manifest" height="32" style={logoImg} />
+            <Img src={logoUrl} alt="Manifest LLM Gateway" width="174" height="32" style={logoImg} />
           </Section>
 
           <Section style={card}>

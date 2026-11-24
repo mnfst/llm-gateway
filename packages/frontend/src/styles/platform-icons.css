@@ -1,0 +1,10 @@
+/* Dark-mode icon inversion for platform icons (Sidebar + Settings) */
+.dark .platform-icon[src*='openai'],
+.dark .platform-icon[src*='anthropic'],
+.dark .platform-icon[src*='vercel'],
+.dark .platform-icon[src*='opencode'],
+.dark .platform-icon[src*='hermes'],
+.dark .platform-icon[src*='codex'],
+.dark .platform-icon[src*='other'] {
+  filter: invert(1);
+}

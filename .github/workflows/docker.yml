@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Optional version override (e.g. 5.38.1). Leave blank to use the current version from packages/manifest/package.json."
+        description: "Optional version override (e.g. 6.18.0). Leave blank to use the current version from packages/manifest/package.json."
         required: false
         type: string
   workflow_call:

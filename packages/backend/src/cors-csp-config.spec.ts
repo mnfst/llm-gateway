@@ -270,3 +270,33 @@ describe('applyPrivateNetworkAllow', () => {
     expect(setHeader).not.toHaveBeenCalled();
   });
 });
+
+describe('applyPivotClaimCors', () => {
+  const { applyPivotClaimCors, PIVOT_CLAIM_PATH } = jest.requireActual('./cors-csp-config');
+
+  function collect() {
+    const headers: Record<string, string> = {};
+    return { headers, set: (name: string, value: string) => (headers[name] = value) };
+  }
+
+  it('ignores other routes entirely', () => {
+    const { headers, set } = collect();
+    expect(applyPivotClaimCors({ method: 'POST', path: '/api/v1/overview' }, set)).toBe(false);
+    expect(headers).toEqual({});
+  });
+
+  it('opens CORS on the claim POST without ending the response', () => {
+    const { headers, set } = collect();
+    expect(applyPivotClaimCors({ method: 'POST', path: PIVOT_CLAIM_PATH }, set)).toBe(false);
+    expect(headers['Access-Control-Allow-Origin']).toBe('*');
+    expect(headers['Access-Control-Allow-Methods']).toBe('POST, OPTIONS');
+    expect(headers['Access-Control-Allow-Headers']).toBe('Content-Type');
+  });
+
+  it('fully answers the claim preflight', () => {
+    const { headers, set } = collect();
+    expect(applyPivotClaimCors({ method: 'OPTIONS', path: PIVOT_CLAIM_PATH }, set)).toBe(true);
+    expect(headers['Access-Control-Allow-Origin']).toBe('*');
+    expect(headers['Access-Control-Max-Age']).toBe('600');
+  });
+});

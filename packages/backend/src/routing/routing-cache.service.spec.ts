@@ -424,4 +424,37 @@ describe('RoutingCacheService', () => {
       expect(() => service.invalidateAgent('agent-3')).not.toThrow();
     });
   });
+
+  describe('tenant invalidation listeners', () => {
+    it('fires registered listeners with the tenantId on invalidateTenant', () => {
+      const listener = jest.fn();
+      service.addTenantInvalidationListener(listener);
+
+      service.invalidateTenant('tenant-1');
+
+      expect(listener).toHaveBeenCalledTimes(1);
+      expect(listener).toHaveBeenCalledWith('tenant-1');
+    });
+
+    it('keeps invalidating and reaches later listeners when one throws', () => {
+      const failing = jest.fn(() => {
+        throw new Error('boom');
+      });
+      const next = jest.fn();
+      service.addTenantInvalidationListener(failing);
+      service.addTenantInvalidationListener(next);
+
+      expect(() => service.invalidateTenant('tenant-2')).not.toThrow();
+      expect(next).toHaveBeenCalledWith('tenant-2');
+    });
+
+    it('does not fire agent listeners on a tenant invalidation', () => {
+      const agentListener = jest.fn();
+      service.addInvalidationListener(agentListener);
+
+      service.invalidateTenant('tenant-3');
+
+      expect(agentListener).not.toHaveBeenCalled();
+    });
+  });
 });

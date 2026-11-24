@@ -7,8 +7,10 @@ import { ManifestRuntimeService } from './services/manifest-runtime.service';
 import { TenantCacheService } from './services/tenant-cache.service';
 import { UserCacheInterceptor } from './interceptors/user-cache.interceptor';
 import { AgentCacheInterceptor } from './interceptors/agent-cache.interceptor';
-import { AgentRecordingCacheService } from './services/agent-recording-cache.service';
+import { AgentRecordingConfigService } from './services/agent-recording-config.service';
 import { RequestRecordingStorageService } from './services/request-recording-storage.service';
+import { AgentListCacheInterceptor } from './interceptors/agent-list-cache.interceptor';
+import { AgentListCacheService } from './services/agent-list-cache.service';
 
 @Global()
 @Module({
@@ -19,7 +21,9 @@ import { RequestRecordingStorageService } from './services/request-recording-sto
     TenantCacheService,
     UserCacheInterceptor,
     AgentCacheInterceptor,
-    AgentRecordingCacheService,
+    AgentListCacheInterceptor,
+    AgentListCacheService,
+    AgentRecordingConfigService,
     RequestRecordingStorageService,
   ],
   exports: [
@@ -28,7 +32,9 @@ import { RequestRecordingStorageService } from './services/request-recording-sto
     TenantCacheService,
     UserCacheInterceptor,
     AgentCacheInterceptor,
-    AgentRecordingCacheService,
+    AgentListCacheInterceptor,
+    AgentListCacheService,
+    AgentRecordingConfigService,
     RequestRecordingStorageService,
   ],
 })

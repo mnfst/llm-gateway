@@ -1,4 +1,17 @@
-import { Controller, Get } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  NotFoundException,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { TenantCtx, TenantContext } from '../common/decorators/tenant-context.decorator';
@@ -6,6 +19,15 @@ import { TenantProvider } from '../entities/tenant-provider.entity';
 import { ModelPricingCacheService } from '../model-prices/model-pricing-cache.service';
 import { CustomProviderService } from './custom-provider/custom-provider.service';
 import { filterProvidersForDeployment } from '../common/utils/provider-availability';
+import { ProviderService } from './routing-core/provider.service';
+import { RoutingCacheService } from './routing-core/routing-cache.service';
+import { ModelDiscoveryService } from '../model-discovery/model-discovery.service';
+import {
+  ProviderKeyParamDto,
+  ProviderParamDto,
+  RemoveProviderQueryDto,
+  RenameProviderKeyDto,
+} from './dto/routing.dto';
 
 /**
  * Tenant-level provider management endpoints.
@@ -18,6 +40,10 @@ import { filterProvidersForDeployment } from '../common/utils/provider-availabil
  * longer triggers two multi-second scans over the 8GB messages table. The
  * frontend fetches the two halves independently and merges by
  * (provider, auth_type).
+ *
+ * The mutations below (disconnect, rename, refresh) are the tenant-level
+ * twins of the `/routing/:agentName/providers/*` routes. Connections belong to
+ * the tenant, so managing one must not require a harness to exist.
  */
 @Controller('api/v1/providers')
 export class TenantProvidersController {
@@ -26,7 +52,76 @@ export class TenantProvidersController {
     private readonly providerRepo: Repository<TenantProvider>,
     private readonly pricingCache: ModelPricingCacheService,
     private readonly customProviderService: CustomProviderService,
+    private readonly providerService: ProviderService,
+    private readonly discoveryService: ModelDiscoveryService,
+    private readonly routingCache: RoutingCacheService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
   ) {}
+
+  private requireTenant(ctx: TenantContext): string {
+    if (!ctx.tenantId) throw new NotFoundException('Provider not found');
+    return ctx.tenantId;
+  }
+
+  /** Drop every routing cache that can hold a now-stale view of the tenant's providers. */
+  private async invalidateTenantRouting(tenantId: string): Promise<void> {
+    for (const agentId of await this.providerService.listOwnedAgentIds(tenantId)) {
+      this.routingCache.invalidateAgent(agentId);
+    }
+    this.routingCache.invalidateTenant(tenantId);
+  }
+
+  @Post('refresh-models')
+  async refreshModels(@TenantCtx() ctx: TenantContext) {
+    const tenantId = this.requireTenant(ctx);
+    await this.discoveryService.discoverAllForAgent(tenantId, { forceRefresh: true });
+    await this.invalidateTenantRouting(tenantId);
+    return { ok: true };
+  }
+
+  @Patch(':provider/keys/:label')
+  async renameProviderKey(
+    @TenantCtx() ctx: TenantContext,
+    @Param() params: ProviderKeyParamDto,
+    @Body() body: RenameProviderKeyDto,
+  ) {
+    const tenantId = this.requireTenant(ctx);
+    const updated = await this.providerService.renameKey(
+      null,
+      tenantId,
+      params.provider,
+      body.authType ?? 'api_key',
+      params.label,
+      body.newLabel,
+    );
+    await this.invalidateTenantRouting(tenantId);
+    return {
+      id: updated.id,
+      provider: updated.provider,
+      auth_type: updated.auth_type,
+      label: updated.label,
+      priority: updated.priority,
+    };
+  }
+
+  @Delete(':provider')
+  async removeProvider(
+    @TenantCtx() ctx: TenantContext,
+    @Param() params: ProviderParamDto,
+    @Query() query: RemoveProviderQueryDto,
+  ) {
+    const tenantId = this.requireTenant(ctx);
+    const { notifications } = await this.providerService.removeProvider(
+      null,
+      tenantId,
+      params.provider,
+      query.authType,
+      query.label,
+    );
+    await this.invalidateTenantRouting(tenantId);
+    await this.cacheManager.clear();
+    return { ok: true, notifications };
+  }
 
   /**
    * List all tenant-level providers (config only). Groups by

@@ -6,6 +6,7 @@ import {
   checkIsOllamaAvailable,
   checkLocalLlmHost,
   checkEmailConfigured,
+  checkMcpEnabled,
   resetSetupStatus,
   createFirstAdmin,
 } from '../../src/services/setup-status';
@@ -298,6 +299,51 @@ describe('setup-status service', () => {
     it('defaults to true on fetch failure', async () => {
       vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
       expect(await checkEmailConfigured()).toBe(true);
+    });
+  });
+
+  describe('checkMcpEnabled', () => {
+    it('returns true when backend reports mcpEnabled=true', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ needsSetup: false, mcpEnabled: true }),
+        }),
+      );
+      expect(await checkMcpEnabled()).toBe(true);
+    });
+
+    it('returns false when backend reports mcpEnabled=false', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ needsSetup: false, mcpEnabled: false }),
+        }),
+      );
+      expect(await checkMcpEnabled()).toBe(false);
+    });
+
+    it('defaults to true when backend omits mcpEnabled (older backend)', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ needsSetup: false }),
+        }),
+      );
+      expect(await checkMcpEnabled()).toBe(true);
+    });
+
+    it('defaults to true on a non-ok response', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
+      expect(await checkMcpEnabled()).toBe(true);
+    });
+
+    it('defaults to true on fetch failure', async () => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
+      expect(await checkMcpEnabled()).toBe(true);
     });
   });
 

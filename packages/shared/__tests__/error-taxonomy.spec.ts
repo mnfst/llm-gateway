@@ -17,6 +17,7 @@ import {
   isSuccessStatus,
   isFailedStatus,
 } from '../src/error-taxonomy';
+import { isAnthropicExtraUsageError } from '../src/provider-error-semantics';
 
 describe('error-taxonomy constants', () => {
   it('pins the synthetic transport codes to 503/504', () => {
@@ -92,6 +93,7 @@ describe('classifyMessageError', () => {
     ['manifest_rate_limited', 'policy', 'rate_limit'],
     ['manifest_ip_rate_limited', 'policy', 'rate_limit'],
     ['manifest_concurrency_limited', 'policy', 'rate_limit'],
+    ['provider_cooldown', 'policy', 'rate_limit'],
     ['manifest_invalid_request', 'request', 'invalid_request'],
     ['model_not_available', 'request', 'not_found'],
     ['manifest_internal_error', 'internal', 'internal'],
@@ -141,6 +143,27 @@ describe('classifyMessageError', () => {
     expect(classifyMessageError({ status: 'error', errorHttpStatus: 500 })).toEqual({
       error_origin: 'provider',
       error_class: 'server_error',
+      superseded: false,
+    });
+  });
+
+  it('classifies Anthropic extra-usage exhaustion as billing while preserving HTTP 400', () => {
+    expect(
+      classifyMessageError({
+        status: 'error',
+        errorHttpStatus: 400,
+        provider: 'anthropic',
+        errorMessage: JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'invalid_request_error',
+            message: 'You are out of extra usage. Add more at claude.ai to keep going.',
+          },
+        }),
+      }),
+    ).toEqual({
+      error_origin: 'provider',
+      error_class: 'billing',
       superseded: false,
     });
   });
@@ -209,6 +232,69 @@ describe('classifyMessageError', () => {
       error_class: 'plan_request_limit_exceeded',
       superseded: false,
     });
+  });
+});
+
+describe('isAnthropicExtraUsageError', () => {
+  const errorBody = JSON.stringify({
+    type: 'error',
+    error: {
+      type: 'invalid_request_error',
+      message: "You're out of extra usage. Add more at claude.ai to keep going.",
+    },
+  });
+
+  it('matches the Anthropic 400 invalid-request billing envelope', () => {
+    expect(
+      isAnthropicExtraUsageError({
+        provider: 'anthropic',
+        httpStatus: 400,
+        errorBody,
+      }),
+    ).toBe(true);
+  });
+
+  it('matches a top-level Anthropic error envelope', () => {
+    expect(
+      isAnthropicExtraUsageError({
+        provider: 'anthropic',
+        httpStatus: 400,
+        errorBody: JSON.stringify({
+          type: 'invalid_request_error',
+          message: 'You are out of extra usage.',
+        }),
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['openai', 400, errorBody],
+    ['anthropic', 429, errorBody],
+    ['anthropic', 400, ''],
+    ['anthropic', 400, 'null'],
+    ['anthropic', 400, 'not json'],
+    [
+      'anthropic',
+      400,
+      JSON.stringify({
+        error: { type: 'invalid_request_error', message: 'max_tokens is required' },
+      }),
+    ],
+    [
+      'anthropic',
+      400,
+      JSON.stringify({
+        error: { type: 'rate_limit_error', message: 'You are out of extra usage.' },
+      }),
+    ],
+  ])('does not match unrelated provider errors', (provider, httpStatus, body) => {
+    expect(
+      isAnthropicExtraUsageError({
+        provider,
+        httpStatus,
+        errorBody: body,
+      }),
+    ).toBe(false);
   });
 });
 

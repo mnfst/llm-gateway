@@ -14,7 +14,11 @@ vi.mock('../../../src/services/api/core.js', () => ({
   fetchMutate: fetchMutateMock,
 }));
 
-import { getBillingStatus, updateBillingEmailPreferences } from '../../../src/services/api/billing';
+import {
+  getBillingPlan,
+  getBillingStatus,
+  updateBillingEmailPreferences,
+} from '../../../src/services/api/billing';
 import { fetchJson, fetchMutate } from '../../../src/services/api/core';
 import { FREE_PLAN_REQUESTS_PER_MONTH, type BillingStatus } from 'manifest-shared';
 
@@ -22,6 +26,17 @@ describe('billing API client', () => {
   beforeEach(() => {
     fetchJsonMock.mockReset();
     fetchMutateMock.mockReset();
+  });
+
+  it('getBillingPlan GETs /billing/plan without the global login redirect', async () => {
+    // AuthGuard fires this before the session is known, so a signed-out 401
+    // must reject quietly instead of hard-navigating the browser to /login.
+    fetchJsonMock.mockResolvedValue({ enabled: true, plan: 'free' });
+
+    const result = await getBillingPlan();
+
+    expect(fetchJson).toHaveBeenCalledWith('/billing/plan', undefined, { loginRedirect: false });
+    expect(result).toEqual({ enabled: true, plan: 'free' });
   });
 
   it('getBillingStatus GETs /billing/status and returns the parsed status', async () => {

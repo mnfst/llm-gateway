@@ -26,9 +26,52 @@
 /* ── Summary stat cards ──────────────────────────── */
 .overview-stats {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 24px;
   margin-bottom: 24px;
+}
+
+.overview-stats--5 {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.overview-stats--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* Stat cards collapse toward one column as the viewport narrows. The
+   modifier and the base share the same breakpoints so a five-card row
+   never stays wider than the screen. */
+@media (max-width: 1024px) {
+  .overview-stats,
+  .overview-stats--5,
+  .overview-stats--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (max-width: 768px) {
+  .overview-stats,
+  .overview-stats--5,
+  .overview-stats--3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+  /* Two-up cards are narrow: let the trend pill / "View more" drop under
+     the big value instead of pushing past the card edge. */
+  .overview-stat-card__value-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+}
+
+@media (max-width: 480px) {
+  .overview-stats,
+  .overview-stats--5,
+  .overview-stats--3 {
+    grid-template-columns: 1fr;
+  }
 }
 
 .overview-stat-card {
@@ -67,11 +110,11 @@
 }
 
 /* Accent variants: each recovery KPI wears its chart series colour (blue =
-   recovered by Auto-fix, teal green = recovered by fallback) and the failed
+   recovered by Autofix, teal green = recovered by fallback) and the failed
    card reads destructive, label included.
 
    The backgrounds are three layers in one `background-image` (the house recipe —
-   the auto-fix/fallback icon squares are built the same way, card-sized):
+   the autofix/fallback icon squares are built the same way, card-sized):
    1. a diagonal fade of the card's colour toward transparent,
    2. a denser, darker glow anchored in the top-right corner (the "blurred
       shape" — a radial does it without an extra node or a GPU blur),
@@ -270,6 +313,9 @@
 .scroll-panel__body {
   max-height: 480px;
   overflow-y: auto;
+  /* Wide tables (the 7-column Harnesses breakdown) scroll inside the
+     panel on narrow screens instead of widening the page. */
+  overflow-x: auto;
   padding-bottom: 32px;
 }
 

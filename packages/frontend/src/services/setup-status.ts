@@ -10,6 +10,7 @@ interface SetupStatusResponse {
   ollamaAvailable?: boolean;
   localLlmHost?: string;
   emailConfigured?: boolean;
+  mcpEnabled?: boolean;
 }
 
 interface SetupStatusResult {
@@ -19,6 +20,7 @@ interface SetupStatusResult {
   ollamaAvailable: boolean;
   localLlmHost: string;
   emailConfigured: boolean;
+  mcpEnabled: boolean;
 }
 
 let cachedPromise: Promise<SetupStatusResult> | null = null;
@@ -37,6 +39,7 @@ async function fetchSetupStatus(): Promise<SetupStatusResult> {
         ollamaAvailable: false,
         localLlmHost: 'localhost',
         emailConfigured: true,
+        mcpEnabled: true,
       };
     const data = (await res.json()) as SetupStatusResponse;
     return {
@@ -48,6 +51,8 @@ async function fetchSetupStatus(): Promise<SetupStatusResult> {
       // Assume available unless the backend explicitly says otherwise, so a
       // transient status glitch never hides the email reset form.
       emailConfigured: data.emailConfigured !== false,
+      // Same reasoning, plus a backend older than this field always serves MCP.
+      mcpEnabled: data.mcpEnabled !== false,
     };
   } catch {
     return {
@@ -57,6 +62,7 @@ async function fetchSetupStatus(): Promise<SetupStatusResult> {
       ollamaAvailable: false,
       localLlmHost: 'localhost',
       emailConfigured: true,
+      mcpEnabled: true,
     };
   }
 }
@@ -90,6 +96,16 @@ export async function checkLocalLlmHost(): Promise<string> {
 
 export async function checkEmailConfigured(): Promise<boolean> {
   return (await getSetupStatus()).emailConfigured;
+}
+
+/**
+ * False when the backend runs without the remote MCP server — an install whose
+ * origin cannot carry an HTTPS MCP resource, or one that set `MCP_ENABLED=false`.
+ * The MCP setup page and its nav entry are hidden then, because the endpoint
+ * they document does not exist.
+ */
+export async function checkMcpEnabled(): Promise<boolean> {
+  return (await getSetupStatus()).mcpEnabled;
 }
 
 /** Invalidate the cached status. Call this after a successful setup. */

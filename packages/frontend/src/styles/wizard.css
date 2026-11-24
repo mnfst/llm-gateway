@@ -667,7 +667,10 @@
 
 .dark .panel__tab-icon[src*='openai'],
 .dark .panel__tab-icon[src*='anthropic'],
-.dark .panel__tab-icon[src*='vercel'] {
+.dark .panel__tab-icon[src*='vercel'],
+.dark .panel__tab-icon[src*='opencode'],
+.dark .panel__tab-icon[src*='codex'],
+.dark .panel__tab-icon[src*='other'] {
   filter: invert(1);
 }
 
@@ -867,10 +870,23 @@
 
   .setup-method__code {
     max-width: 100%;
-    padding: 44px 12px 12px;
+    /* Reserve room for the copy button beside the text, not above it. The
+       button is 30px wide at right: 7px, so 46px clears it. Reserving a whole
+       44px row instead read as a blank first line in every snippet, which is
+       most of them on a phone: one short command that never reaches the
+       button. Text wraps (overflow-wrap: anywhere) so it cannot run under it. */
+    padding: 12px 46px 12px 12px;
     overflow-x: auto;
     overflow-wrap: anywhere;
     word-break: normal;
+  }
+
+  /* Exception: .setup-cli-block overlays a whole action row (eye toggle +
+     copy) at right: 8px, top: 8px, which is far wider than the 46px gutter
+     sized for a single copy button. Those blocks keep the reserved row, or a
+     wrapped first line renders behind the buttons. */
+  .setup-cli-block .setup-method__code {
+    padding: 44px 12px 12px;
   }
 
   .modal-terminal__body {
@@ -892,5 +908,70 @@
   .setup-info-grid {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+}
+
+/* ── Integrations pages (MCP server, CLI) ──────────────────────────────
+   Sits in wizard.css beside .setup-method__* and .framework-snippets__*,
+   which these pages reuse. Blocks are scoped per the repo's BEM convention
+   (see .setup-step__desc, .modal-card__desc) — there is no generic
+   description block to reuse. */
+.integration-panel__header {
+  display: flex;
+  /* Design system: a section header with a control on the right is always
+     centre-aligned, never flex-start/end. */
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: var(--gap-md);
+}
+
+.integration-panel__header .panel__title {
+  margin-bottom: 0;
+}
+
+.integration-panel__desc {
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  margin: 0 0 var(--gap-md);
+  max-width: 70ch;
+}
+
+.integration-panel__tabs {
+  margin-bottom: var(--gap-md);
+}
+
+/* The tabs don't shrink, so three client names exceed a 320px viewport. Scroll
+   the row rather than letting the last tab sit past the panel edge — same
+   treatment as .setup-method-tabs. */
+.integration-panel__tabs .panel__tabs {
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.integration-panel__tabs .panel__tabs::-webkit-scrollbar {
+  display: none;
+}
+
+/* Short steps sit side by side on a wide viewport and stack on a narrow one.
+   No manual breakpoints, same approach as .routing-cards. */
+.integration-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--gap-lg);
+}
+
+.integration-grid .panel {
+  margin-bottom: 0;
+  min-width: 0;
+}
+
+/* auto-fit keeps the 340px minimum even when the viewport is narrower than
+   that, which overflows on a small phone. Collapse to one column first, the
+   same breakpoint .routing-cards uses for its 320px minimum. */
+@media (max-width: 600px) {
+  .integration-grid {
+    grid-template-columns: 1fr;
   }
 }

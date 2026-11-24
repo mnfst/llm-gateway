@@ -1,6 +1,7 @@
 import { Repository } from 'typeorm';
 import type { ModelRoute } from 'manifest-shared';
 import { ProxyFallbackService } from '../proxy-fallback.service';
+import { ReasoningContentCache } from '../reasoning-content-cache';
 import { ProviderKeyService } from '../../routing-core/provider-key.service';
 import { CustomProvider } from '../../../entities/custom-provider.entity';
 import { OpenaiOauthService } from '../../oauth/openai/openai-oauth.service';
@@ -14,6 +15,8 @@ import { CopilotTokenService } from '../copilot-token.service';
 import { ModelPricingCacheService } from '../../../model-prices/model-pricing-cache.service';
 import { AgentModelParamsService } from '../../routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from '../../routing-core/provider-param-spec.service';
+import { AutofixService } from '../../autofix/autofix.service';
+import type { StartProviderAttempt } from '../proxy-types';
 
 /**
  * Status-code-driven fallback chain behavior for tryFallbacks().
@@ -41,7 +44,12 @@ describe('ProxyFallbackService.tryFallbacks — failure chain by status code', (
 
   // Helper: invoke tryFallbacks with the 16-arg signature. Trailing args we
   // don't care about are passed as undefined.
-  const runFallbacks = (models: string[], routes: ModelRoute[] | null, primaryModel = 'gpt-4o') =>
+  const runFallbacks = (
+    models: string[],
+    routes: ModelRoute[] | null,
+    primaryModel = 'gpt-4o',
+    apiMode?: 'chat_completions' | 'responses' | 'messages',
+  ) =>
     service.tryFallbacks(
       'agent-1',
       'user-1',
@@ -55,7 +63,7 @@ describe('ProxyFallbackService.tryFallbacks — failure chain by status code', (
       undefined,
       undefined,
       undefined,
-      undefined,
+      apiMode,
       undefined,
       routes,
     );
@@ -140,6 +148,11 @@ describe('ProxyFallbackService.tryFallbacks — failure chain by status code', (
         getSpecs: jest.fn().mockResolvedValue([]),
         list: jest.fn().mockResolvedValue([]),
       } as unknown as ProviderParamSpecService,
+      new ReasoningContentCache(),
+      {
+        isRepairable: jest.fn().mockReturnValue(false),
+        maybeHeal: jest.fn(),
+      } as unknown as AutofixService,
     );
   });
 
@@ -187,6 +200,72 @@ describe('ProxyFallbackService.tryFallbacks — failure chain by status code', (
     expect(result.failures.map((f) => f.provider)).toEqual(['openai', 'anthropic']);
   });
 
+  it('stops at a fallback that returns HTTP 200 with an empty completion (#3128)', async () => {
+    const realClient = new ProviderClient();
+    const originalFetch = global.fetch;
+    const fetchMock = jest.fn(async (input: string | URL | Request) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      const hostname = new URL(url).hostname;
+      if (hostname === 'api.openai.com') {
+        return new Response(
+          JSON.stringify({
+            id: 'chatcmpl-empty',
+            choices: [
+              {
+                index: 0,
+                message: { role: 'assistant', content: null },
+                finish_reason: 'stop',
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+      if (hostname !== 'api.deepseek.com') {
+        throw new Error(`Unexpected fallback hostname: ${hostname}`);
+      }
+      return new Response(
+        JSON.stringify({
+          id: 'chatcmpl-success',
+          choices: [
+            {
+              index: 0,
+              message: { role: 'assistant', content: 'Recovered' },
+              finish_reason: 'stop',
+            },
+          ],
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    });
+    global.fetch = fetchMock as typeof fetch;
+    providerClient.forward.mockImplementation((options) => realClient.forward(options));
+
+    try {
+      const routes: ModelRoute[] = [
+        route('openai', 'gpt-4o-mini'),
+        route('deepseek', 'deepseek-chat'),
+      ];
+      const result = await runFallbacks(
+        ['gpt-4o-mini', 'deepseek-chat'],
+        routes,
+        'primary-model',
+        'chat_completions',
+      );
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.success).toMatchObject({
+        fallbackIndex: 0,
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+      });
+      expect(result.success!.forward.response.status).toBe(200);
+      expect(result.failures).toHaveLength(0);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('cooldowns repeated 429 attempts for the same provider key and model', async () => {
     providerClient.forward.mockResolvedValueOnce({
       response: new Response('rate limit', {
@@ -220,6 +299,70 @@ describe('ProxyFallbackService.tryFallbacks — failure chain by status code', (
     expect(second.response.headers.get('retry-after')).toBe('120');
     expect(await second.response.text()).toContain('temporarily cooling down');
     expect(providerClient.forward).toHaveBeenCalledTimes(1);
+  });
+
+  it('reserves attempt order for a cooldown before trying the real fallback', async () => {
+    providerClient.forward
+      .mockResolvedValueOnce({
+        response: new Response('rate limit', {
+          status: 429,
+          headers: { 'retry-after': '120' },
+        }),
+        isGoogle: false,
+        isAnthropic: true,
+        isChatGpt: false,
+      })
+      .mockResolvedValueOnce({
+        response: new Response('{}', { status: 200 }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      });
+
+    const cooledRoute = {
+      provider: 'anthropic',
+      apiKey: 'sk-ant-oat-token',
+      model: 'claude-sonnet-4-6',
+      body,
+      stream: false,
+      sessionKey: 'sess-1',
+      agentId: 'agent-1',
+      providerKeyLabel: 'Claude Code',
+      authType: 'subscription',
+    };
+    await service.tryForwardToProvider(cooledRoute);
+
+    let attemptNumber = 0;
+    const startProviderAttempt: StartProviderAttempt = jest.fn((start) => ({
+      id: `attempt-${attemptNumber + 1}`,
+      attemptNumber: ++attemptNumber,
+      startedAtMs: Date.now(),
+      startedAt: new Date().toISOString(),
+      pendingWrite: Promise.resolve(start.providerCallStarted !== false),
+    }));
+
+    const cooldown = await service.tryForwardToProvider({
+      ...cooledRoute,
+      startProviderAttempt,
+    });
+    const fallback = await service.tryForwardToProvider({
+      ...cooledRoute,
+      provider: 'openai',
+      model: 'gpt-4o',
+      authType: 'api_key',
+      providerKeyLabel: 'OpenAI',
+      startProviderAttempt,
+    });
+
+    expect(cooldown.providerCallStarted).toBe(false);
+    expect(cooldown.attempt?.attemptNumber).toBe(1);
+    expect(fallback.providerCallStarted).toBe(true);
+    expect(fallback.attempt?.attemptNumber).toBe(2);
+    expect(startProviderAttempt).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ provider: 'anthropic', providerCallStarted: false }),
+    );
+    expect(providerClient.forward).toHaveBeenCalledTimes(2);
   });
 
   it('evicts an active cooldown when the cooldown cache is full', async () => {
@@ -501,5 +644,43 @@ describe('ProxyFallbackService.tryFallbacks — failure chain by status code', (
     // Sanity: middle entries retain their own bodies — no overwrite.
     expect(result.failures[0].errorBody).toContain('openai: model_not_found');
     expect(result.failures[1].errorBody).toContain('anthropic: not_found_error');
+  });
+
+  it('records each failed hop against its own pinned connection', async () => {
+    providerClient.forward
+      .mockResolvedValueOnce({
+        response: new Response('{"error":"boom"}', { status: 502 }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      })
+      .mockResolvedValueOnce({
+        response: new Response('{"error":"boom"}', { status: 502 }),
+        isGoogle: false,
+        isAnthropic: true,
+        isChatGpt: false,
+      });
+
+    const routes: ModelRoute[] = [
+      { ...route('openai', 'gpt-4o-mini'), keyLabel: 'Work' },
+      { ...route('anthropic', 'claude-haiku-3.5'), keyLabel: 'Personal' },
+    ];
+    const result = await runFallbacks(['gpt-4o-mini', 'claude-haiku-3.5'], routes);
+
+    expect(result.success).toBeNull();
+    // Each hop carries its own label; without it the recorder would stamp the
+    // primary's connection on every failed fallback row.
+    expect(result.failures.map((f) => f.keyLabel)).toEqual(['Work', 'Personal']);
+  });
+
+  it('keeps the pinned label on a hop that never got credentials', async () => {
+    providerKeyService.getProviderApiKey.mockResolvedValue(null);
+
+    const routes: ModelRoute[] = [{ ...route('openai', 'gpt-4o-mini'), keyLabel: 'Work' }];
+    const result = await runFallbacks(['gpt-4o-mini'], routes);
+
+    expect(providerClient.forward).not.toHaveBeenCalled();
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toMatchObject({ keyLabel: 'Work', status: 401 });
   });
 });

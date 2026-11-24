@@ -9,6 +9,8 @@ interface MomentumEntry {
 }
 
 const MAX_ENTRIES = 5;
+export const SESSION_MOMENTUM_MAX_SESSIONS = 10_000;
+export const SESSION_MOMENTUM_MAX_KEY_LENGTH = 512;
 const TTL_MS = 30 * 60 * 1000; // 30 minutes
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
@@ -29,42 +31,32 @@ export class SessionMomentumService implements OnModuleDestroy {
   }
 
   getRecentTiers(sessionKey: string): Tier[] | undefined {
+    if (!this.isCacheableKey(sessionKey)) return undefined;
     const entry = this.readFresh(sessionKey);
     return entry?.tiers;
   }
 
   getRecentCategories(sessionKey: string): SpecificityCategory[] | undefined {
+    if (!this.isCacheableKey(sessionKey)) return undefined;
     const entry = this.readFresh(sessionKey);
     if (!entry || entry.categories.length === 0) return undefined;
     return entry.categories;
   }
 
   recordTier(sessionKey: string, tier: Tier): void {
-    const existing = this.sessions.get(sessionKey);
-    if (existing) {
-      existing.tiers = [tier, ...existing.tiers].slice(0, MAX_ENTRIES);
-      existing.lastUpdated = Date.now();
-    } else {
-      this.sessions.set(sessionKey, {
-        tiers: [tier],
-        categories: [],
-        lastUpdated: Date.now(),
-      });
-    }
+    if (!this.isCacheableKey(sessionKey)) return;
+    const entry = this.getOrCreate(sessionKey);
+    entry.tiers = [tier, ...entry.tiers].slice(0, MAX_ENTRIES);
+    entry.lastUpdated = Date.now();
+    this.touch(sessionKey, entry);
   }
 
   recordCategory(sessionKey: string, category: SpecificityCategory): void {
-    const existing = this.sessions.get(sessionKey);
-    if (existing) {
-      existing.categories = [category, ...existing.categories].slice(0, MAX_ENTRIES);
-      existing.lastUpdated = Date.now();
-    } else {
-      this.sessions.set(sessionKey, {
-        tiers: [],
-        categories: [category],
-        lastUpdated: Date.now(),
-      });
-    }
+    if (!this.isCacheableKey(sessionKey)) return;
+    const entry = this.getOrCreate(sessionKey);
+    entry.categories = [category, ...entry.categories].slice(0, MAX_ENTRIES);
+    entry.lastUpdated = Date.now();
+    this.touch(sessionKey, entry);
   }
 
   private readFresh(sessionKey: string): MomentumEntry | undefined {
@@ -74,7 +66,35 @@ export class SessionMomentumService implements OnModuleDestroy {
       this.sessions.delete(sessionKey);
       return undefined;
     }
+    this.touch(sessionKey, entry);
     return entry;
+  }
+
+  private getOrCreate(sessionKey: string): MomentumEntry {
+    const existing = this.sessions.get(sessionKey);
+    if (existing) return existing;
+
+    if (this.sessions.size >= SESSION_MOMENTUM_MAX_SESSIONS) {
+      const oldestKey = this.sessions.keys().next().value as string | undefined;
+      if (oldestKey !== undefined) this.sessions.delete(oldestKey);
+    }
+
+    const entry: MomentumEntry = {
+      tiers: [],
+      categories: [],
+      lastUpdated: Date.now(),
+    };
+    this.sessions.set(sessionKey, entry);
+    return entry;
+  }
+
+  private touch(sessionKey: string, entry: MomentumEntry): void {
+    this.sessions.delete(sessionKey);
+    this.sessions.set(sessionKey, entry);
+  }
+
+  private isCacheableKey(sessionKey: string): boolean {
+    return sessionKey.length <= SESSION_MOMENTUM_MAX_KEY_LENGTH;
   }
 
   private evictStale(): void {

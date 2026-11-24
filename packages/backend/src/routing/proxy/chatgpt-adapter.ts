@@ -18,6 +18,7 @@ import {
   safeParse,
 } from './chatgpt-helpers';
 import { OpenAIMessage } from './proxy-types';
+import { deduplicateCallIds } from './responses-call-ids';
 
 export class ResponsesSseError extends Error {
   constructor(
@@ -52,6 +53,14 @@ export interface ToResponsesRequestOptions {
    * ChatGPT-subscription behavior, which expects SSE collection.
    */
   stream?: boolean;
+  /**
+   * Map the standard Chat Completions `reasoning_effort` param onto the
+   * Responses `reasoning` object, requesting `summary: 'auto'` alongside so
+   * the effort yields visible `reasoning_content` (issue #2531 — GPT-5.6
+   * doesn't reason at all without it). Opt-in per endpoint: only backends
+   * known to accept `reasoning.summary` (OpenAI infrastructure).
+   */
+  mapReasoningEffort?: boolean;
 }
 
 export function toResponsesRequest(
@@ -92,7 +101,7 @@ export function toResponsesRequest(
 
   const request: Record<string, unknown> = {
     model,
-    input,
+    input: deduplicateCallIds(input),
     stream: options.stream ?? body.stream !== false,
     store: false,
     instructions: extractInstructions(messages),
@@ -118,17 +127,70 @@ export function toResponsesRequest(
 
   if (isObjectRecord(body.reasoning)) {
     request.reasoning = body.reasoning;
+  } else if (options.mapReasoningEffort && typeof body.reasoning_effort === 'string') {
+    request.reasoning = { effort: body.reasoning_effort, summary: 'auto' };
   }
 
   if (isObjectRecord(body.text)) {
     request.text = body.text;
+  } else {
+    const format = toResponsesTextFormat(body.response_format);
+    if (format) request.text = { format };
   }
 
   if (Array.isArray(body.tools)) {
     request.tools = convertTools(body.tools as Record<string, unknown>[]);
+    if (body.tools.length > 0) {
+      const toolChoice = toResponsesToolChoice(body.tool_choice);
+      if (toolChoice !== undefined) request.tool_choice = toolChoice;
+      if (typeof body.parallel_tool_calls === 'boolean') {
+        request.parallel_tool_calls = body.parallel_tool_calls;
+      }
+    }
   }
 
   return request;
+}
+
+/**
+ * Chat Completions `tool_choice` → Responses `tool_choice`. The string modes
+ * are shared; a named function moves its name up a level, matching the flat
+ * tool shape `convertTools` produces.
+ */
+function toResponsesToolChoice(choice: unknown): unknown {
+  if (choice === 'auto' || choice === 'none' || choice === 'required') return choice;
+  if (
+    isObjectRecord(choice) &&
+    choice.type === 'function' &&
+    isObjectRecord(choice.function) &&
+    typeof choice.function.name === 'string'
+  ) {
+    return { type: 'function', name: choice.function.name };
+  }
+  return undefined;
+}
+
+/**
+ * Chat Completions `response_format` → Responses `text.format`. The Responses
+ * API has no `response_format`, so without this a structured-output request
+ * routed to a /responses endpoint comes back as free-form prose.
+ */
+function toResponsesTextFormat(responseFormat: unknown): Record<string, unknown> | undefined {
+  if (!isObjectRecord(responseFormat)) return undefined;
+  if (responseFormat.type === 'json_object') return { type: 'json_object' };
+  if (responseFormat.type !== 'json_schema' || !isObjectRecord(responseFormat.json_schema)) {
+    return undefined;
+  }
+
+  const jsonSchema = responseFormat.json_schema;
+  const format: Record<string, unknown> = { type: 'json_schema' };
+  if (jsonSchema.name !== undefined) format.name = jsonSchema.name;
+  if (jsonSchema.schema !== undefined) format.schema = jsonSchema.schema;
+  if (jsonSchema.strict !== undefined) format.strict = jsonSchema.strict;
+  if (typeof jsonSchema.description === 'string' && jsonSchema.description) {
+    format.description = jsonSchema.description;
+  }
+  return format;
 }
 
 function textFromReasoningParts(parts: unknown): string {
@@ -165,15 +227,68 @@ function reasoningContentFromOutput(output: Record<string, unknown>[]): string {
     .join('\n\n');
 }
 
+/**
+ * Prefix-matched so new model generations that rename the summary delta event
+ * (issue #2531) keep streaming without a per-model allowlist. Raw
+ * chain-of-thought events (`response.reasoning_text*`) never match — Manifest
+ * only exposes summaries.
+ */
 function isReasoningDeltaEvent(eventType: string): boolean {
-  return (
-    eventType === 'response.reasoning_summary.delta' ||
-    eventType === 'response.reasoning_summary_text.delta'
-  );
+  return eventType.startsWith('response.reasoning_summary') && eventType.endsWith('.delta');
 }
 
 function reasoningDeltaText(data: Record<string, unknown>): string {
-  return typeof data.delta === 'string' ? data.delta : '';
+  if (typeof data.delta === 'string') return data.delta;
+  // Tolerate payloads that nest the text ({"delta":{"text":"..."}}).
+  if (isObjectRecord(data.delta) && typeof data.delta.text === 'string') return data.delta.text;
+  return '';
+}
+
+/** Tracks whether reasoning summary text was already streamed to the client. */
+interface ReasoningStreamState {
+  streamed: boolean;
+  /** True once the stream has emitted any function_call output item / delta. */
+  sawToolCall: boolean;
+  /** Responses `output_index` → Chat Completions tool call index, in first-seen order. */
+  toolCallIndex?: Map<number, number>;
+  /** Output indexes whose arguments arrived as deltas. */
+  argsStreamed?: Set<number>;
+}
+
+/**
+ * Chat Completions numbers tool calls from 0, and the OpenAI SDK accumulates
+ * them by that index. A Responses `output_index` counts every output item, so
+ * a reasoning item first pushes the first function call to 1. With stream
+ * state, renumber densely in first-seen order; without it, keep the raw index.
+ */
+function denseIndex(state: ReasoningStreamState | undefined, outputIndex: number): number {
+  if (!state) return outputIndex;
+  state.toolCallIndex ??= new Map();
+  let index = state.toolCallIndex.get(outputIndex);
+  if (index === undefined) {
+    index = state.toolCallIndex.size;
+    state.toolCallIndex.set(outputIndex, index);
+  }
+  return index;
+}
+
+/**
+ * The terminal `response.completed` / `response.incomplete` events always
+ * carry the full reasoning output, whatever the upstream named its delta
+ * events. When nothing was streamed incrementally, backfill the summary as a
+ * single `reasoning_content` frame ahead of the finish chunk so unrecognized
+ * delta shapes degrade to a lump-sum summary instead of losing it.
+ */
+function reasoningBackfillFrame(
+  response: Record<string, unknown> | undefined,
+  state: ReasoningStreamState | undefined,
+  model: string,
+): string {
+  if (!state || state.streamed) return '';
+  const reasoning = reasoningContentFromOutput(responseOutputItems(response));
+  if (!reasoning) return '';
+  state.streamed = true;
+  return formatSSE({ delta: { reasoning_content: reasoning }, finish_reason: null }, model);
 }
 
 /* ── Non-streaming response conversion ── */
@@ -239,7 +354,14 @@ export function fromResponsesResponse(
       {
         index: 0,
         message,
-        finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+        // A truncated or filtered response is `status: "incomplete"`; report it
+        // the way the SSE path does rather than as a complete answer.
+        finish_reason:
+          data.status === 'incomplete'
+            ? incompleteFinishReason(data)
+            : toolCalls.length > 0
+              ? 'tool_calls'
+              : 'stop',
       },
     ],
     usage: {
@@ -247,18 +369,50 @@ export function fromResponsesResponse(
       completion_tokens: (usage.output_tokens as number) ?? 0,
       total_tokens: (usage.total_tokens as number) ?? 0,
       cache_read_tokens: inputDetails?.cached_tokens ?? 0,
-      cache_creation_tokens: 0,
+      cache_creation_tokens:
+        inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_input_tokens ?? 0,
+      ...reasoningTokensDetails(usage),
     },
   };
+}
+
+/**
+ * Responses API reports reasoning tokens under `output_tokens_details`
+ * (already included in `output_tokens`). Surface them the way Chat Completions
+ * does, as `completion_tokens_details.reasoning_tokens`, so clients keep seeing
+ * them. Omitted when the upstream does not report the figure.
+ */
+function reasoningTokensDetails(usage: Record<string, unknown> | undefined): {
+  completion_tokens_details?: { reasoning_tokens: number };
+} {
+  const outputDetails = usage?.output_tokens_details as Record<string, unknown> | undefined;
+  const reasoning = outputDetails?.reasoning_tokens;
+  return typeof reasoning === 'number'
+    ? { completion_tokens_details: { reasoning_tokens: reasoning } }
+    : {};
 }
 
 /* ── Streaming SSE conversion ── */
 
 /**
+ * Create a stateful per-stream transformer (must be created once per stream
+ * and fed events in order) so the terminal event can backfill reasoning
+ * summaries that never streamed as recognizable deltas.
+ */
+export function createChatGptStreamTransformer(model: string): (chunk: string) => string | null {
+  const state: ReasoningStreamState = { streamed: false, sawToolCall: false };
+  return (chunk) => transformResponsesStreamChunk(chunk, model, state);
+}
+
+/**
  * Transform a single Responses API SSE chunk into an OpenAI
  * Chat Completions SSE chunk. Returns null for irrelevant events.
  */
-export function transformResponsesStreamChunk(chunk: string, model: string): string | null {
+export function transformResponsesStreamChunk(
+  chunk: string,
+  model: string,
+  state?: ReasoningStreamState,
+): string | null {
   const lines = chunk.split('\n');
   let eventType = '';
   let dataStr = '';
@@ -274,6 +428,11 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
   }
 
   if (!eventType && !dataStr) return null;
+  // Bedrock Runtime sends frames with no `event:` line; the name is only in `data.type`.
+  if (!eventType) {
+    const type = safeParse(dataStr)?.type;
+    if (typeof type === 'string') eventType = type;
+  }
 
   if (eventType === 'response.output_text.delta') {
     const data = safeParse(dataStr);
@@ -285,24 +444,45 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
   if (isReasoningDeltaEvent(eventType)) {
     const data = safeParse(dataStr);
     if (!data) return null;
-    return formatSSE(
-      { delta: { reasoning_content: reasoningDeltaText(data) }, finish_reason: null },
-      model,
-    );
+    const text = reasoningDeltaText(data);
+    if (text && state) state.streamed = true;
+    return formatSSE({ delta: { reasoning_content: text }, finish_reason: null }, model);
   }
 
   if (eventType === 'response.function_call_arguments.delta') {
     const data = safeParse(dataStr);
     if (!data) return null;
     const delta = typeof data.delta === 'string' ? data.delta : '';
+    const outputIndex = typeof data.output_index === 'number' ? data.output_index : 0;
+    if (state && delta) (state.argsStreamed ??= new Set()).add(outputIndex);
     return formatSSE(
       {
         delta: {
           tool_calls: [
             {
-              index: typeof data.output_index === 'number' ? data.output_index : 0,
+              index: denseIndex(state, outputIndex),
               function: { arguments: delta },
             },
+          ],
+        },
+        finish_reason: null,
+      },
+      model,
+    );
+  }
+
+  // Parallel calls can arrive with no deltas, only the full arguments on `.done`.
+  if (eventType === 'response.function_call_arguments.done') {
+    const data = safeParse(dataStr);
+    if (!data || typeof data.arguments !== 'string' || !state) return null;
+    const outputIndex = typeof data.output_index === 'number' ? data.output_index : 0;
+    if (state.argsStreamed?.has(outputIndex)) return null;
+    (state.argsStreamed ??= new Set()).add(outputIndex);
+    return formatSSE(
+      {
+        delta: {
+          tool_calls: [
+            { index: denseIndex(state, outputIndex), function: { arguments: data.arguments } },
           ],
         },
         finish_reason: null,
@@ -316,12 +496,16 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
     if (!data) return null;
     const item = isObjectRecord(data.item) ? data.item : undefined;
     if (item?.type !== 'function_call') return null;
+    if (state) state.sawToolCall = true;
     return formatSSE(
       {
         delta: {
           tool_calls: [
             {
-              index: typeof data.output_index === 'number' ? data.output_index : 0,
+              index: denseIndex(
+                state,
+                typeof data.output_index === 'number' ? data.output_index : 0,
+              ),
               id: (item.call_id as string) ?? '',
               type: 'function',
               function: { name: (item.name as string) ?? '', arguments: '' },
@@ -335,11 +519,11 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
   }
 
   if (eventType === 'response.completed') {
-    return handleCompletedEvent(dataStr, model);
+    return handleCompletedEvent(dataStr, model, state);
   }
 
   if (eventType === 'response.incomplete') {
-    return handleIncompleteEvent(dataStr, model);
+    return handleIncompleteEvent(dataStr, model, state);
   }
 
   if (eventType === 'error' || eventType === 'response.failed') {
@@ -349,17 +533,22 @@ export function transformResponsesStreamChunk(chunk: string, model: string): str
   return null;
 }
 
-function handleCompletedEvent(dataStr: string, model: string): string {
+function handleCompletedEvent(
+  dataStr: string,
+  model: string,
+  state?: ReasoningStreamState,
+): string {
   const data = safeParse(dataStr);
   const response = isObjectRecord(data?.response) ? data.response : undefined;
   const responseOutput = responseOutputItems(response);
   const hasFunctionCalls = responseOutput.some((item) => item.type === 'function_call');
+  const sawToolCall = state?.sawToolCall ?? false;
   const finish = formatSSE(
-    { delta: {}, finish_reason: hasFunctionCalls ? 'tool_calls' : 'stop' },
+    { delta: {}, finish_reason: hasFunctionCalls || sawToolCall ? 'tool_calls' : 'stop' },
     model,
     extractResponseUsage(response),
   );
-  return `${finish}\ndata: [DONE]\n\n`;
+  return `${reasoningBackfillFrame(response, state, model)}${finish}\ndata: [DONE]\n\n`;
 }
 
 /**
@@ -369,7 +558,11 @@ function handleCompletedEvent(dataStr: string, model: string): string {
  * stream ends with no finish chunk and clients report an interrupted stream
  * (issue #2212's symptom).
  */
-function handleIncompleteEvent(dataStr: string, model: string): string {
+function handleIncompleteEvent(
+  dataStr: string,
+  model: string,
+  state?: ReasoningStreamState,
+): string {
   const data = safeParse(dataStr);
   const response = isObjectRecord(data?.response) ? data.response : undefined;
   const finish = formatSSE(
@@ -377,7 +570,7 @@ function handleIncompleteEvent(dataStr: string, model: string): string {
     model,
     extractResponseUsage(response),
   );
-  return `${finish}\ndata: [DONE]\n\n`;
+  return `${reasoningBackfillFrame(response, state, model)}${finish}\ndata: [DONE]\n\n`;
 }
 
 function incompleteFinishReason(response: Record<string, unknown> | undefined): string {
@@ -389,7 +582,7 @@ function incompleteFinishReason(response: Record<string, unknown> | undefined): 
 
 function extractResponseUsage(
   response: Record<string, unknown> | undefined,
-): Record<string, number> | undefined {
+): Record<string, unknown> | undefined {
   const responseUsage = response?.usage as Record<string, unknown> | undefined;
   if (!responseUsage) return undefined;
   const inputDetails = responseUsage.input_tokens_details as Record<string, number> | undefined;
@@ -398,7 +591,9 @@ function extractResponseUsage(
     completion_tokens: (responseUsage.output_tokens as number) ?? 0,
     total_tokens: (responseUsage.total_tokens as number) ?? 0,
     cache_read_tokens: inputDetails?.cached_tokens ?? 0,
-    cache_creation_tokens: 0,
+    cache_creation_tokens:
+      inputDetails?.cache_write_tokens ?? inputDetails?.cache_creation_input_tokens ?? 0,
+    ...reasoningTokensDetails(responseUsage),
   };
 }
 
@@ -482,6 +677,12 @@ export function collectChatGptSseResponse(sseText: string, model: string): Recor
       if (tc) {
         tc.function.arguments += typeof data.delta === 'string' ? data.delta : '';
       }
+    } else if (eventType === 'response.function_call_arguments.done') {
+      const idx = typeof data.output_index === 'number' ? data.output_index : 0;
+      const tc = toolCallMap.get(idx);
+      if (tc && typeof data.arguments === 'string') {
+        tc.function.arguments = data.arguments;
+      }
     } else if (eventType === 'response.completed') {
       const response = isObjectRecord(data.response) ? data.response : undefined;
       usage = extractResponseUsage(response) ?? usage;
@@ -548,12 +749,13 @@ export function buildResponsesSseError(data: Record<string, unknown>): Responses
 }
 
 function statusFromResponsesError(code: string | undefined, type: string | undefined): number {
-  const value = (code ?? type ?? '').toLowerCase();
+  const value = `${code ?? ''} ${type ?? ''}`.toLowerCase();
   if (value.includes('model_not_found') || value.includes('not_found')) return 404;
   if (value.includes('rate_limit')) return 429;
-  if (value.includes('invalid') || value.includes('bad_request')) return 400;
   if (value.includes('unauthorized') || value.includes('authentication')) return 401;
   if (value.includes('forbidden') || value.includes('permission')) return 403;
   if (value.includes('server')) return 500;
+  if (value.includes('context_length_exceeded')) return 400;
+  if (value.includes('invalid') || value.includes('bad_request')) return 400;
   return 502;
 }

@@ -34,6 +34,7 @@ coverage/
 .gstack/
 scripts/.env.verify
 scripts/verify-free-model-ids.sh
-# Superpowers-generated markdown (plans, brainstorms, specs)
+# Superpowers-generated markdown (plans, brainstorms, specs, reports)
 docs/superpowers/
 docs/plans/
+.superpowers/

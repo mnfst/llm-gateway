@@ -221,6 +221,15 @@ describe('formatLegendTokens', () => {
   it('rounds small floating-point values', () => {
     expect(formatLegendTokens(null as any, 499.7)).toBe('500');
   });
+
+  it("drops the '.0' left when a value rounds to a whole number", () => {
+    expect(formatLegendTokens(null as any, 1_001)).toBe('1k');
+    expect(formatLegendTokens(null as any, 1_999_999)).toBe('2M');
+  });
+
+  it('moves to M when thousands round up to 1000k', () => {
+    expect(formatLegendTokens(null as any, 999_950)).toBe('1M');
+  });
 });
 
 // ---------- parseTimestamps ----------

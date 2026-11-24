@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.3
+
+- Point the package `repository` and `bugs` URLs, and the node documentation links, at `mnfst/llm-gateway` after the repository rename. npm requires the `repository` field to match the repository a package is published from with provenance, so the stale name risked failing the next provenance-signed publish.
+
+## 0.2.2
+
+- Identify Manifest requests from this node with `User-Agent: n8n-nodes-manifest`, `X-Title: n8n`, and `HTTP-Referer: https://n8n.io`, so Manifest can attribute usage to the node itself.
+
+## 0.2.1
+
+- Mark the Manifest action node as usable by AI agents, as required by the n8n community-node linter.
+- Use the supported `Development` codex category for the Manifest Chat Model and remove unsupported subcategory metadata.
+- Remove dependency overrides that are no longer allowed in n8n community node packages.
+
 ## 0.2.0
 
 - Add the **Manifest Chat Model** sub-node (`lmChatManifest`), built on `@n8n/ai-node-sdk`. It plugs into the AI Agent and Basic LLM Chain nodes as a language model, so Manifest can be used as a drop-in replacement for any chat model provider.

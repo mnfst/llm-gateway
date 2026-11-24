@@ -20,7 +20,14 @@ vi.mock("../../src/services/api.js", () => ({
   createNotificationRule: vi.fn(() => Promise.resolve({})),
   updateNotificationRule: vi.fn(() => Promise.resolve({})),
   deleteNotificationRule: vi.fn(() => Promise.resolve({})),
+  getEmailProvider: vi.fn(() => Promise.resolve(null)),
+  removeEmailProvider: vi.fn(() => Promise.resolve({})),
   getRoutingStatus: vi.fn(() => Promise.resolve(mockRoutingStatus)),
+}));
+
+vi.mock("../../src/services/setup-status.js", () => ({
+  checkIsSelfHosted: vi.fn(() => Promise.resolve(false)),
+  checkEmailConfigured: vi.fn(() => Promise.resolve(true)),
 }));
 
 vi.mock("../../src/services/toast-store.js", () => ({

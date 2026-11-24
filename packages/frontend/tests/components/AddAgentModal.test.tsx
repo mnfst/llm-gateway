@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@solidjs/testing-library';
+import { createSignal } from 'solid-js';
 
 const mockNavigate = vi.fn();
 vi.mock('@solidjs/router', () => ({
@@ -27,6 +28,12 @@ vi.mock('../../src/services/recent-agents.js', () => ({
 const mockRefreshAgents = vi.fn();
 vi.mock('../../src/services/sse.js', () => ({
   refreshAgents: (...args: unknown[]) => mockRefreshAgents(...args),
+}));
+
+// Deployment mode drives the logs storage note in the toggle description.
+let mockIsSelfHosted = false;
+vi.mock('../../src/services/setup-status.js', () => ({
+  checkIsSelfHosted: () => Promise.resolve(mockIsSelfHosted),
 }));
 
 vi.mock('../../src/components/AgentTypeSelect.jsx', () => ({
@@ -68,6 +75,7 @@ const renderOpen = () => {
 describe('AddAgentModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsSelfHosted = false;
     mockCreateAgent.mockResolvedValue({ agent: { name: 'new-agent' }, apiKey: 'key-1' });
     mockGetGlobalProviders.mockResolvedValue({ providers: [{ provider: 'openai' }] });
   });
@@ -81,6 +89,77 @@ describe('AddAgentModal', () => {
     const { container } = renderOpen();
     expect(container.textContent).toContain('Connect Harness');
     expect(container.textContent).toContain('Name your harness to start tracking');
+  });
+
+  it('creates directly with the legal line as the consent act (no dialog)', async () => {
+    const { input, createBtn } = renderOpen();
+    // Autofix defaults on, so the Terms/Privacy legal line is visible.
+    expect(document.body.textContent).toContain('you agree to Manifest');
+    expect(document.querySelector('a[href="https://manifest.build/terms"]')).not.toBeNull();
+    expect(document.querySelector('a[href="https://manifest.build/privacy"]')).not.toBeNull();
+
+    fireEvent.input(input, { target: { value: 'first-agent' } });
+    fireEvent.click(createBtn);
+    await vi.waitFor(() => expect(mockCreateAgent).toHaveBeenCalled());
+    expect(screen.queryByText('Enable hosted Autofix?')).toBeNull();
+  });
+
+  it('hides the legal line when Autofix is toggled off and still creates', async () => {
+    const { container, input, createBtn } = renderOpen();
+    fireEvent.click(container.querySelector('.settings-switch')!);
+    expect(document.body.textContent).not.toContain('you agree to Manifest');
+
+    fireEvent.input(input, { target: { value: 'disabled-agent' } });
+    fireEvent.click(createBtn);
+    await vi.waitFor(() => expect(mockCreateAgent).toHaveBeenCalled());
+    expect(mockCreateAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ autofix_enabled: false }),
+    );
+  });
+
+  describe('create races', () => {
+    it('issues one create for rapid double submits', async () => {
+      let resolveCreate!: (v: { agent: { name: string }; apiKey: string }) => void;
+      mockCreateAgent.mockReturnValue(
+        new Promise<{ agent: { name: string }; apiKey: string }>((r) => (resolveCreate = r)),
+      );
+      const { input, createBtn } = renderOpen();
+      fireEvent.input(input, { target: { value: 'double-clicked' } });
+      fireEvent.click(createBtn);
+      fireEvent.click(createBtn);
+      fireEvent.click(createBtn);
+
+      resolveCreate({ agent: { name: 'double-clicked' }, apiKey: 'key-1' });
+      await vi.waitFor(() => expect(mockCreateAgent).toHaveBeenCalled());
+      expect(mockCreateAgent).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not navigate to the created harness if the modal is reopened mid-provider-lookup', async () => {
+      // Models the real parent: <AddAgentModal open={signal()} onClose={...}>,
+      // where closing does not unmount. The success path closes the modal and
+      // *then* awaits getGlobalProviders, so a user who reopens to add a second
+      // harness used to get redirected to the first one when that lookup landed.
+      let resolveProviders!: (v: { providers: unknown[] }) => void;
+      mockGetGlobalProviders.mockReturnValue(
+        new Promise<{ providers: unknown[] }>((r) => (resolveProviders = r)),
+      );
+      const [open, setOpen] = createSignal(true);
+      const { container } = render(() => (
+        <AddAgentModal open={open()} onClose={() => setOpen(false)} />
+      ));
+      const input = container.querySelector('.modal-card__input') as HTMLInputElement;
+      fireEvent.input(input, { target: { value: 'first-harness' } });
+      fireEvent.click(screen.getByText('Create'));
+
+      await vi.waitFor(() => expect(open()).toBe(false));
+      setOpen(true); // user reopens to add another harness
+      resolveProviders({ providers: [] });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(mockNavigate).not.toHaveBeenCalled();
+    });
+
   });
 
   it('keeps Create disabled until a non-blank name is entered', () => {
@@ -187,8 +266,49 @@ describe('AddAgentModal', () => {
         name: 'typed',
         agent_category: 'app',
         agent_platform: 'langchain',
+        autofix_enabled: true,
+        record_messages: true,
       });
     });
+  });
+
+  it('sends toggled-off Autofix and recording when the user flips them', async () => {
+    const { input, createBtn } = renderOpen();
+    // Both switches default on; flip each off before creating.
+    const switches = Array.from(
+      document.querySelectorAll('.settings-switch'),
+    ) as HTMLButtonElement[];
+    // Order in the modal: Autofix, then Enable logs.
+    expect(switches.length).toBeGreaterThanOrEqual(2);
+    fireEvent.click(switches[0]!);
+    fireEvent.click(switches[1]!);
+    fireEvent.input(input, { target: { value: 'typed' } });
+    fireEvent.click(createBtn);
+    await vi.waitFor(() => {
+      expect(mockCreateAgent).toHaveBeenCalledWith({
+        name: 'typed',
+        agent_category: 'personal',
+        agent_platform: expect.any(String),
+        autofix_enabled: false,
+        record_messages: false,
+      });
+    });
+  });
+
+  it('labels the logs toggle and shows the cloud storage note', async () => {
+    renderOpen();
+    expect(screen.getByText('Enable logs')).toBeTruthy();
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Logs are stored in your Manifest workspace.'),
+    );
+  });
+
+  it('shows the machine-local storage note on self-hosted', async () => {
+    mockIsSelfHosted = true;
+    renderOpen();
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain('Logs stay in your own database.'),
+    );
   });
 
   it('resets the category/platform to defaults when a category changes', () => {

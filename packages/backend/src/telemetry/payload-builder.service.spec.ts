@@ -1,7 +1,9 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { Agent } from '../entities/agent.entity';
+import { ApiKey } from '../entities/api-key.entity';
 import { AgentMessage } from '../entities/agent-message.entity';
+import { ManifestRequest } from '../entities/request.entity';
 import { PayloadBuilderService } from './payload-builder.service';
 
 interface ProviderRow {
@@ -25,6 +27,26 @@ interface TotalsRow {
   cost?: string | null;
 }
 
+interface RequestTotalsRow {
+  total: string;
+  failed: string | null;
+}
+
+interface CliKeyRow {
+  total: string;
+  active: string | null;
+}
+interface McpCountsRow {
+  clients: string;
+  consents: string;
+  tokens: string;
+  active_clients: string;
+}
+interface McpNameRow {
+  name: string | null;
+  count: string;
+}
+
 interface MockData {
   providers: ProviderRow[];
   tiers: BucketRow[];
@@ -32,6 +54,13 @@ interface MockData {
   totals: TotalsRow | undefined;
   agentPlatforms: CategoryPlatformRow[];
   agentsCount: number;
+  requestTotals: RequestTotalsRow | undefined;
+  errorClasses: BucketRow[];
+  cliKeys: CliKeyRow | undefined;
+  mcpCounts: McpCountsRow | undefined;
+  mcpNames: McpNameRow[];
+  /** When set, every raw OAuth query rejects with this error. */
+  mcpQueryError: Error | undefined;
 }
 
 function defaultData(): MockData {
@@ -42,6 +71,12 @@ function defaultData(): MockData {
     totals: { total: '0', input_tokens: '0', output_tokens: '0' },
     agentPlatforms: [],
     agentsCount: 0,
+    requestTotals: { total: '0', failed: '0' },
+    errorClasses: [],
+    cliKeys: { total: '0', active: '0' },
+    mcpCounts: { clients: '0', consents: '0', tokens: '0', active_clients: '0' },
+    mcpNames: [],
+    mcpQueryError: undefined,
   };
 }
 
@@ -71,12 +106,18 @@ async function makeServiceWithRepo(partial: Partial<MockData>): Promise<MakeServ
     { row: { count: String(data.agentsCount) }, mode: 'getRawOne' as const },
     { rows: data.agentPlatforms, mode: 'getRawMany' as const },
   ];
+  // requestCounts() uses getRawOne; failedRequestsByClass() uses getRawMany.
+  const requestsQueue = [
+    { row: data.requestTotals, mode: 'getRawOne' as const },
+    { rows: data.errorClasses, mode: 'getRawMany' as const },
+  ];
 
   function makeQb(entry: { rows?: unknown; row?: unknown; mode: 'getRawMany' | 'getRawOne' }) {
     return {
       select: jest.fn().mockReturnThis(),
       addSelect: jest.fn().mockReturnThis(),
       where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
       groupBy: jest.fn().mockReturnThis(),
       addGroupBy: jest.fn().mockReturnThis(),
       getRawMany: jest.fn().mockResolvedValue(entry.rows ?? []),
@@ -90,12 +131,30 @@ async function makeServiceWithRepo(partial: Partial<MockData>): Promise<MakeServ
   const agentsRepoMock = {
     createQueryBuilder: jest.fn(() => makeQb(agentsQueue.shift()!)),
   };
+  const requestsRepo = {
+    createQueryBuilder: jest.fn(() => makeQb(requestsQueue.shift()!)),
+  };
+  // The OAuth tables have no entity, so the builder goes through the api_keys
+  // repository's entity manager. Two statements: the scalar counts (no GROUP BY)
+  // and the per-name rollup.
+  const apiKeysRepo = {
+    createQueryBuilder: jest.fn(() => makeQb({ row: data.cliKeys, mode: 'getRawOne' })),
+    manager: {
+      query: jest.fn((sql: string) => {
+        if (data.mcpQueryError) return Promise.reject(data.mcpQueryError);
+        if (sql.includes('GROUP BY')) return Promise.resolve(data.mcpNames);
+        return Promise.resolve(data.mcpCounts ? [data.mcpCounts] : []);
+      }),
+    },
+  };
 
   const module: TestingModule = await Test.createTestingModule({
     providers: [
       PayloadBuilderService,
       { provide: getRepositoryToken(AgentMessage), useValue: messagesRepo },
       { provide: getRepositoryToken(Agent), useValue: agentsRepoMock },
+      { provide: getRepositoryToken(ManifestRequest), useValue: requestsRepo },
+      { provide: getRepositoryToken(ApiKey), useValue: apiKeysRepo },
     ],
   }).compile();
 
@@ -190,6 +249,47 @@ describe('PayloadBuilderService', () => {
     expect(payload.messages_total).toBe(0);
     expect(payload.tokens_input_total).toBe(0);
     expect(payload.tokens_output_total).toBe(0);
+  });
+
+  it('emits request-level counters split by error class', async () => {
+    const service = await makeService({
+      requestTotals: { total: '20', failed: '6' },
+      errorClasses: [
+        { bucket: 'rate_limit', count: '4' },
+        { bucket: 'auth', count: '2' },
+      ],
+    });
+
+    const payload = await service.build('inst', '1.0.0');
+
+    expect(payload.requests_total).toBe(20);
+    expect(payload.errors_total).toBe(6);
+    expect(payload.errors_by_class).toEqual({ rate_limit: 4, auth: 2 });
+  });
+
+  it('buckets NULL error classes as "unknown" and off-taxonomy strings as "other"', async () => {
+    const service = await makeService({
+      requestTotals: { total: '9', failed: '3' },
+      errorClasses: [
+        { bucket: null, count: '1' },
+        { bucket: 'totally-novel-class', count: '2' },
+      ],
+    });
+
+    const payload = await service.build('inst', '1.0.0');
+
+    expect(payload.errors_by_class).toEqual({ unknown: 1, other: 2 });
+  });
+
+  it('treats a NULL failed sum (empty window) and a missing row as zero errors', async () => {
+    const withNullSum = await makeService({ requestTotals: { total: '0', failed: null } });
+    expect((await withNullSum.build('inst', '1.0.0')).errors_total).toBe(0);
+
+    const withNoRow = await makeService({ requestTotals: undefined });
+    const payload = await withNoRow.build('inst', '1.0.0');
+    expect(payload.requests_total).toBe(0);
+    expect(payload.errors_total).toBe(0);
+    expect(payload.errors_by_class).toEqual({});
   });
 
   it('emits cost_usd_total = 0 and cost_usd_by_provider = {} when no cost data', async () => {
@@ -442,5 +542,101 @@ describe('PayloadBuilderService', () => {
       where: jest.Mock;
     };
     expect(platformQb.where).toHaveBeenCalledWith('a.is_playground = false');
+  });
+  describe('management-surface adoption (CLI + MCP)', () => {
+    it('reports CLI key totals and 7-day actives from the api_keys rollup', async () => {
+      const service = await makeService({ cliKeys: { total: '5', active: '2' } });
+
+      const payload = await service.build('inst', '1.0.0');
+
+      expect(payload.cli_keys_total).toBe(5);
+      expect(payload.cli_keys_active_7d).toBe(2);
+    });
+
+    it('treats a missing CLI rollup row and a NULL active sum as zero', async () => {
+      const none = await makeService({ cliKeys: undefined });
+      expect((await none.build('inst', '1.0.0')).cli_keys_total).toBe(0);
+
+      const nullActive = await makeService({ cliKeys: { total: '3', active: null } });
+      const payload = await nullActive.build('inst', '1.0.0');
+      expect(payload.cli_keys_total).toBe(3);
+      expect(payload.cli_keys_active_7d).toBe(0);
+    });
+
+    it('reports MCP client, consent, and token counts from the OAuth tables', async () => {
+      const service = await makeService({
+        mcpCounts: { clients: '3', consents: '4', tokens: '96', active_clients: '2' },
+      });
+
+      const payload = await service.build('inst', '1.0.0');
+
+      expect(payload.mcp_clients_total).toBe(3);
+      expect(payload.mcp_consents_total).toBe(4);
+      expect(payload.mcp_tokens_issued_24h).toBe(96);
+      expect(payload.mcp_clients_active_24h).toBe(2);
+    });
+
+    it('whitelists MCP client names and collapses the rest to "other" / "unknown"', async () => {
+      const service = await makeService({
+        mcpNames: [
+          { name: 'Claude Code', count: '2' },
+          { name: 'cursor', count: '1' },
+          { name: "Guillaume's laptop agent", count: '1' },
+          { name: 'https://internal.example.com/tool', count: '1' },
+          // Declared but empty: a name we decline to forward, not a missing one.
+          { name: '', count: '1' },
+          { name: null, count: '1' },
+        ],
+      });
+
+      const payload = await service.build('inst', '1.0.0');
+
+      expect(payload.mcp_clients_by_name).toEqual({
+        'claude-code': 2,
+        cursor: 1,
+        other: 3,
+        unknown: 1,
+      });
+    });
+
+    it('degrades to zeros when the OAuth tables are missing instead of failing the report', async () => {
+      const service = await makeService({
+        mcpQueryError: new Error('relation "oauthClient" does not exist'),
+        cliKeys: { total: '1', active: '1' },
+      });
+
+      const payload = await service.build('inst', '1.0.0');
+
+      expect(payload.mcp_clients_total).toBe(0);
+      expect(payload.mcp_consents_total).toBe(0);
+      expect(payload.mcp_tokens_issued_24h).toBe(0);
+      expect(payload.mcp_clients_active_24h).toBe(0);
+      expect(payload.mcp_clients_by_name).toEqual({});
+      // The rest of the payload is unaffected.
+      expect(payload.cli_keys_total).toBe(1);
+    });
+
+    it('degrades to zeros on a non-Error rejection too', async () => {
+      const service = await makeService({
+        mcpQueryError: 'connection reset' as unknown as Error,
+      });
+
+      const payload = await service.build('inst', '1.0.0');
+
+      expect(payload.mcp_clients_total).toBe(0);
+      expect(payload.mcp_clients_by_name).toEqual({});
+    });
+
+    it('degrades to zeros when the counts query returns no row', async () => {
+      const service = await makeService({
+        mcpCounts: undefined,
+        mcpNames: [{ name: 'zed', count: '1' }],
+      });
+
+      const payload = await service.build('inst', '1.0.0');
+
+      expect(payload.mcp_clients_total).toBe(0);
+      expect(payload.mcp_clients_by_name).toEqual({});
+    });
   });
 });

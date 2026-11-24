@@ -1,4 +1,4 @@
-import { cleanup, render } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import { afterEach, describe, expect, it } from 'vitest';
 import RequestMessages from '../../src/components/RequestMessages';
 
@@ -32,7 +32,7 @@ describe('RequestMessages', () => {
     expect(getAllByText('Sunny.')).toHaveLength(2);
   });
 
-  it('shows only tool calls emitted by the selected attempt', () => {
+  it('shows called and available tools in the tools tab', () => {
     const calledRecording = {
       ...recording,
       response_body: {
@@ -56,13 +56,17 @@ describe('RequestMessages', () => {
         },
       },
     };
-    const { getByText, queryByText } = render(() => (
+    const { getAllByText, getByText } = render(() => (
       <RequestMessages recording={calledRecording} view="tools" />
     ));
-    expect(getByText('weather')).toBeTruthy();
+    // 'weather' appears once in Called and once in Available
+    expect(getAllByText('weather')).toHaveLength(2);
     expect(getByText('call-1')).toBeTruthy();
-    expect(getByText(/"city": "Paris"/)).toBeTruthy();
-    expect(queryByText('Read the forecast')).toBeNull();
+    // JSON arguments are syntax-highlighted (hljs splits across spans), check body text
+    expect(document.body.textContent).toContain('"city"');
+    expect(document.body.textContent).toContain('"Paris"');
+    // Available section shows the tool description
+    expect(getByText('Read the forecast')).toBeTruthy();
   });
 
   it('shows raw payloads when view is raw', () => {
@@ -102,7 +106,9 @@ describe('RequestMessages', () => {
     // Turns are open by default — tool call content is already visible.
     expect(getByText('Unknown tool')).toBeTruthy();
     expect(getAllByText('call-1')).toHaveLength(2);
-    expect(getByText('[object Object]')).toBeTruthy();
+    // Circular reference serialises to '[object Object]' which hljs may split across spans;
+    // verify the text is present anywhere in the rendered output.
+    expect(document.body.textContent).toContain('[object Object]');
     expect(getAllByText('Tool complete')).toHaveLength(2);
   });
 
@@ -120,11 +126,47 @@ describe('RequestMessages', () => {
     const { getByText: getText2 } = render(() => (
       <RequestMessages recording={emptyRecording} view="tools" />
     ));
-    expect(getText2('No tools were called.')).toBeTruthy();
+    expect(getText2('No tools were called in this conversation.')).toBeTruthy();
   });
 
-  it('explains when recording was disabled', () => {
+  it('explains when logs were off for the attempt', () => {
     const { getByText } = render(() => <RequestMessages recording={null} />);
-    expect(getByText('No messages recorded')).toBeTruthy();
+    expect(getByText('No logs for this attempt')).toBeTruthy();
+    expect(
+      getByText('Logs were off when this attempt ran. Enable logs in Settings to inspect future requests.'),
+    ).toBeTruthy();
+  });
+
+  it('shows and hides tooltip on TruncatedId hover', () => {
+    const calledRecording = {
+      ...recording,
+      response_body: {
+        type: 'json' as const,
+        body: {
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  {
+                    id: 'call-tooltip-test',
+                    type: 'function',
+                    function: { name: 'weather', arguments: '{}' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      },
+    };
+    render(() => <RequestMessages recording={calledRecording} view="tools" />);
+    const idEl = document.querySelector('.request-messages__tool-id')!;
+    expect(idEl).toBeTruthy();
+    fireEvent.mouseEnter(idEl);
+    expect(document.querySelector('[role="tooltip"]')).toBeTruthy();
+    fireEvent.mouseLeave(idEl);
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
   });
 });

@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import {
   AUTH_TYPES,
   MODEL_CAPABILITIES,
@@ -28,6 +29,10 @@ import {
 
 const MODELPARAMS_PACKAGE_JSON = 'modelparams/package.json';
 const MODELPARAMS_DATA_RELATIVE_PATH = 'dist/generated/data.js';
+const MODELPARAMS_API_DEFAULT_URL = 'https://modelparams.dev/api/v1/models.json';
+const MODELPARAMS_API_TIMEOUT_MS = 10000;
+/** Sanity bound on the buffered payload; today's catalog is ~0.6 MB. */
+const MODELPARAMS_API_MAX_BYTES = 16 * 1024 * 1024;
 const SUBSCRIPTION_MODEL_SUFFIX = '-subscription';
 const SHORT_CLAUDE_MODEL_RE = /^claude-(opus|sonnet|haiku)-/i;
 const DOTTED_CLAUDE_MINOR_RE = /-(\d+)\.(\d{1,2})(?=$|-\d{8}$)/g;
@@ -49,6 +54,13 @@ const MODEL_PARAM_GROUPS: readonly ModelParamGroup[] = [
   'provider_metadata',
 ];
 const API_LEVEL_PARAM_PATHS = new Set(['stream']);
+/** Kimi Code wire ids mapped to their equivalent modelparams catalog entries. */
+const MOONSHOT_PARAM_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  k3: 'kimi-k3',
+  'k3-256k': 'kimi-k3',
+  'kimi-for-coding': 'kimi-k2.7-code',
+  'kimi-for-coding-highspeed': 'kimi-k2.7-code-highspeed',
+};
 
 interface ModelParametersApiResponse {
   models?: unknown;
@@ -62,8 +74,103 @@ interface ProviderlessModelParamCandidate {
 const requireFromThisModule = createRequire(__filename);
 
 @Injectable()
-export class ProviderParamSpecService {
-  private readonly specs: ProviderParamSpecCatalog = loadModelparamsCatalog();
+export class ProviderParamSpecService implements OnModuleInit {
+  private readonly logger = new Logger(ProviderParamSpecService.name);
+  /**
+   * Seeded synchronously from the bundled modelparams package so the service
+   * always has a catalog (offline installs, API outages, cold boots), then
+   * kept fresh from the modelparams.dev API.
+   */
+  private specs: ProviderParamSpecCatalog = loadModelparamsCatalog();
+  private catalogEtag: string | null = null;
+  private refreshInFlight: Promise<boolean> | null = null;
+
+  onModuleInit(): void {
+    // Fire-and-forget so a slow modelparams.dev fetch can't delay app.listen()
+    // (same rationale as ModelsDevSyncService — see #1894). refreshCatalog
+    // never rejects, so no dangling rejection to handle here.
+    void this.refreshCatalog();
+  }
+
+  /** Hourly, off the top of the hour to avoid stampeding the CDN with every deploy. */
+  @Cron('34 * * * *')
+  async scheduledRefresh(): Promise<void> {
+    await this.refreshCatalog();
+  }
+
+  /**
+   * Fetch the live catalog from modelparams.dev and swap it in atomically.
+   * Conditional on the last ETag (304 = no work), validated before the swap,
+   * and stale-on-error: any failure keeps the current catalog. Never rejects.
+   * Returns true when a new catalog was applied.
+   */
+  refreshCatalog(): Promise<boolean> {
+    if (process.env.MODELPARAMS_API_DISABLED === 'true') return Promise.resolve(false);
+    // Concurrent callers share one in-flight refresh instead of racing the swap.
+    if (this.refreshInFlight) return this.refreshInFlight;
+    this.refreshInFlight = this.fetchAndSwapCatalog()
+      .catch((err: unknown) => {
+        this.logger.warn(`modelparams catalog refresh failed, keeping current catalog: ${err}`);
+        return false;
+      })
+      .finally(() => {
+        this.refreshInFlight = null;
+      });
+    return this.refreshInFlight;
+  }
+
+  private async fetchAndSwapCatalog(): Promise<boolean> {
+    const url = process.env.MODELPARAMS_API_URL ?? MODELPARAMS_API_DEFAULT_URL;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: this.catalogEtag ? { 'if-none-match': this.catalogEtag } : undefined,
+        signal: AbortSignal.timeout(MODELPARAMS_API_TIMEOUT_MS),
+      });
+    } catch (err) {
+      this.logger.warn(`modelparams catalog fetch failed, keeping current catalog: ${err}`);
+      return false;
+    }
+
+    if (response.status === 304) return false;
+    if (!response.ok) {
+      this.logger.warn(
+        `modelparams catalog fetch returned ${response.status}, keeping current catalog`,
+      );
+      return false;
+    }
+
+    // Reject an oversized declared payload before buffering it. A chunked or
+    // lying response is deliberately left to the 10s AbortSignal (which also
+    // bounds body consumption) rather than a streaming byte cap — this is our
+    // own CDN, and the simplicity is worth the residual risk.
+    if (Number(response.headers.get('content-length')) > MODELPARAMS_API_MAX_BYTES) {
+      this.logger.warn(
+        `modelparams catalog response declares more than ${MODELPARAMS_API_MAX_BYTES} bytes, keeping current catalog`,
+      );
+      return false;
+    }
+    const body = await response.text();
+
+    let raw: unknown;
+    try {
+      raw = JSON.parse(body) as unknown;
+    } catch {
+      this.logger.warn('modelparams catalog response is not valid JSON, keeping current catalog');
+      return false;
+    }
+
+    const catalog = parseModelParametersCatalog(raw);
+    if (!catalog) {
+      this.logger.warn('modelparams catalog response failed validation, keeping current catalog');
+      return false;
+    }
+
+    this.specs = freezeCatalog(catalog);
+    this.catalogEtag = response.headers.get('etag');
+    this.logger.log(`modelparams catalog refreshed: ${catalog.length} entries`);
+    return true;
+  }
 
   async list(): Promise<ProviderParamSpecCatalog> {
     return this.specs;
@@ -126,7 +233,7 @@ export class ProviderParamSpecService {
     if (!providerId || !authType || !model || authType === 'local') return [];
 
     const provider = normalizeProviderParamProviderId(providerId);
-    const metadata = resolveProviderMetadataIdentity(provider, model);
+    const metadata = resolveParamMetadataIdentity(provider, model);
     const lookupProvider = metadata.provider
       ? normalizeProviderParamProviderId(metadata.provider)
       : provider;
@@ -153,8 +260,10 @@ function loadModelparamsCatalogData(): unknown {
   const dataPath = join(dirname(packageJsonPath), MODELPARAMS_DATA_RELATIVE_PATH);
   const dataModule = readFileSync(dataPath, 'utf8');
   // modelparams is ESM-only while the backend is CommonJS, so read the generated
-  // JSON-shaped catalog literal directly from the installed package.
-  const match = dataModule.match(/export const CATALOG = ([\s\S]*?);\nfunction authSuffix/);
+  // JSON-shaped catalog literal directly from the installed package. The literal is
+  // `export const CATALOG = [...]` up to 0.0.57 and `const GENERATED_CATALOG = [...]`
+  // after, so the match is anchored on the array and its closing `];` on column 0.
+  const match = dataModule.match(/^(?:export )?const (?:GENERATED_)?CATALOG = (\[[\s\S]*?\n\]);$/m);
   if (!match) throw new Error('modelparams package catalog file has an unknown shape');
   return JSON.parse(match[1]) as unknown;
 }
@@ -164,7 +273,18 @@ function providerMetadataIdentity(
   model: string | undefined,
 ): { provider: string | undefined; model: string } | null {
   if (!model) return null;
+  return resolveParamMetadataIdentity(providerId, model);
+}
+
+function resolveParamMetadataIdentity(
+  providerId: string | undefined,
+  model: string,
+): { provider: string | undefined; model: string } {
   const normalizedProvider = providerId ? normalizeProviderParamProviderId(providerId) : providerId;
+  if (normalizedProvider === 'moonshot') {
+    const catalogModel = MOONSHOT_PARAM_MODEL_ALIASES[model.toLowerCase()];
+    if (catalogModel) return { provider: normalizedProvider, model: catalogModel };
+  }
   return resolveProviderMetadataIdentity(normalizedProvider, model);
 }
 

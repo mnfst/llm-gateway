@@ -6,7 +6,7 @@ import type { PublicErrorPage } from '../entities/public-error-page.entity';
 
 function makeConfig(enabled: boolean): ConfigService {
   return {
-    get: jest.fn((key: string) => (key === 'app.publicStatsEnabled' ? enabled : undefined)),
+    get: jest.fn((key: string) => (key === 'app.publicErrorPagesEnabled' ? enabled : undefined)),
   } as unknown as ConfigService;
 }
 

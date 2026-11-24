@@ -45,7 +45,7 @@ const viewMore = (): JSX.Element => <span class="view-more-link">View more</span
 
 /**
  * The reliability story, request-first: Success rate · Self-healed requests %
- * · Self-healed via Auto-fix · Self-healed via Fallback. Self-healed =
+ * · Self-healed via Autofix · Self-healed via Fallback. Self-healed =
  * autofix_saves + fallback_saves over the window total.
  */
 const AutofixKpiCards: Component<AutofixKpiCardsProps> = (props) => {
@@ -105,7 +105,7 @@ const AutofixKpiCards: Component<AutofixKpiCardsProps> = (props) => {
   return (
     <Show when={props.stats}>
       {(s) => (
-        <div class="overview-stats" style="grid-template-columns: repeat(5, 1fr);">
+        <div class="overview-stats overview-stats--5">
           <div class="overview-stat-card">
             <span class="overview-stat-card__label">
               Success rate
@@ -137,10 +137,10 @@ const AutofixKpiCards: Component<AutofixKpiCardsProps> = (props) => {
             class="overview-stat-card overview-stat-card--autofix"
             {...linkProps(
               requestsLink('&status=ok&trigger=autofix'),
-              scopeTitle('requests recovered by Auto-fix'),
+              scopeTitle('requests recovered by Autofix'),
             )}
           >
-            <span class="overview-stat-card__label">Recovered by Auto-fix</span>
+            <span class="overview-stat-card__label">Recovered by Autofix</span>
             <div class="overview-stat-card__value-row">
               <span class="overview-stat-card__value">{formatNumber(s().autofix_saves.value)}</span>
               {trendBadge(s().autofix_saves.value, s().autofix_saves.previous)}

@@ -1,28 +1,38 @@
 import type { ConfirmResponse, HealOutcome, HealRequest, HealResponse } from './phoenix.types';
+import type { AgentPlatform } from 'manifest-shared';
+
+/** Per-agent metadata sent as bounded headers on authenticated Autofix calls. */
+export interface HealingRequestContext {
+  harness: AgentPlatform;
+}
 
 /**
  * Port to the Phoenix healing service. The proxy loop depends only on this
  * interface; the concrete client (mock vs HTTP) is chosen at module wiring time
- * by `AUTOFIX_HEALING_URL`. Keeping this seam stable means swapping in the real
+ * by `NODE_ENV`. Keeping this seam stable means swapping in the real
  * service — or a future contract revision — never touches the loop.
  */
 export interface HealingClient {
   /** Submit a failed request + provider error; get a heal decision back. */
-  heal(input: HealRequest): Promise<HealResponse>;
+  heal(input: HealRequest, context: HealingRequestContext): Promise<HealResponse>;
   /**
    * Report the post-retry outcome of an applied patch (Phoenix's learning loop).
    * Phoenix decides succeeded/failed from the retry status + error. Best-effort:
    * returns null on transport failure rather than throwing, so a missed report
    * never breaks the user's request.
    */
-  reportOutcome(healAttemptId: string, outcome: HealOutcome): Promise<ConfirmResponse | null>;
+  reportOutcome(
+    healAttemptId: string,
+    outcome: HealOutcome,
+    context: HealingRequestContext,
+  ): Promise<ConfirmResponse | null>;
   /**
    * Bulk-report failed requests as evidence, without asking for a fix. Phoenix
    * fingerprints each into an issue and stores the body; nothing is served back
    * and no heal attempt is created. Best-effort like {@link reportOutcome}: never
    * throws, so a healer outage costs evidence rather than a request.
    */
-  observe(observations: HealRequest[]): Promise<void>;
+  observe(observations: HealRequest[], context: HealingRequestContext): Promise<void>;
 }
 
 /** DI token for the active HealingClient implementation. */

@@ -36,11 +36,6 @@ export function getSubscriptionKnownModelsMatch(providerId: string): 'prefix' | 
   return config?.knownModelsMatch ?? 'prefix';
 }
 
-export function getSubscriptionExcludedModels(providerId: string): readonly string[] {
-  const config = getSubscriptionProviderConfig(providerId);
-  return config?.knownModelsExclude ?? [];
-}
-
 export function getSubscriptionCapabilities(
   providerId: string,
 ): Readonly<SubscriptionCapabilities> | null {

@@ -28,7 +28,7 @@ export interface AutofixStatusRecord {
   chain: AutofixStatusChainEntry[];
 }
 
-/** Derive the request-level Auto-fix outcome from its recorded execution. */
+/** Derive the request-level Autofix outcome from its recorded execution. */
 export function deriveAutofixStatus(
   record: AutofixStatusRecord | null | undefined,
 ): AutofixStatus | null {

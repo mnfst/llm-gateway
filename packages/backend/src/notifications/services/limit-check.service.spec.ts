@@ -1,10 +1,8 @@
-import { Subject } from 'rxjs';
 import { LimitCheckService } from './limit-check.service';
 import { NotificationRulesService } from './notification-rules.service';
 import { NotificationEmailService } from './notification-email.service';
 import { EmailProviderConfigService } from './email-provider-config.service';
 import { NotificationLogService } from './notification-log.service';
-import { IngestEventBusService, IngestEvent } from '../../common/services/ingest-event-bus.service';
 import { ManifestRuntimeService } from '../../common/services/manifest-runtime.service';
 
 describe('LimitCheckService', () => {
@@ -16,7 +14,6 @@ describe('LimitCheckService', () => {
   let mockHasAlreadySent: jest.Mock;
   let mockInsertLog: jest.Mock;
   let mockResolveRecipientEmail: jest.Mock;
-  let ingestSubject: Subject<IngestEvent>;
   let mockRuntime: { getAuthBaseUrl: jest.Mock };
 
   beforeEach(() => {
@@ -41,11 +38,6 @@ describe('LimitCheckService', () => {
       getAuthBaseUrl: jest.fn().mockReturnValue('http://localhost:3001'),
     };
 
-    ingestSubject = new Subject<IngestEvent>();
-    const ingestBus = {
-      all: () => ingestSubject.asObservable(),
-    } as unknown as IngestEventBusService;
-
     mockHasAlreadySent = jest.fn().mockResolvedValue(false);
     mockInsertLog = jest.fn().mockResolvedValue(undefined);
     mockResolveRecipientEmail = jest.fn().mockResolvedValue(null);
@@ -59,16 +51,9 @@ describe('LimitCheckService', () => {
       rulesService,
       emailService,
       emailProviderConfig,
-      ingestBus,
       mockRuntime as unknown as ManifestRuntimeService,
       notificationLog,
     );
-    service.onModuleInit();
-  });
-
-  afterEach(() => {
-    service.onModuleDestroy();
-    ingestSubject.complete();
   });
 
   it('returns null when no block rules exist', async () => {
@@ -161,345 +146,72 @@ describe('LimitCheckService', () => {
     expect(result!.ruleId).toBe('r2');
   });
 
-  it('caches rules for 60s', async () => {
-    mockGetActiveBlockRules.mockResolvedValue([]);
-
-    await service.checkLimits('tenant-1', 'my-agent');
-    await service.checkLimits('tenant-1', 'my-agent');
-
-    expect(mockGetActiveBlockRules).toHaveBeenCalledTimes(1);
-  });
-
-  it('caches consumption values for 60s', async () => {
+  it('reuses consumption for rules with the same metric and period within one request', async () => {
     mockGetActiveBlockRules.mockResolvedValue([
       {
         id: 'r1',
-        tenant_id: 'tenant-1',
-        agent_name: 'my-agent',
-        metric_type: 'tokens',
-        threshold: 100000,
-        period: 'day',
-      },
-    ]);
-    mockGetConsumption.mockResolvedValue(5000);
-
-    await service.checkLimits('tenant-1', 'my-agent');
-    await service.checkLimits('tenant-1', 'my-agent');
-
-    expect(mockGetConsumption).toHaveBeenCalledTimes(1);
-  });
-
-  it('invalidateCache clears rules and consumption for tenant+agent', async () => {
-    mockGetActiveBlockRules.mockResolvedValue([
-      {
-        id: 'r1',
-        tenant_id: 'tenant-1',
-        agent_name: 'my-agent',
-        metric_type: 'tokens',
-        threshold: 100000,
-        period: 'day',
-      },
-    ]);
-    mockGetConsumption.mockResolvedValue(5000);
-
-    await service.checkLimits('tenant-1', 'my-agent');
-    expect(mockGetActiveBlockRules).toHaveBeenCalledTimes(1);
-
-    service.invalidateCache('tenant-1', 'my-agent');
-
-    await service.checkLimits('tenant-1', 'my-agent');
-    expect(mockGetActiveBlockRules).toHaveBeenCalledTimes(2);
-    expect(mockGetConsumption).toHaveBeenCalledTimes(2);
-  });
-
-  it('evicts the writing tenant consumption cache when ingest event fires', async () => {
-    mockGetActiveBlockRules.mockResolvedValue([
-      {
-        id: 'r1',
-        tenant_id: 'tenant-1',
-        agent_name: 'my-agent',
-        metric_type: 'tokens',
-        threshold: 100000,
-        period: 'day',
-      },
-    ]);
-    mockGetConsumption.mockResolvedValue(5000);
-
-    await service.checkLimits('tenant-1', 'my-agent');
-    expect(mockGetConsumption).toHaveBeenCalledTimes(1);
-
-    // Simulate OTLP ingest event for the same tenant that owns the rule.
-    ingestSubject.next({ tenantId: 'tenant-1', kind: 'message' });
-
-    await service.checkLimits('tenant-1', 'my-agent');
-    expect(mockGetConsumption).toHaveBeenCalledTimes(2);
-  });
-
-  it('ingest event for one tenant does NOT evict another tenant consumption cache', async () => {
-    // Two distinct tenants, each with its own block rule.
-    mockGetActiveBlockRules.mockImplementation((tenantId: string) =>
-      Promise.resolve([
-        {
-          id: `r-${tenantId}`,
-          tenant_id: tenantId,
-          agent_name: 'my-agent',
-          metric_type: 'tokens',
-          threshold: 100000,
-          period: 'day',
-        },
-      ]),
-    );
-    mockGetConsumption.mockResolvedValue(5000);
-
-    await service.checkLimits('tenant-A', 'my-agent');
-    await service.checkLimits('tenant-B', 'my-agent');
-    expect(mockGetConsumption).toHaveBeenCalledTimes(2);
-
-    // Ingest event for tenant-A only.
-    ingestSubject.next({ tenantId: 'tenant-A', kind: 'message' });
-
-    await service.checkLimits('tenant-A', 'my-agent'); // re-fetched (evicted)
-    await service.checkLimits('tenant-B', 'my-agent'); // still cached
-    expect(mockGetConsumption).toHaveBeenCalledTimes(3);
-  });
-
-  it('consumption cache entries expire after the TTL even without an ingest event', async () => {
-    mockGetActiveBlockRules.mockResolvedValue([
-      {
-        id: 'r1',
-        tenant_id: 'tenant-1',
-        agent_name: 'my-agent',
-        metric_type: 'tokens',
-        threshold: 100000,
-        period: 'day',
-      },
-    ]);
-    mockGetConsumption.mockResolvedValue(5000);
-
-    const nowSpy = jest.spyOn(Date, 'now');
-    nowSpy.mockReturnValue(1_000_000);
-    await service.checkLimits('tenant-1', 'my-agent');
-    expect(mockGetConsumption).toHaveBeenCalledTimes(1);
-
-    // Advance past the 60s TTL — the cached entry is now stale.
-    nowSpy.mockReturnValue(1_000_000 + 61_000);
-    await service.checkLimits('tenant-1', 'my-agent');
-    expect(mockGetConsumption).toHaveBeenCalledTimes(2);
-
-    nowSpy.mockRestore();
-  });
-
-  it('invalidateCache does not affect other tenant+agent pairs', async () => {
-    mockGetActiveBlockRules.mockResolvedValue([]);
-
-    await service.checkLimits('tenant-1', 'agent-a');
-    await service.checkLimits('tenant-2', 'agent-b');
-    expect(mockGetActiveBlockRules).toHaveBeenCalledTimes(2);
-
-    service.invalidateCache('tenant-1', 'agent-a');
-
-    await service.checkLimits('tenant-1', 'agent-a');
-    await service.checkLimits('tenant-2', 'agent-b');
-    // tenant-1/agent-a re-fetched, tenant-2/agent-b cached
-    expect(mockGetActiveBlockRules).toHaveBeenCalledTimes(3);
-  });
-
-  it('reuses an existing tenant bucket for a second metric/period entry', async () => {
-    // One rule with a long period and one with a short period → two distinct
-    // inner keys under the same tenant bucket. The second insert must reuse the
-    // already-created bucket rather than overwrite it.
-    mockGetActiveBlockRules.mockResolvedValue([
-      {
-        id: 'r1',
-        tenant_id: 'tenant-1',
-        agent_name: 'my-agent',
+        tenant_id: 't',
+        agent_name: 'a',
         metric_type: 'tokens',
         threshold: 100000,
         period: 'day',
       },
       {
         id: 'r2',
+        tenant_id: 't',
+        agent_name: 'a',
+        metric_type: 'tokens',
+        threshold: 50000,
+        period: 'day',
+      },
+    ]);
+    mockGetConsumption.mockResolvedValue(75000);
+
+    await expect(service.checkLimits('t', 'a')).resolves.toEqual(
+      expect.objectContaining({ ruleId: 'r2', actual: 75000 }),
+    );
+    expect(mockGetConsumption).toHaveBeenCalledTimes(1);
+  });
+
+  it('enforces a block rule created through another replica on the next request', async () => {
+    await expect(service.checkLimits('tenant-1', 'my-agent')).resolves.toBeNull();
+
+    mockGetActiveBlockRules.mockResolvedValue([
+      {
+        id: 'new-rule',
         tenant_id: 'tenant-1',
         agent_name: 'my-agent',
-        metric_type: 'cost',
+        metric_type: 'tokens',
         threshold: 100,
-        period: 'month',
+        period: 'day',
       },
     ]);
-    mockGetConsumption.mockResolvedValue(0);
+    mockGetConsumption.mockResolvedValue(100);
 
-    await service.checkLimits('tenant-1', 'my-agent');
-
-    const consumptionCache = (service as any).consumptionCache as Map<string, Map<string, unknown>>;
-    // Both rules' consumption entries live in the single 'tenant-1' bucket.
-    expect(consumptionCache.size).toBe(1);
-    expect(consumptionCache.get('tenant-1')!.size).toBe(2);
+    await expect(service.checkLimits('tenant-1', 'my-agent')).resolves.toEqual(
+      expect.objectContaining({ ruleId: 'new-rule', actual: 100 }),
+    );
+    expect(mockGetActiveBlockRules).toHaveBeenCalledTimes(2);
   });
 
-  it('drops a tenant bucket whose entries have all expired on the next lookup', async () => {
-    const consumptionCache = (service as any).consumptionCache as Map<string, Map<string, unknown>>;
-    const nowSpy = jest.spyOn(Date, 'now');
-    nowSpy.mockReturnValue(1_000_000);
-
-    // Seed a stale bucket for an unrelated tenant that will be swept on lookup.
-    const staleBucket = new Map<string, unknown>();
-    staleBucket.set('agent-x:tokens:2026-01-01', {
-      data: 1,
-      expiresAt: 1_000_000 + 10,
-    });
-    consumptionCache.set('tenant-stale', staleBucket);
-
+  it('uses current consumption on every request', async () => {
     mockGetActiveBlockRules.mockResolvedValue([
       {
         id: 'r1',
         tenant_id: 'tenant-1',
         agent_name: 'my-agent',
         metric_type: 'tokens',
-        threshold: 100000,
+        threshold: 100,
         period: 'day',
       },
     ]);
-    mockGetConsumption.mockResolvedValue(0);
+    mockGetConsumption.mockResolvedValueOnce(99).mockResolvedValueOnce(100);
 
-    // Jump past the stale bucket's TTL so evictExpiredConsumption drops it.
-    nowSpy.mockReturnValue(1_000_000 + 999_999);
-    await service.checkLimits('tenant-1', 'my-agent');
-
-    expect(consumptionCache.has('tenant-stale')).toBe(false);
-    nowSpy.mockRestore();
-  });
-
-  it('invalidateCache deletes only matching inner entries and keeps the bucket', () => {
-    const consumptionCache = (service as any).consumptionCache as Map<
-      string,
-      Map<string, { data: number; expiresAt: number }>
-    >;
-    const now = Date.now();
-    const bucket = new Map<string, { data: number; expiresAt: number }>();
-    // One entry scoped to the agent we invalidate, one to a different agent.
-    bucket.set('agent-a:tokens:2026-01-01', { data: 1, expiresAt: now + 999_999 });
-    bucket.set('agent-b:tokens:2026-01-01', { data: 2, expiresAt: now + 999_999 });
-    consumptionCache.set('tenant-1', bucket);
-
-    service.invalidateCache('tenant-1', 'agent-a');
-
-    // The agent-a entry is gone, agent-b survives, and the bucket is retained.
-    expect(bucket.has('agent-a:tokens:2026-01-01')).toBe(false);
-    expect(bucket.has('agent-b:tokens:2026-01-01')).toBe(true);
-    expect(consumptionCache.has('tenant-1')).toBe(true);
-  });
-
-  it('invalidateCache drops an emptied tenant bucket', async () => {
-    mockGetActiveBlockRules.mockResolvedValue([
-      {
-        id: 'r1',
-        tenant_id: 'tenant-1',
-        agent_name: 'my-agent',
-        metric_type: 'tokens',
-        threshold: 100000,
-        period: 'day',
-      },
-    ]);
-    mockGetConsumption.mockResolvedValue(5000);
-
-    await service.checkLimits('tenant-1', 'my-agent');
-    const consumptionCache = (service as any).consumptionCache as Map<string, unknown>;
-    expect(consumptionCache.has('tenant-1')).toBe(true);
-
-    service.invalidateCache('tenant-1', 'my-agent');
-
-    // The single entry was removed, so the now-empty 'tenant-1' bucket is dropped.
-    expect(consumptionCache.has('tenant-1')).toBe(false);
-  });
-
-  it('evicts oldest rules cache entry when MAX_CACHE_SIZE is reached', async () => {
-    const rulesCache = (service as any).rulesCache as Map<string, unknown>;
-    const now = Date.now();
-
-    // Fill to exactly MAX_CACHE_SIZE so the next insert triggers eviction
-    for (let i = 0; i < 10_000; i++) {
-      rulesCache.set(`t-${i}:a-${i}`, { data: [], expiresAt: now + 999_999 });
-    }
-    expect(rulesCache.size).toBe(10_000);
-
-    mockGetActiveBlockRules.mockResolvedValue([]);
-    await service.checkLimits('tenant-new', 'agent-new');
-
-    // The first filler entry should have been evicted
-    expect(rulesCache.has('t-0:a-0')).toBe(false);
-    // The new entry should be present
-    expect(rulesCache.has('tenant-new:agent-new')).toBe(true);
-  });
-
-  it('evicts oldest consumption cache entry when MAX_CACHE_SIZE is reached', async () => {
-    const consumptionCache = (service as any).consumptionCache as Map<string, Map<string, unknown>>;
-    const now = Date.now();
-
-    // Fill the oldest tenant bucket to exactly MAX_CACHE_SIZE so the next insert
-    // (under a new tenant) trips the total-size guard and evicts from the oldest.
-    const oldestBucket = new Map<string, unknown>();
-    for (let i = 0; i < 10_000; i++) {
-      oldestBucket.set(`a-${i}:tokens:2026-01-01`, {
-        data: 0,
-        expiresAt: now + 999_999,
-      });
-    }
-    consumptionCache.set('tenant-old', oldestBucket);
-    expect(oldestBucket.size).toBe(10_000);
-
-    mockGetActiveBlockRules.mockResolvedValue([
-      {
-        id: 'r1',
-        tenant_id: 'tenant-new',
-        agent_name: 'agent-new',
-        metric_type: 'tokens',
-        threshold: 100000,
-        period: 'day',
-      },
-    ]);
-    mockGetConsumption.mockResolvedValue(0);
-
-    await service.checkLimits('tenant-new', 'agent-new');
-
-    // The first filler entry in the oldest bucket should have been evicted.
-    expect(oldestBucket.has('a-0:tokens:2026-01-01')).toBe(false);
-    // The new tenant's consumption was still cached under its own bucket.
-    expect(consumptionCache.has('tenant-new')).toBe(true);
-    expect(consumptionCache.get('tenant-new')!.size).toBe(1);
-  });
-
-  it('drops an emptied tenant bucket when its last entry is evicted by size', async () => {
-    const consumptionCache = (service as any).consumptionCache as Map<string, Map<string, unknown>>;
-    const now = Date.now();
-
-    // Oldest bucket holds a single entry; total still reaches MAX via a second
-    // bucket so the size guard fires and empties the oldest bucket entirely.
-    const oldestBucket = new Map<string, unknown>();
-    oldestBucket.set('a-old:tokens:2026-01-01', { data: 0, expiresAt: now + 999_999 });
-    consumptionCache.set('tenant-old', oldestBucket);
-
-    const fillerBucket = new Map<string, unknown>();
-    for (let i = 0; i < 9_999; i++) {
-      fillerBucket.set(`a-${i}:tokens:2026-01-01`, { data: 0, expiresAt: now + 999_999 });
-    }
-    consumptionCache.set('tenant-filler', fillerBucket);
-
-    mockGetActiveBlockRules.mockResolvedValue([
-      {
-        id: 'r1',
-        tenant_id: 'tenant-new',
-        agent_name: 'agent-new',
-        metric_type: 'tokens',
-        threshold: 100000,
-        period: 'day',
-      },
-    ]);
-    mockGetConsumption.mockResolvedValue(0);
-
-    await service.checkLimits('tenant-new', 'agent-new');
-
-    // The oldest bucket had its only entry evicted and was removed.
-    expect(consumptionCache.has('tenant-old')).toBe(false);
+    await expect(service.checkLimits('tenant-1', 'my-agent')).resolves.toBeNull();
+    await expect(service.checkLimits('tenant-1', 'my-agent')).resolves.toEqual(
+      expect.objectContaining({ ruleId: 'r1', actual: 100 }),
+    );
+    expect(mockGetConsumption).toHaveBeenCalledTimes(2);
   });
 
   describe('email notification on block', () => {

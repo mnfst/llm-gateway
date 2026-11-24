@@ -7,7 +7,8 @@ jest.mock('../../common/utils/detect-self-hosted', () => ({
 
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { CustomProviderService } from './custom-provider.service';
+import { CustomProviderService, primaryCustomConnection } from './custom-provider.service';
+import type { TenantProvider } from '../../entities/tenant-provider.entity';
 import { CustomProvider } from '../../entities/custom-provider.entity';
 import { ProviderService } from '../routing-core/provider.service';
 import { RoutingCacheService } from '../routing-core/routing-cache.service';
@@ -53,11 +54,13 @@ function makeDeps(overrides: {
   const removeProvider = jest.fn().mockResolvedValue(undefined);
   const retagAuthType = jest.fn().mockResolvedValue(undefined);
   const recalculateTiersForTenant = jest.fn().mockResolvedValue(undefined);
+  const getProviders = jest.fn().mockResolvedValue([]);
   const providerService = {
     upsertProvider,
     removeProvider,
     retagAuthType,
     recalculateTiersForTenant,
+    getProviders,
   } as unknown as ProviderService;
 
   const getCustomProviders = jest.fn().mockReturnValue(overrides.cached ?? null);
@@ -96,6 +99,7 @@ function makeDeps(overrides: {
     removeProvider,
     retagAuthType,
     recalculateTiersForTenant,
+    getProviders,
     getCustomProviders,
     setCustomProviders,
     invalidateTenant,
@@ -103,6 +107,19 @@ function makeDeps(overrides: {
     txManager,
     transaction,
   };
+}
+
+function connection(over: Partial<TenantProvider>): TenantProvider {
+  return {
+    id: 'tp',
+    provider: 'custom:cp1',
+    auth_type: 'api_key',
+    label: 'Default',
+    priority: 0,
+    is_active: true,
+    api_key_encrypted: null,
+    ...over,
+  } as TenantProvider;
 }
 
 describe('CustomProviderService', () => {
@@ -368,6 +385,79 @@ describe('CustomProviderService', () => {
       expect(reloadPricing).toHaveBeenCalledTimes(1);
     });
 
+    describe('alias', () => {
+      it('derives a default alias from the name when none is sent', async () => {
+        const { svc } = makeDeps({ findOneResults: [null] });
+        const cp = await svc.create('tenant-1', { ...dto, name: 'Vercel AI Gateway' });
+        expect(cp.alias).toBe('vercel-ai-gateway');
+      });
+
+      it('leaves the default alias empty when the name yields a reserved one', async () => {
+        const { svc } = makeDeps({ findOneResults: [null] });
+        const cp = await svc.create('tenant-1', { ...dto, name: 'OpenAI' });
+        expect(cp.alias).toBeNull();
+      });
+
+      it('leaves the default alias empty when another provider already took it', async () => {
+        const { svc } = makeDeps({
+          findResult: [{ id: 'other', name: 'Other', alias: 'My-Provider' } as CustomProvider],
+        });
+        const cp = await svc.create('tenant-1', { ...dto, name: 'My Provider' });
+        expect(cp.alias).toBeNull();
+      });
+
+      it('stores an explicit alias, normalised', async () => {
+        const { svc } = makeDeps({ findOneResults: [null] });
+        const cp = await svc.create('tenant-1', { ...dto, alias: ' Vercel ' });
+        expect(cp.alias).toBe('vercel');
+      });
+
+      it('honours an explicit null as "no alias" instead of deriving one', async () => {
+        const { svc } = makeDeps({ findOneResults: [null] });
+        const cp = await svc.create('tenant-1', { ...dto, alias: null });
+        expect(cp.alias).toBeNull();
+      });
+
+      it('rejects an explicit alias that shadows a built-in provider', async () => {
+        const { svc } = makeDeps({ findOneResults: [null] });
+        await expect(svc.create('tenant-1', { ...dto, alias: 'openai' })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+      });
+
+      it('rejects an explicit alias another provider of the tenant already uses', async () => {
+        const { svc } = makeDeps({
+          findResult: [{ id: 'other', name: 'Other', alias: 'Vercel' } as CustomProvider],
+        });
+        await expect(svc.create('tenant-1', { ...dto, alias: 'vercel' })).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it('turns a lost race on the alias unique index into a 409', async () => {
+        const { svc, insert } = makeDeps({ findOneResults: [null] });
+        insert.mockRejectedValueOnce(
+          Object.assign(new Error('duplicate key'), {
+            code: '23505',
+            constraint: 'IDX_custom_providers_tenant_alias',
+          }),
+        );
+        await expect(svc.create('tenant-1', { ...dto, alias: 'vercel' })).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it('rethrows other insert failures untouched', async () => {
+        const { svc, insert } = makeDeps({ findOneResults: [null] });
+        const boom = Object.assign(new Error('other index'), {
+          code: '23505',
+          constraint: 'some_other_index',
+        });
+        insert.mockRejectedValueOnce(boom);
+        await expect(svc.create('tenant-1', dto)).rejects.toBe(boom);
+      });
+    });
+
     it('tags the companion tenant_providers row as local when the name is LM Studio', async () => {
       const { svc, upsertProvider, txManager } = makeDeps({ findOneResults: [null] });
       await svc.create('tenant-1', { ...dto, name: 'LM Studio' });
@@ -584,6 +674,89 @@ describe('CustomProviderService', () => {
       expect(reloadPricing).not.toHaveBeenCalled();
     });
 
+    describe('alias', () => {
+      it('leaves the alias alone on a rename so client configs survive', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: 'old' } as CustomProvider;
+        const { svc, find } = makeDeps({ findOneResults: [existing] });
+        await svc.update('cp1', 'tenant-1', { name: 'new' });
+        expect(existing.alias).toBe('old');
+        // The rename fetched the tenant list once; no second lookup for an alias.
+        expect(find).toHaveBeenCalledTimes(1);
+      });
+
+      it('sets a new alias after checking the tenant for collisions', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: null } as CustomProvider;
+        const { svc, save, find } = makeDeps({
+          findOneResults: [existing],
+          findResult: [existing, { id: 'other', name: 'Other', alias: 'taken' } as CustomProvider],
+        });
+        await svc.update('cp1', 'tenant-1', { alias: 'Fresh' });
+        expect(existing.alias).toBe('fresh');
+        expect(save).toHaveBeenCalledWith(existing);
+        expect(find).toHaveBeenCalledTimes(1);
+      });
+
+      it('clears the alias on null or an empty string', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: 'old' } as CustomProvider;
+        const { svc, find } = makeDeps({ findOneResults: [existing, existing] });
+        await svc.update('cp1', 'tenant-1', { alias: '' });
+        expect(existing.alias).toBeNull();
+        existing.alias = 'old';
+        await svc.update('cp1', 'tenant-1', { alias: null });
+        expect(existing.alias).toBeNull();
+        expect(find).not.toHaveBeenCalled();
+      });
+
+      it('skips the collision lookup when the alias is unchanged', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: 'same' } as CustomProvider;
+        const { svc, find } = makeDeps({ findOneResults: [existing] });
+        await svc.update('cp1', 'tenant-1', { alias: 'SAME' });
+        expect(existing.alias).toBe('same');
+        expect(find).not.toHaveBeenCalled();
+      });
+
+      it('rejects an alias that shadows a built-in provider', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: null } as CustomProvider;
+        const { svc } = makeDeps({ findOneResults: [existing] });
+        await expect(svc.update('cp1', 'tenant-1', { alias: 'gemini' })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+      });
+
+      it('turns a lost race on the alias unique index into a 409', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: null } as CustomProvider;
+        const { svc, save } = makeDeps({ findOneResults: [existing] });
+        save.mockRejectedValueOnce(
+          Object.assign(new Error('duplicate key'), {
+            code: '23505',
+            constraint: 'IDX_custom_providers_tenant_alias',
+          }),
+        );
+        await expect(svc.update('cp1', 'tenant-1', { alias: 'fresh' })).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+
+      it('rethrows other save failures untouched', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: null } as CustomProvider;
+        const { svc, save } = makeDeps({ findOneResults: [existing] });
+        const boom = new Error('connection reset');
+        save.mockRejectedValueOnce(boom);
+        await expect(svc.update('cp1', 'tenant-1', { alias: 'fresh' })).rejects.toBe(boom);
+      });
+
+      it('rejects an alias another provider of the tenant already uses, case-insensitively', async () => {
+        const existing = { id: 'cp1', name: 'old', alias: null } as CustomProvider;
+        const { svc } = makeDeps({
+          findOneResults: [existing],
+          findResult: [existing, { id: 'other', name: 'Other', alias: 'Taken' } as CustomProvider],
+        });
+        await expect(svc.update('cp1', 'tenant-1', { alias: 'taken' })).rejects.toBeInstanceOf(
+          ConflictException,
+        );
+      });
+    });
+
     it('validates and updates base_url when provided', async () => {
       const existing = {
         id: 'cp1',
@@ -767,6 +940,75 @@ describe('CustomProviderService', () => {
       expect(existing.models[0].context_window).toBe(64_000);
       // Prices still changed → pricing cache must still be refreshed.
       expect(reloadPricing).toHaveBeenCalledTimes(1);
+    });
+
+    it('writes an updated api key to the primary connection, whatever it is named', async () => {
+      const existing = { id: 'cp1', name: 'n' } as CustomProvider;
+      const { svc, upsertProvider, getProviders } = makeDeps({ findOneResults: [existing] });
+      getProviders.mockResolvedValueOnce([
+        connection({ id: 'b', label: 'Account B', priority: 1 }),
+        connection({ id: 'a', label: 'Account A', priority: 0 }),
+      ]);
+      await svc.update('cp1', 'tenant-1', { apiKey: 'sk-new' });
+      expect(upsertProvider).toHaveBeenCalledWith(
+        null,
+        'tenant-1',
+        'custom:cp1',
+        'sk-new',
+        'api_key',
+        undefined,
+        'Account A',
+        undefined,
+      );
+    });
+  });
+
+  it('retags before writing a new key when a rename crosses the local boundary', async () => {
+    const existing = { id: 'cp1', name: 'LM Studio' } as CustomProvider;
+    const { svc, retagAuthType, upsertProvider, getProviders } = makeDeps({
+      findOneResults: [existing, null],
+    });
+    getProviders.mockResolvedValueOnce([connection({ id: 'a', label: 'Main' })]);
+    await svc.update('cp1', 'tenant-1', { name: 'Home Server', apiKey: 'sk-new' });
+    expect(retagAuthType).toHaveBeenCalledWith(null, 'tenant-1', 'custom:cp1', 'api_key');
+    expect(retagAuthType.mock.invocationCallOrder[0]).toBeLessThan(
+      upsertProvider.mock.invocationCallOrder[0],
+    );
+    expect(upsertProvider).toHaveBeenCalledWith(
+      null,
+      'tenant-1',
+      'custom:cp1',
+      'sk-new',
+      'api_key',
+      undefined,
+      'Main',
+      undefined,
+    );
+  });
+
+  describe('primaryCustomConnection', () => {
+    it('picks the active connection with the lowest priority for that provider', () => {
+      const rows = [
+        connection({ id: 'other', provider: 'custom:other', priority: -1 }),
+        connection({ id: 'b', label: 'B', priority: 1 }),
+        connection({ id: 'off', label: 'Off', priority: -1, is_active: false }),
+        connection({ id: 'a', label: 'A', priority: 0 }),
+      ];
+      expect(primaryCustomConnection(rows, 'custom:cp1')?.id).toBe('a');
+    });
+
+    it('breaks a priority tie on id, the way the proxy does', () => {
+      const rows = [connection({ id: 'z' }), connection({ id: 'm' })];
+      expect(primaryCustomConnection(rows, 'custom:cp1')?.id).toBe('m');
+    });
+
+    it('falls back to an inactive connection when none is active', () => {
+      const rows = [connection({ id: 'off', is_active: false })];
+      expect(primaryCustomConnection(rows, 'custom:cp1')?.id).toBe('off');
+    });
+
+    it('returns undefined when the provider has no connection', () => {
+      expect(primaryCustomConnection([], 'custom:cp1')).toBeUndefined();
     });
   });
 
@@ -1154,6 +1396,185 @@ describe('CustomProviderService', () => {
       } finally {
         global.setTimeout = realSetTimeout;
       }
+    });
+
+    // Edit-page bug repro: opening an existing API-key custom provider and
+    // clicking "Fetch models" without re-typing the key sent an unauth'd
+    // probe (the form never has the plaintext key — list() only returns
+    // has_api_key:bool). The controller now asks loadStoredApiKey() for the
+    // stored key, which is only released for the provider's own endpoint.
+    describe('loadStoredApiKey', () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { encrypt, getEncryptionSecret } = require('../../common/utils/crypto.util');
+      const BASE = 'http://host.docker.internal:8000/v1';
+      const cpRow = (overrides: Partial<CustomProvider> = {}) =>
+        ({
+          id: 'cp-edit-id',
+          tenant_id: 'tenant-1',
+          base_url: BASE,
+          api_kind: 'openai',
+          ...overrides,
+        }) as CustomProvider;
+
+      const ORIGINAL_ENV = process.env['MANIFEST_ENCRYPTION_KEY'];
+      const ORIGINAL_PREVIOUS = process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'];
+      beforeAll(() => {
+        process.env['MANIFEST_ENCRYPTION_KEY'] = 'test-encryption-secret-min-32-chars-long-padding';
+      });
+      afterAll(() => {
+        if (ORIGINAL_ENV === undefined) {
+          delete process.env['MANIFEST_ENCRYPTION_KEY'];
+        } else {
+          process.env['MANIFEST_ENCRYPTION_KEY'] = ORIGINAL_ENV;
+        }
+        if (ORIGINAL_PREVIOUS === undefined) {
+          delete process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'];
+        } else {
+          process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'] = ORIGINAL_PREVIOUS;
+        }
+      });
+
+      function withStoredKey(cp: CustomProvider) {
+        const deps = makeDeps({ findOneResults: [cp] });
+        deps.getProviders.mockResolvedValueOnce([
+          {
+            provider: 'custom:cp-edit-id',
+            api_key_encrypted: encrypt('sk-stored-secret-value', getEncryptionSecret()),
+          },
+        ]);
+        return deps;
+      }
+
+      it('decrypts the stored key when base_url and api_kind match the stored row', async () => {
+        const { svc, findOne, getProviders } = withStoredKey(cpRow());
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE, 'openai')).resolves.toBe(
+          'sk-stored-secret-value',
+        );
+        expect(findOne).toHaveBeenCalledWith({
+          where: { id: 'cp-edit-id', tenant_id: 'tenant-1' },
+        });
+        expect(getProviders).toHaveBeenCalledWith('tenant-1');
+      });
+
+      it('defaults api_kind to openai when the caller omits it', async () => {
+        const { svc } = withStoredKey(cpRow());
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBe(
+          'sk-stored-secret-value',
+        );
+      });
+
+      it('still matches when the URLs differ only by trailing slashes or whitespace', async () => {
+        const { svc } = withStoredKey(cpRow({ base_url: `${BASE}/` }));
+        await expect(
+          svc.loadStoredApiKey('tenant-1', 'cp-edit-id', `  ${BASE}//  `, 'openai'),
+        ).resolves.toBe('sk-stored-secret-value');
+      });
+
+      it('never releases the key for a different base_url', async () => {
+        const { svc, getProviders } = withStoredKey(cpRow());
+        await expect(
+          svc.loadStoredApiKey('tenant-1', 'cp-edit-id', 'https://attacker.example/v1', 'openai'),
+        ).resolves.toBeUndefined();
+        expect(getProviders).not.toHaveBeenCalled();
+      });
+
+      it('never releases the key for a different api_kind', async () => {
+        const { svc, getProviders } = withStoredKey(cpRow());
+        await expect(
+          svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE, 'anthropic'),
+        ).resolves.toBeUndefined();
+        expect(getProviders).not.toHaveBeenCalled();
+      });
+
+      it('decrypts a key still stored under MANIFEST_ENCRYPTION_KEY_PREVIOUS', async () => {
+        const previous = 'previous-encryption-secret-min-32-chars-long';
+        process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'] = previous;
+        try {
+          const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+          getProviders.mockResolvedValueOnce([
+            { provider: 'custom:cp-edit-id', api_key_encrypted: encrypt('sk-old', previous) },
+          ]);
+          await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBe(
+            'sk-old',
+          );
+        } finally {
+          delete process.env['MANIFEST_ENCRYPTION_KEY_PREVIOUS'];
+        }
+      });
+
+      it('returns undefined when the provider row has no ciphertext (unauth local server)', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        getProviders.mockResolvedValueOnce([
+          { provider: 'custom:cp-edit-id', api_key_encrypted: null },
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
+      });
+
+      it('uses the primary connection when the provider has several', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        getProviders.mockResolvedValueOnce([
+          connection({
+            id: 'second',
+            provider: 'custom:cp-edit-id',
+            priority: 1,
+            api_key_encrypted: encrypt('sk-second', getEncryptionSecret()),
+          }),
+          connection({
+            id: 'first',
+            provider: 'custom:cp-edit-id',
+            priority: 0,
+            api_key_encrypted: encrypt('sk-first', getEncryptionSecret()),
+          }),
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBe(
+          'sk-first',
+        );
+      });
+
+      it('returns undefined when no tenant_providers row exists for the provider', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        getProviders.mockResolvedValueOnce([]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
+      });
+
+      it('does not release a key stored under a different provider id', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        getProviders.mockResolvedValueOnce([
+          {
+            provider: 'custom:other-id',
+            api_key_encrypted: encrypt('sk-other-secret', getEncryptionSecret()),
+          },
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
+      });
+
+      it('cross-tenant safety: a provider_id from another tenant is not found', async () => {
+        // The row lookup is scoped to the caller's tenant, so a forged
+        // provider_id misses and the key store is never read.
+        const { svc, findOne, getProviders } = makeDeps({ findOneResults: [null] });
+        await expect(
+          svc.loadStoredApiKey('tenant-attacker', 'cp-victim', BASE),
+        ).resolves.toBeUndefined();
+        expect(findOne).toHaveBeenCalledWith({
+          where: { id: 'cp-victim', tenant_id: 'tenant-attacker' },
+        });
+        expect(getProviders).not.toHaveBeenCalled();
+      });
+
+      it('logs a warning without secret material and proceeds keyless on decrypt failure', async () => {
+        const { svc, getProviders } = makeDeps({ findOneResults: [cpRow()] });
+        const warn = jest
+          .spyOn((svc as unknown as { logger: { warn: (msg: string) => void } }).logger, 'warn')
+          .mockImplementation(() => undefined);
+        getProviders.mockResolvedValueOnce([
+          { provider: 'custom:cp-edit-id', api_key_encrypted: 'not-a-valid-ciphertext' },
+        ]);
+        await expect(svc.loadStoredApiKey('tenant-1', 'cp-edit-id', BASE)).resolves.toBeUndefined();
+        expect(warn).toHaveBeenCalledTimes(1);
+        const message = warn.mock.calls[0][0];
+        expect(message).toContain('cp-edit-id');
+        expect(message).not.toContain('not-a-valid-ciphertext');
+      });
     });
   });
 });

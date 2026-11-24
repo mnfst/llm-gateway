@@ -1,3 +1,4 @@
+import type { AgentScope } from './analytics-scope.service';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ObjectLiteral, Repository, SelectQueryBuilder } from 'typeorm';
@@ -45,9 +46,9 @@ interface AttemptCounts {
 
 /**
  * Universal attempt aggregates. Request totals remain on
- * `overview.request_reliability`; Auto-fix totals remain on the adjacent
- * Auto-fix/error aggregates. When those surfaces are composed, the canonical
- * Auto-fixed attempt is the successful `autofix_role='retry'` row. No cohort
+ * `overview.request_reliability`; Autofix totals remain on the adjacent
+ * Autofix/error aggregates. When those surfaces are composed, the canonical
+ * Autofixed attempt is the successful `autofix_role='retry'` row. No cohort
  * or eligibility predicate belongs in this service.
  */
 @Injectable()
@@ -60,14 +61,14 @@ export class AttemptStatsService {
   async getStats(params: {
     tenantId: string | null;
     range?: string;
-    agentName?: string;
+    agentScope?: AgentScope;
   }): Promise<AttemptStatsResponse> {
     const range = params.range ?? '7d';
     const cutoff = computeCutoff(rangeToInterval(range));
     const previousCutoff = computeCutoff(rangeToPreviousInterval(range));
     const [current, previous] = await Promise.all([
-      this.queryWindow(cutoff, undefined, params.tenantId, params.agentName),
-      this.queryWindow(previousCutoff, cutoff, params.tenantId, params.agentName),
+      this.queryWindow(cutoff, undefined, params.tenantId, params.agentScope),
+      this.queryWindow(previousCutoff, cutoff, params.tenantId, params.agentScope),
     ]);
 
     return {
@@ -82,7 +83,7 @@ export class AttemptStatsService {
   async getTimeseries(params: {
     tenantId: string | null;
     range?: string;
-    agentName?: string;
+    agentScope?: AgentScope;
   }): Promise<AttemptTimeseriesResponse> {
     const range = params.range ?? '7d';
     const cutoff = computeCutoff(rangeToInterval(range));
@@ -99,7 +100,7 @@ export class AttemptStatsService {
       )
       .where('at.timestamp >= :cutoff', { cutoff })
       .andWhere(sqlIsCompletedStatus('at.status'));
-    addTenantFilter(qb, params.tenantId, params.agentName);
+    addTenantFilter(qb, params.tenantId, params.agentScope);
     excludePlaygroundAgents(qb);
 
     const rows = (await qb.groupBy('bucket').orderBy('bucket', 'ASC').getRawMany()) as Array<
@@ -321,7 +322,7 @@ export class AttemptStatsService {
   /**
    * The connection's attempt breakdown for the header cards: totals, and the
    * two retry families with their own outcomes. Fallback retries exist for
-   * everyone; auto-fixed attempts only exist with the Doctor version.
+   * everyone; autofixed attempts only exist with the Doctor version.
    */
   async getConnectionBreakdown(params: {
     tenantId: string | null;
@@ -390,7 +391,7 @@ export class AttemptStatsService {
     from: string,
     to: string | undefined,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<AttemptCounts> {
     const qb = this.attemptRepo
       .createQueryBuilder('at')
@@ -402,7 +403,7 @@ export class AttemptStatsService {
       .where('at.timestamp >= :from', { from })
       .andWhere(sqlIsCompletedStatus('at.status'));
     if (to) qb.andWhere('at.timestamp < :to', { to });
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     excludePlaygroundAgents(qb);
     const row = await qb.getRawOne<Record<string, unknown>>();
     return {

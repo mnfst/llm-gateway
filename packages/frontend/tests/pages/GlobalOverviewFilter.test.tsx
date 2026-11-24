@@ -14,13 +14,17 @@ const apiMocks = vi.hoisted(() => ({
   getGlobalProviders: vi.fn(),
   getGlobalProviderUsage: vi.fn(),
   getOverview: vi.fn(),
+  getModelUsage: vi.fn(),
+  getRecentRequests: vi.fn(),
   getOverviewAgentUsage: vi.fn(),
   getOverviewProviderUsage: vi.fn(),
   getBillingStatus: vi.fn(),
+  navigate: vi.fn(),
 }));
 
 const sseMocks = vi.hoisted(() => ({
   bumpAgent: undefined as undefined | (() => void),
+  bumpAnalytics: undefined as undefined | (() => void),
   bumpMessage: undefined as undefined | (() => void),
   bumpRouting: undefined as undefined | (() => void),
   reset: undefined as undefined | (() => void),
@@ -44,7 +48,7 @@ vi.mock('@solidjs/router', () => ({
       {props.children}
     </a>
   ),
-  useNavigate: () => vi.fn(),
+  useNavigate: () => apiMocks.navigate,
   useSearchParams: () => [mockSearchParams],
 }));
 
@@ -56,16 +60,18 @@ vi.mock('../../src/services/api.js', async () => {
     getAgents: (...args: unknown[]) => apiMocks.getAgents(...args),
     getGlobalProviders: (...args: unknown[]) => apiMocks.getGlobalProviders(...args),
     getGlobalProviderUsage: (...args: unknown[]) => apiMocks.getGlobalProviderUsage(...args),
+    getRecentRequests: (...args: unknown[]) => apiMocks.getRecentRequests(...args),
     mergeUsage: providers.mergeUsage,
   };
 });
 
 vi.mock('../../src/services/api/analytics.js', () => ({
-  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Auto-fix or fallback.',
-  REQUEST_SUCCESS_RATE_TOOLTIP: 'Successful requests over all requests. Recovered requests count as successful.',
+  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Autofix or fallback.',
+  REQUEST_SUCCESS_RATE_TOOLTIP:
+    'Successful requests over all requests. Recovered requests count as successful.',
   totalAttemptsTooltip: (doctor: boolean) =>
     doctor
-      ? 'Every provider call counts here, including fallback retries and auto-fixed attempts. One request can produce several attempts.'
+      ? 'Every provider call counts here, including fallback retries and autofixed attempts. One request can produce several attempts.'
       : 'Every provider call counts here, including fallback retries. One request can produce several attempts.',
   MODEL_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this model.',
   PROVIDER_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this provider.',
@@ -80,8 +86,23 @@ vi.mock('../../src/services/api/analytics.js', () => ({
     'Logical requests from this harness, one per call, whatever the number of attempts.',
   attemptSuccessRate: (row: { attempts: number; succeeded?: number }) =>
     !row.attempts || row.succeeded == null ? null : row.succeeded / row.attempts,
-  getPerAgentReliability: () => Promise.resolve([]),
+  selfHealedCount: (row: { autofixed: number; fallback_saves?: number }) =>
+    row.autofixed + (row.fallback_saves ?? 0),
+  successRate: (row: { requests: number; succeeded?: number }) =>
+    !row.requests || row.succeeded == null ? null : row.succeeded / row.requests,
+  getPerAgentReliability: () =>
+    Promise.resolve([
+      {
+        agent_name: 'demo-agent',
+        requests: 18,
+        failed: 1,
+        autofixed: 1,
+        fallback_saves: 1,
+        succeeded: 17,
+      },
+    ]),
   getOverview: (...args: unknown[]) => apiMocks.getOverview(...args),
+  getModelUsage: (...args: unknown[]) => apiMocks.getModelUsage(...args),
   getOverviewAgentUsage: (...args: unknown[]) => apiMocks.getOverviewAgentUsage(...args),
   getOverviewProviderUsage: (...args: unknown[]) => apiMocks.getOverviewProviderUsage(...args),
   getAttemptStats: () =>
@@ -91,20 +112,22 @@ vi.mock('../../src/services/api/analytics.js', () => ({
     }),
   getAttemptTimeseries: () => Promise.resolve({ range: '7d', by: 'metric', keys: [], buckets: [] }),
   getWorkspaceAutofixStatus: () =>
-    Promise.resolve({ available: false, any_enabled: false, enabled_agents: [] }),
+    Promise.resolve({ any_enabled: false, enabled_agents: [], consented: true }),
   getAutofixStats: () => Promise.resolve(null),
   getAutofixTimeseries: () =>
     Promise.resolve({ range: '7d', by: 'disposition', keys: [], buckets: [] }),
   getPerProviderReliability: () =>
     Promise.resolve([
-      { provider: 'openai', auth_type: 'api_key', key_label: 'Default', attempts: 10, succeeded: 7 },
+      {
+        provider: 'openai',
+        auth_type: 'api_key',
+        key_label: 'Default',
+        attempts: 10,
+        succeeded: 7,
+      },
     ]),
   getPerModelReliability: () => Promise.resolve([]),
   getErrorBreakdown: () => Promise.resolve({ by_class: {}, by_origin: {}, auto_fixed: 0 }),
-}));
-
-vi.mock('../../src/services/api/autofix.js', () => ({
-  getAutofixCohort: () => Promise.resolve({ eligible: false }),
 }));
 
 vi.mock('../../src/services/api/billing.js', () => ({
@@ -204,17 +227,20 @@ vi.mock('../../src/components/GlobalOverviewSkeleton.jsx', () => ({
 vi.mock('../../src/services/sse.js', async () => {
   const { createSignal } = await vi.importActual<typeof import('solid-js')>('solid-js');
   const [agentPing, setAgentPing] = createSignal(0);
+  const [analyticsPing, setAnalyticsPing] = createSignal(0);
   const [messagePing, setMessagePing] = createSignal(0);
   const [routingPing, setRoutingPing] = createSignal(0);
   sseMocks.bumpAgent = () => setAgentPing((n) => n + 1);
+  sseMocks.bumpAnalytics = () => setAnalyticsPing((n) => n + 1);
   sseMocks.bumpMessage = () => setMessagePing((n) => n + 1);
   sseMocks.bumpRouting = () => setRoutingPing((n) => n + 1);
   sseMocks.reset = () => {
     setAgentPing(0);
+    setAnalyticsPing(0);
     setMessagePing(0);
     setRoutingPing(0);
   };
-  return { agentPing, messagePing, routingPing };
+  return { agentPing, analyticsPing, messagePing, routingPing };
 });
 
 vi.mock('../../src/services/scroll-fade.js', () => ({
@@ -328,6 +354,8 @@ beforeEach(() => {
   apiMocks.getGlobalProviders.mockResolvedValue(providersResponse);
   apiMocks.getGlobalProviderUsage.mockResolvedValue({ providers: [] });
   apiMocks.getOverview.mockResolvedValue(overviewResponse);
+  apiMocks.getModelUsage.mockResolvedValue([]);
+  apiMocks.getRecentRequests.mockResolvedValue({ items: [] });
   apiMocks.getOverviewAgentUsage.mockResolvedValue(providerUsageTimeseries);
   apiMocks.getOverviewProviderUsage.mockResolvedValue(providerUsageTimeseries);
   apiMocks.getBillingStatus.mockResolvedValue({
@@ -345,7 +373,7 @@ afterEach(() => {
 });
 
 describe('GlobalOverview filter onUnselectAll', () => {
-  it('refetches global usage data when a message SSE ping lands', async () => {
+  it('refetches global usage data when an analytics SSE ping lands', async () => {
     render(() => <GlobalOverview />);
 
     await waitFor(() => expect(apiMocks.getOverview).toHaveBeenCalledTimes(1));
@@ -353,14 +381,19 @@ describe('GlobalOverview filter onUnselectAll', () => {
     expect(apiMocks.getGlobalProviders).toHaveBeenCalledTimes(1);
     expect(apiMocks.getGlobalProviderUsage).toHaveBeenCalledTimes(1);
     expect(apiMocks.getOverviewProviderUsage).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(1));
+    expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(1);
 
-    sseMocks.bumpMessage?.();
+    sseMocks.bumpAnalytics?.();
 
     await waitFor(() => expect(apiMocks.getOverview).toHaveBeenCalledTimes(2));
     expect(apiMocks.getAgents).toHaveBeenCalledTimes(2);
     expect(apiMocks.getGlobalProviders).toHaveBeenCalledTimes(1);
     expect(apiMocks.getGlobalProviderUsage).toHaveBeenCalledTimes(2);
     expect(apiMocks.getOverviewProviderUsage).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(2));
+    // Recent Requests follows the faster message feed, not the analytics ping.
+    expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(1);
   });
 
   it('shows the skeleton on a range change but not on a background ping refetch', async () => {
@@ -372,7 +405,7 @@ describe('GlobalOverview filter onUnselectAll', () => {
 
     // A background SSE ping refetch keeps the dashboard in place (no skeleton).
     apiMocks.getOverview.mockReturnValue(new Promise(() => {}));
-    sseMocks.bumpMessage?.();
+    sseMocks.bumpAnalytics?.();
     await Promise.resolve();
     expect(queryByTestId('global-overview-skeleton')).toBeNull();
     expect(container.querySelector('.chart-card')).not.toBeNull();
@@ -386,6 +419,44 @@ describe('GlobalOverview filter onUnselectAll', () => {
     await waitFor(() => expect(queryByTestId('global-overview-skeleton')).not.toBeNull());
   });
 
+  it('loads Recent Requests and Model usage without waiting on the overview', async () => {
+    apiMocks.getOverview.mockReturnValue(new Promise(() => {}));
+    render(() => <GlobalOverview />);
+
+    await waitFor(() => expect(apiMocks.getRecentRequests).toHaveBeenCalledWith('7d'));
+    expect(apiMocks.getModelUsage).toHaveBeenCalledWith('7d');
+  });
+
+  it('refetches Recent Requests on a message ping only', async () => {
+    render(() => <GlobalOverview />);
+    await waitFor(() => expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(1));
+    expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(1);
+
+    sseMocks.bumpMessage?.();
+
+    await waitFor(() => expect(apiMocks.getRecentRequests).toHaveBeenCalledTimes(2));
+    expect(apiMocks.getModelUsage).toHaveBeenCalledTimes(1);
+    expect(apiMocks.getOverview).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows a panel skeleton until each panel has its own data', async () => {
+    let resolveModels: (rows: unknown[]) => void = () => {};
+    apiMocks.getModelUsage.mockReturnValue(
+      new Promise((resolve) => {
+        resolveModels = resolve;
+      }),
+    );
+    const { container, queryAllByTestId, findByText } = render(() => <GlobalOverview />);
+
+    // Recent Requests resolves; Model usage is still loading.
+    await waitFor(() => expect(container.querySelector('.chart-card')).not.toBeNull());
+    await waitFor(() => expect(queryAllByTestId('panel-rows-skeleton')).toHaveLength(1));
+
+    resolveModels([]);
+    await findByText('No model data yet');
+    expect(queryAllByTestId('panel-rows-skeleton')).toHaveLength(0);
+  });
+
   it('links the harness total-requests count to the agent-scoped Requests log', async () => {
     const { container } = render(() => <GlobalOverview />);
     await waitFor(() => {
@@ -394,6 +465,22 @@ describe('GlobalOverview filter onUnselectAll', () => {
       );
       expect(link).toBeDefined();
     });
+  });
+
+  it('links the recovered-requests count to the scoped Requests log', async () => {
+    const { container } = render(() => <GlobalOverview />);
+    const href = '/messages?agent=demo-agent&range=7d&status=ok&trigger=autofix,fallback';
+    const link = await waitFor(() => {
+      const found = [...container.querySelectorAll('a')].find(
+        (candidate) => candidate.getAttribute('href') === href,
+      );
+      expect(found).toBeDefined();
+      return found!;
+    });
+
+    expect(link.textContent).toContain('2');
+    fireEvent.click(link);
+    expect(apiMocks.navigate).toHaveBeenCalledWith(href);
   });
 
   it('links the connection failed-attempts count to the scoped Requests log', async () => {
@@ -430,23 +517,5 @@ describe('GlobalOverview filter onUnselectAll', () => {
     } finally {
       replaceState.mockRestore();
     }
-  });
-
-  it('opens the user-discovery modal after agents load and dismisses it', async () => {
-    render(() => <GlobalOverview />);
-
-    await waitFor(() =>
-      expect(document.body.textContent).toContain('Book my slot to get $10'),
-    );
-
-    const later = [...document.querySelectorAll('button')].find(
-      (b) => b.textContent === 'Maybe later',
-    ) as HTMLButtonElement;
-    fireEvent.click(later);
-
-    expect(localStorage.getItem('manifest:user-discovery-modal-dismissed:v1')).toBe('true');
-    await waitFor(() =>
-      expect(document.body.textContent).not.toContain('Book my slot to get $10'),
-    );
   });
 });

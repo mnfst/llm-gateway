@@ -14,6 +14,7 @@ export { PendingStore, type PendingEntry } from './pending-store';
 export { oauthDoneHtml } from './callback-page';
 export {
   coordinateOAuthRefresh,
+  REJECTED_TOKEN_EXPIRY,
   oauthRefreshKey,
   subscriptionCredentialLock,
   __resetOAuthRefreshCoordinator,

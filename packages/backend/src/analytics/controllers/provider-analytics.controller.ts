@@ -1,3 +1,4 @@
+import { AnalyticsScopeService, type AgentScope } from '../services/analytics-scope.service';
 import { Controller, Get, Query } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -25,6 +26,7 @@ import { rangeToInterval } from '../../common/utils/range.util';
 @Controller('api/v1/provider-analytics')
 export class ProviderAnalyticsController {
   constructor(
+    private readonly analyticsScope: AnalyticsScopeService,
     private readonly aggregation: AggregationService,
     private readonly timeseries: TimeseriesQueriesService,
     private readonly autofixStats: AutofixStatsService,
@@ -133,7 +135,7 @@ export class ProviderAnalyticsController {
   ) {
     const validRange = this.validateRange(range);
     const hourly = validRange === '24h';
-    const agent = agentName || undefined;
+    const agent = await this.analyticsScope.resolve(ctx.tenantId, agentName);
 
     const [summary, ts, attempts] = await Promise.all([
       // excludePlayground=true: Playground (is_playground) usage must not pollute
@@ -184,7 +186,7 @@ export class ProviderAnalyticsController {
   private async getAttemptReliability(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
     authType?: string,
     provider?: string,
     label?: string,
@@ -198,7 +200,7 @@ export class ProviderAnalyticsController {
         attemptCutoff: computeCutoff(rangeToInterval(range)),
       })
       .andWhere(sqlIsCompletedStatus('at.status'));
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     if (authType) qb.andWhere('at.auth_type = :attemptAuthType', { attemptAuthType: authType });
     if (provider) qb.andWhere('at.provider = :attemptProvider', { attemptProvider: provider });
     excludePlaygroundAgents(qb);

@@ -1,5 +1,6 @@
 import type { ForwardResult, ProviderClient } from '../routing/proxy/provider-client';
 import { unwrapCodeAssistStreamPayload } from '../routing/oauth/gemini/codeassist-envelope';
+import { createGoogleStreamState, finishGoogleStream } from '../routing/proxy/google-adapter';
 import { createSsePayloadParser } from '../routing/proxy/sse-parser';
 import { parseUsageObject, type StreamUsage } from '../routing/proxy/stream-writer';
 
@@ -19,7 +20,10 @@ export interface ConsumeStreamResult {
  * so playground streaming inherits the same provider coverage instead of
  * reimplementing Anthropic/Google/ChatGPT SSE parsing.
  */
-type ChunkTransform = (event: string) => string | null;
+type ChunkTransform = ((event: string) => string | null) & {
+  /** Optional end-of-stream hook whose output is applied like one more event. */
+  finish?: () => string | null;
+};
 
 function buildChunkTransform(
   forward: Pick<ForwardResult, 'isGoogle' | 'isAnthropic' | 'isChatGpt' | 'isCodeAssist'>,
@@ -27,10 +31,15 @@ function buildChunkTransform(
   providerClient: ProviderClient,
 ): ChunkTransform {
   if (forward.isGoogle) {
-    return (event) => {
+    // Stateful: one state per stream keeps ids and tool-call indices stable.
+    const state = createGoogleStreamState();
+    const transform: ChunkTransform = (event) => {
       const innerEvent = forward.isCodeAssist ? unwrapCodeAssistStreamPayload(event) : event;
-      return providerClient.convertGoogleStreamChunk(innerEvent, model).chunk;
+      return providerClient.convertGoogleStreamChunk(innerEvent, model, state).chunk;
     };
+    // A stream cut off before its terminal event still reports its last usage.
+    transform.finish = () => finishGoogleStream(state, model);
+    return transform;
   }
   if (forward.isAnthropic) {
     // Stateful: must be created once per stream and fed events in order.
@@ -38,7 +47,8 @@ function buildChunkTransform(
     return (event) => transformer(event);
   }
   if (forward.isChatGpt) {
-    return (event) => providerClient.convertChatGptStreamChunk(event, model);
+    // Stateful: must be created once per stream and fed events in order.
+    return providerClient.createChatGptStreamTransformer(model);
   }
   // OpenAI-compatible passthrough: re-wrap the bare JSON payload so the same
   // line parser below handles every provider uniformly.
@@ -98,8 +108,7 @@ export async function consumeProviderStream(
   let lastDeltaAt = startedAt;
   const parser = createSsePayloadParser({ maxBufferSize: MAX_STREAM_BUFFER });
 
-  const apply = (event: string): void => {
-    const sse = transform(event);
+  const applySse = (sse: string | null): void => {
     if (!sse) return;
     const { text, usage: u } = extractDeltas(sse);
     if (u) usage = u;
@@ -110,6 +119,7 @@ export async function consumeProviderStream(
       onDelta(text);
     }
   };
+  const apply = (event: string): void => applySse(transform(event));
 
   try {
     let done = false;
@@ -127,6 +137,7 @@ export async function consumeProviderStream(
     // The final usage chunk often arrives without a trailing blank line, so it
     // sits unparsed when the stream closes — flush it.
     for (const event of parser.flush()) apply(event);
+    applySse(transform.finish?.() ?? null);
   } finally {
     reader.releaseLock();
   }

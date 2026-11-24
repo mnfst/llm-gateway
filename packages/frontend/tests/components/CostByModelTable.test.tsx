@@ -290,7 +290,7 @@ describe('CostByModelTable', () => {
     ));
     const labels = () =>
       [...container.querySelectorAll('.info-tooltip')].map((e) => e.getAttribute('aria-label'));
-    expect(labels().join(' ')).toContain('including fallback retries and auto-fixed attempts');
+    expect(labels().join(' ')).toContain('including fallback retries and autofixed attempts');
     unmount();
 
     const { container: c2 } = render(() => (
@@ -299,12 +299,12 @@ describe('CostByModelTable', () => {
         reliability={[{ model: 'gpt-4o', attempts: 10, failed: 1, succeeded: 9 }]}
       />
     ));
-    // Without the Doctor version the sentence never mentions Auto-fix.
+    // Without the Doctor version the sentence never mentions Autofix.
     const labels2 = [...c2.querySelectorAll('.info-tooltip')]
       .map((e) => e.getAttribute('aria-label'))
       .join(' ');
     expect(labels2).toContain('including fallback retries.');
-    expect(labels2).not.toContain('auto-fixed');
+    expect(labels2).not.toContain('autofixed');
     // Success rate carries the model-grain definition.
     expect(labels2).toContain('Successful attempts over all attempts for this model.');
   });

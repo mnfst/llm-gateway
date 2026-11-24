@@ -1,9 +1,9 @@
 {
   "title": "Manifest",
-  "description": "Deploy Manifest on Google Cloud Run with Cloud SQL for PostgreSQL.",
-  "logo": "https://raw.githubusercontent.com/mnfst/manifest/HEAD/.github/assets/logo-dark.svg",
+  "description": "Deploy Manifest on Google Cloud Run with Cloud SQL and durable Cloud Storage request recordings.",
+  "logo": "https://raw.githubusercontent.com/mnfst/llm-gateway/HEAD/.github/assets/logo-dark.svg",
   "duration": 15,
-  "documentationLink": "https://manifest.build/docs",
+  "documentationLink": "https://manifest.build/llm-gateway/docs/introduction/",
   "variables": [
     {
       "name": "project_id",

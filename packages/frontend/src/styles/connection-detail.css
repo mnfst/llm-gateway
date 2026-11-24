@@ -1,0 +1,119 @@
+/* ── Provider connection detail (/providers/connections/:id) ──────────
+   Layout for the page header block: provider identity on the left,
+   range/harness filters + Manage on the right, and the metadata row
+   underneath the title. Desktop keeps the one-row side-by-side header;
+   the shared 768px breakpoint stacks it so nothing overflows a phone
+   viewport. Imported by ConnectionDetail.tsx only. */
+
+.connection-detail__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.connection-detail__identity {
+  min-width: 0;
+}
+
+.connection-detail__title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+/* Icon + title travel together as one flex item, so on a narrow screen the
+   title wraps beside the icon and the badges drop to the next line as a
+   group instead of squeezing the title into a column. */
+.connection-detail__title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.connection-detail__title .page-header__title {
+  margin: 0;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Custom + status travel together so a narrow row wraps them as a pair. */
+.connection-detail__badges {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connection-detail__badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+.connection-detail__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  font-size: var(--font-size-sm);
+}
+
+/* A label with no break opportunity must not hold the row at its own
+   min-content width on a phone. */
+.connection-detail__meta > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.connection-detail__controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .connection-detail__header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .connection-detail__title-row,
+  .connection-detail__badges {
+    gap: 8px 10px;
+  }
+
+  .connection-detail__title .page-header__title {
+    font-size: var(--font-size-xl);
+    letter-spacing: 0;
+  }
+
+  /* The badges shrink to a matched pair of compact tags rather than two
+     differently sized pills. `!important` beats the per-badge inline
+     padding/font-size, which is the desktop sizing. */
+
+  .connection-detail__badge {
+    padding: 2px 8px !important;
+    font-size: var(--font-size-xs) !important;
+    line-height: 1.6;
+  }
+
+  .connection-detail__controls {
+    flex-wrap: wrap;
+  }
+
+  /* The range picker becomes the row's flexible item; the harness filter
+     and Manage keep their natural width beside or below it. */
+  .connection-detail__controls > .custom-select {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+}

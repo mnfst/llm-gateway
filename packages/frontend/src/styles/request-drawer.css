@@ -6,8 +6,8 @@
   right: 0;
   bottom: 0;
   width: 55%;
-  min-width: 600px;
-  max-width: 1284px;
+  min-width: 650px;
+  max-width: 1334px;
   background: hsl(var(--card));
   border-left: 1px solid hsl(var(--border));
   z-index: 200;
@@ -73,6 +73,17 @@
   color: hsl(var(--muted-foreground));
   flex-wrap: wrap;
 }
+
+.drawer__meta-row > * {
+  flex-shrink: 0;
+}
+
+.drawer__meta-row .drawer__meta-text {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .drawer__meta-sep {
   color: hsl(var(--border));
 }
@@ -240,6 +251,19 @@
   flex-shrink: 0;
   background: hsl(var(--muted));
   border-bottom: 1px solid hsl(var(--border));
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.drawer__tabs-full.panel__tabs::-webkit-scrollbar {
+  display: block;
+  height: 3px;
+}
+
+.drawer__tabs-full.panel__tabs::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 999px;
 }
 
 /* ── Body (scrollable) ── */
@@ -384,6 +408,56 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+.request-messages__tools-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 14px;
+}
+.request-tools-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.request-tools-section__title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: hsl(var(--muted-foreground));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.request-tools-section__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+.request-tool--available .request-tool__head {
+  background: transparent;
+}
+.request-tool__description {
+  margin: 0;
+  padding: 0 10px 8px 10px;
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+.request-messages__empty--sm {
+  padding: 10px 0;
+  font-size: var(--font-size-xs);
 }
 
 /* ── Conversation split (rail + resize handle + turns) ── */
@@ -716,12 +790,122 @@
   text-decoration: underline;
 }
 .request-message__content {
-  padding: 12px;
+  padding: 0;
   color: hsl(var(--foreground));
   font-size: var(--font-size-sm);
   line-height: 1.6;
-  white-space: pre-wrap;
   word-break: break-word;
+}
+.request-message__content > :first-child {
+  margin-top: 0;
+}
+.request-message__content > :last-child {
+  margin-bottom: 0;
+}
+.request-message__content p {
+  margin: 0 0 10px;
+}
+.request-message__content h1,
+.request-message__content h2,
+.request-message__content h3,
+.request-message__content h4,
+.request-message__content h5,
+.request-message__content h6 {
+  margin: 14px 0 6px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: hsl(var(--foreground));
+}
+.request-message__content h1 {
+  font-size: 17px;
+}
+.request-message__content h2 {
+  font-size: 15px;
+}
+.request-message__content h3 {
+  font-size: 13px;
+}
+.request-message__content h4,
+.request-message__content h5,
+.request-message__content h6 {
+  font-size: 12px;
+}
+.request-message__content strong {
+  font-weight: 600;
+}
+.request-message__content em {
+  font-style: italic;
+}
+.request-message__content ul,
+.request-message__content ol {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+.request-message__content li {
+  margin: 2px 0;
+}
+.request-message__content li > p {
+  margin: 0;
+}
+.request-message__content a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.request-message__content blockquote {
+  margin: 0 0 10px;
+  padding: 4px 12px;
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+.request-message__content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: hsl(var(--muted));
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.request-message__content pre {
+  margin: 6px 0;
+  padding: 10px 12px;
+  background: hsl(var(--muted) / 0.7);
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.request-message__content > pre:first-child {
+  margin-top: 0;
+}
+.request-message__content > pre:last-child {
+  margin-bottom: 0;
+}
+.request-message__content pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+.request-message__content hr {
+  border: 0;
+  border-top: 1px solid hsl(var(--border));
+  margin: 14px 0;
+}
+.request-message__content table {
+  border-collapse: collapse;
+  margin: 0 0 10px;
+  font-size: 12px;
+}
+.request-message__content th,
+.request-message__content td {
+  border: 1px solid hsl(var(--border));
+  padding: 4px 8px;
+  text-align: left;
+}
+.request-message__content th {
+  background: hsl(var(--muted));
+  font-weight: 600;
 }
 .request-messages__tool-calls {
   display: flex;
@@ -743,17 +927,37 @@
   padding: 8px 10px;
   color: hsl(var(--foreground));
   font-size: var(--font-size-xs);
+  overflow: hidden;
+  min-width: 0;
+}
+.request-messages__tool-name {
+  flex-shrink: 0;
+  max-width: 50%;
+}
+.request-messages__tool-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex-shrink: 1;
+  cursor: default;
+  color: hsl(var(--muted-foreground));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
 }
 .request-messages__tool-icon {
   display: inline-grid;
+  flex-shrink: 0;
   width: 20px;
   height: 20px;
   place-items: center;
   border-radius: 5px;
   background: hsl(36 80% 50% / 0.14);
   color: hsl(36 80% 40%);
-  font-family: var(--font-mono);
-  font-weight: 700;
+}
+.request-messages__tool-icon svg {
+  width: 14px;
+  height: 14px;
 }
 .request-tool__type {
   margin-left: auto;
@@ -761,7 +965,7 @@
   font-family: var(--font-mono);
   font-size: 10px;
 }
-.request-tool p {
+.request-tool p:not(.request-tool__description) {
   margin: 0;
   padding: 0 10px 10px 37px;
   color: hsl(var(--muted-foreground));
@@ -840,4 +1044,82 @@
     padding: 6px 10px;
     border-radius: 8px;
   }
+}
+
+/* ── JsonBlock ── */
+.json-block-wrap {
+  display: flex;
+  flex-direction: column;
+}
+.json-block__size-notice {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted) / 0.4);
+  border-bottom: 1px solid hsl(var(--border) / 0.4);
+}
+.json-block {
+  margin: 0;
+  padding: 12px 14px;
+  background: hsl(var(--muted) / 0.6);
+  border: 1px solid hsl(var(--border) / 0.5);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.json-block code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  font-family: inherit;
+}
+.request-message__content .json-block-wrap .json-block {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: hsl(var(--muted) / 0.4);
+}
+.request-messages__raw .json-block-wrap .json-block {
+  border-radius: var(--radius-sm);
+}
+.request-messages__tool-call .json-block-wrap .json-block,
+.request-tool .json-block-wrap .json-block {
+  border: none;
+  border-top: 1px solid hsl(36 80% 50% / 0.2);
+  border-radius: 0;
+  background: hsl(36 80% 50% / 0.04);
+}
+
+/* ── JSON-specific token colors ── */
+/* Keys get a distinct teal so they pop from string values */
+.hljs-attr {
+  color: hsl(187 60% 38%);
+  font-weight: 500;
+}
+.dark .hljs-attr {
+  color: hsl(187 70% 58%);
+}
+/* String values: warm amber, visually separate from keys */
+.language-json .hljs-string {
+  color: hsl(24 80% 44%);
+}
+.dark .language-json .hljs-string {
+  color: hsl(24 90% 65%);
+}
+/* Numbers */
+.language-json .hljs-number {
+  color: hsl(260 60% 52%);
+}
+.dark .language-json .hljs-number {
+  color: hsl(260 80% 75%);
+}
+/* true / false / null */
+.language-json .hljs-literal {
+  color: hsl(340 65% 45%);
+  font-weight: 500;
+}
+.dark .language-json .hljs-literal {
+  color: hsl(340 75% 68%);
 }

@@ -1,3 +1,5 @@
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
+import { mockScopeResolver, selectedAgent } from '../__tests__/scope.fixture';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CacheModule } from '@nestjs/cache-manager';
 import { ErrorsController } from './errors.controller';
@@ -24,7 +26,10 @@ describe('ErrorsController', () => {
     const module: TestingModule = await Test.createTestingModule({
       imports: [CacheModule.register()],
       controllers: [ErrorsController],
-      providers: [{ provide: ErrorBreakdownService, useValue: { getBreakdown } }],
+      providers: [
+        { provide: AnalyticsScopeService, useValue: mockScopeResolver() },
+        { provide: ErrorBreakdownService, useValue: { getBreakdown } },
+      ],
     }).compile();
 
     controller = module.get<ErrorsController>(ErrorsController);
@@ -38,7 +43,7 @@ describe('ErrorsController', () => {
     expect(getBreakdown).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
       range: '7d',
-      agentName: undefined,
+      agentScope: undefined,
     });
     expect(result).toBe(RESULT);
   });
@@ -49,7 +54,7 @@ describe('ErrorsController', () => {
     expect(getBreakdown).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
       range: '30d',
-      agentName: 'bot',
+      agentScope: selectedAgent(ctx.tenantId, 'bot'),
     });
   });
 
@@ -59,7 +64,7 @@ describe('ErrorsController', () => {
     expect(getBreakdown).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
       range: undefined,
-      agentName: undefined,
+      agentScope: undefined,
     });
   });
 });

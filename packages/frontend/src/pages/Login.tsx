@@ -32,7 +32,10 @@ const Login: Component = () => {
   const errorId = createUniqueId();
 
   onMount(async () => {
-    if (searchParams.error) {
+    if (searchParams.error === 'account_not_linked') {
+      setNeedsVerification(true);
+      setError('This email already has an account. Enter it below to get a verification link.');
+    } else if (searchParams.error || searchParams.oauth === 'failed') {
       setError('Login failed. Please try again or use a different method.');
     }
     setSocialProviders(await checkSocialProviders());
@@ -87,7 +90,7 @@ const Login: Component = () => {
     }
 
     setLastAuthMethod('email');
-    window.location.href = getAuthDestination(searchParams);
+    window.location.href = getAuthDestination(searchParams, location.search);
   };
 
   // Dev shortcut: fill + submit the seed admin. One click, no credentials in the URL;
@@ -112,10 +115,14 @@ const Login: Component = () => {
 
   const handleResendVerification = async () => {
     if (resendCooldown() > 0) return;
+    if (!email().trim()) {
+      setError('Enter your email address to receive a verification link.');
+      return;
+    }
 
     const { error: resendError } = await authClient.sendVerificationEmail({
       email: email(),
-      callbackURL: getAuthDestination(searchParams),
+      callbackURL: getAuthDestination(searchParams, location.search),
     });
 
     if (resendError) {
@@ -161,16 +168,6 @@ const Login: Component = () => {
             {error()}
           </div>
         )}
-        <Show when={needsVerification()}>
-          <button
-            type="button"
-            class="auth-form__link-btn"
-            onClick={handleResendVerification}
-            disabled={resendCooldown() > 0}
-          >
-            {resendCooldown() > 0 ? `Resend in ${resendCooldown()}s` : 'Resend verification email'}
-          </button>
-        </Show>
         <label class="auth-form__label" for={emailId}>
           Email
           <input
@@ -186,6 +183,16 @@ const Login: Component = () => {
             aria-describedby={error() ? errorId : undefined}
           />
         </label>
+        <Show when={needsVerification()}>
+          <button
+            type="button"
+            class="auth-form__link-btn"
+            onClick={handleResendVerification}
+            disabled={resendCooldown() > 0}
+          >
+            {resendCooldown() > 0 ? `Resend in ${resendCooldown()}s` : 'Send verification email'}
+          </button>
+        </Show>
         <label class="auth-form__label" for={passwordId}>
           Password
           <input

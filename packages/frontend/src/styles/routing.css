@@ -905,32 +905,36 @@
   padding-top: 16px;
 }
 
-.model-params__row {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 8px 0;
-}
-
-.model-params__row-text {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.model-params__row-control {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-}
-
 .model-params__default-hint {
   font-size: var(--font-size-xs);
   line-height: 1.4;
   color: hsl(var(--muted-foreground));
+}
+
+.model-params__reset {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.model-params__reset:hover:not(:disabled) {
+  color: hsl(var(--foreground));
+}
+
+.model-params__reset:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.model-params__reset:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .model-params__row--disabled .model-params__label-title,
@@ -954,14 +958,6 @@
 
 .model-params-modal--empty .modal-card__desc {
   margin-bottom: 18px;
-}
-
-.model-params__group {
-  padding: 0;
-}
-
-.model-params__group + .model-params__group {
-  margin-top: 16px;
 }
 
 .model-params__empty {
@@ -1020,32 +1016,6 @@
   border-radius: var(--radius-sm);
 }
 
-.model-params__group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 16px 8px;
-  font-size: var(--font-size-base);
-  font-weight: 600;
-  color: hsl(var(--foreground));
-}
-
-.model-params__group-card {
-  background: hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  padding: 4px 16px;
-}
-
-.model-params__separator {
-  height: 1px;
-  background: hsl(var(--border));
-}
-
-.model-params__group .model-params__row {
-  padding: 12px 0;
-}
-
 /* Loading / "no configurable parameters" placeholder shown while the per-model
    specs are fetched on dialog open, or when the model exposes no params. */
 .model-params__status {
@@ -1056,15 +1026,6 @@
   padding: 24px 0;
   font-size: var(--font-size-sm);
   color: hsl(var(--muted-foreground));
-}
-
-.model-params__label-title {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: var(--font-size-sm);
-  font-weight: 500;
 }
 
 .model-params__param-key {
@@ -1119,12 +1080,6 @@
 .model-params__help:hover .model-params__help-tooltip,
 .model-params__help:focus-visible .model-params__help-tooltip {
   display: block;
-}
-
-.model-params__label-hint {
-  font-size: var(--font-size-xs);
-  line-height: 1.4;
-  color: hsl(var(--muted-foreground));
 }
 
 .model-params__toggle {
@@ -2070,5 +2025,40 @@
 @media (max-width: 600px) {
   .routing-cards {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .routing-cards:not(.routing-cards--wide),
+  .routing-cards--centered,
+  .routing-cards--unified-compact {
+    grid-template-columns: 1fr;
+  }
+
+  .container--lg > div:not([class])[style*='space-between'] {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .container--lg > div:not([class])[style*='space-between'] > div {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .routing-providers-info {
+    flex-shrink: 0;
+  }
+
+  .routing-providers-info__label {
+    white-space: nowrap;
+  }
+
+  .routing-footer {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .routing-footer .btn {
+    white-space: nowrap;
   }
 }

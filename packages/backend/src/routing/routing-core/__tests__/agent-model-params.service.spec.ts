@@ -136,6 +136,43 @@ describe('AgentModelParamsService', () => {
       ).toBeNull();
     });
 
+    it('finds a row saved under a dotted Anthropic id when the proxy asks for the dashed id', async () => {
+      repo.find.mockResolvedValue([
+        {
+          scope_key: 'tier:default',
+          provider: 'anthropic',
+          auth_type: 'api_key',
+          model_name: 'claude-sonnet-4.5',
+          params: { temperature: 0.2 },
+        } as unknown as AgentModelParams,
+      ]);
+      expect(
+        await service.get('agent-1', 'tier:default', 'anthropic', 'api_key', 'claude-sonnet-4-5'),
+      ).toEqual({ temperature: 0.2 });
+    });
+
+    it('prefers the exact model id when both spellings are saved', async () => {
+      repo.find.mockResolvedValue([
+        {
+          scope_key: 'tier:default',
+          provider: 'anthropic',
+          auth_type: 'api_key',
+          model_name: 'claude-sonnet-4.5',
+          params: { temperature: 0.2 },
+        },
+        {
+          scope_key: 'tier:default',
+          provider: 'anthropic',
+          auth_type: 'api_key',
+          model_name: 'claude-sonnet-4-5',
+          params: { temperature: 0.9 },
+        },
+      ] as unknown as AgentModelParams[]);
+      expect(
+        await service.get('agent-1', 'tier:default', 'anthropic', 'api_key', 'claude-sonnet-4-5'),
+      ).toEqual({ temperature: 0.9 });
+    });
+
     it('matches on scope so the same model can differ by route tier', async () => {
       const rows = [
         {

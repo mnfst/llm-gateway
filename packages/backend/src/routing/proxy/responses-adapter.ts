@@ -1,12 +1,15 @@
 import { randomUUID } from 'crypto';
+import { resolveToolCallIndex, type RequestParamDefaults } from 'manifest-shared';
 
 import { DEFAULT_INSTRUCTIONS } from './chatgpt-helpers';
 import { OpenAIMessage } from './proxy-types';
+import { deduplicateCallIds } from './responses-call-ids';
+import { chatToolName, chatTools, responsesToolNames, ResponsesToolNames } from './responses-tools';
 
 type JsonRecord = Record<string, unknown>;
 
 interface ChatCompletionToResponsesOptions {
-  structuredOutputToolName?: string;
+  toolNames?: ResponsesToolNames;
   textFormat?: JsonRecord;
 }
 
@@ -21,6 +24,21 @@ function textFromContent(content: unknown): string {
     .filter(isRecord)
     .map((part) => (typeof part.text === 'string' ? part.text : ''))
     .join('');
+}
+
+function textFromRefusal(refusal: unknown): string {
+  return typeof refusal === 'string' ? refusal : '';
+}
+
+/**
+ * Responses reports a reply cut short by the token limit or a content filter as
+ * `status: "incomplete"` with a reason; Chat Completions only says so through
+ * `finish_reason`.
+ */
+function incompleteReason(finishReason: unknown): 'max_output_tokens' | 'content_filter' | null {
+  if (finishReason === 'length') return 'max_output_tokens';
+  if (finishReason === 'content_filter') return 'content_filter';
+  return null;
 }
 
 function toChatContent(content: unknown, role: string): unknown {
@@ -41,7 +59,7 @@ function toChatContent(content: unknown, role: string): unknown {
   return converted;
 }
 
-function responseInputItemToMessage(item: JsonRecord): OpenAIMessage[] {
+function responseInputItemToMessage(item: JsonRecord, names: ResponsesToolNames): OpenAIMessage[] {
   if (item.type === 'function_call') {
     return [
       {
@@ -52,7 +70,7 @@ function responseInputItemToMessage(item: JsonRecord): OpenAIMessage[] {
             id: typeof item.call_id === 'string' ? item.call_id : randomUUID(),
             type: 'function',
             function: {
-              name: typeof item.name === 'string' ? item.name : 'unknown',
+              name: chatToolName(item, names),
               arguments: typeof item.arguments === 'string' ? item.arguments : '{}',
             },
           },
@@ -76,12 +94,26 @@ function responseInputItemToMessage(item: JsonRecord): OpenAIMessage[] {
     ];
   }
 
-  const role = typeof item.role === 'string' ? item.role : 'user';
-  return [{ role, content: toChatContent(item.content, role) }];
+  // Typed items with no chat-completions equivalent — `reasoning` (whose
+  // `encrypted_content` is opaque outside OpenAI), `item_reference`,
+  // `web_search_call`, and friends. Dropping them is the only safe mapping:
+  // falling through would emit `{ role: 'user' }` with no `content`, which
+  // strictly-validating providers reject with 400/422.
+  if (!isNativeResponsesMessageItem(item)) return [];
+
+  const rawRole = typeof item.role === 'string' ? item.role : 'user';
+  const role = rawRole === 'developer' ? 'system' : rawRole;
+  const content = toChatContent(item.content, role);
+  // A message item carrying no content at all is the same wire hazard: the
+  // key is omitted on serialization and `{ role: 'user' }` goes out again.
+  if (content === undefined) return [];
+
+  return [{ role, content }];
 }
 
 export function toChatCompletionsRequest(body: JsonRecord): JsonRecord {
   const messages: OpenAIMessage[] = [];
+  const names = responsesToolNames(body.tools);
   const instructions = body.instructions;
   if (typeof instructions === 'string' && instructions.trim()) {
     messages.push({ role: 'system', content: instructions });
@@ -95,7 +127,16 @@ export function toChatCompletionsRequest(body: JsonRecord): JsonRecord {
       if (typeof item === 'string') {
         messages.push({ role: 'user', content: item });
       } else if (isRecord(item)) {
-        messages.push(...responseInputItemToMessage(item));
+        const converted = responseInputItemToMessage(item, names);
+        const previous = messages[messages.length - 1];
+        const next = converted[0];
+        // Parallel Responses calls are separate items, but Chat Completions
+        // requires one assistant turn followed by all matching tool results.
+        if (previous?.tool_calls && next?.tool_calls) {
+          previous.tool_calls.push(...next.tool_calls);
+        } else {
+          messages.push(...converted);
+        }
       }
     }
   }
@@ -117,8 +158,9 @@ export function toChatCompletionsRequest(body: JsonRecord): JsonRecord {
   if (body.max_output_tokens !== undefined) chatBody.max_tokens = body.max_output_tokens;
   const responseFormat = toChatResponseFormat(body.text);
   if (responseFormat) chatBody.response_format = responseFormat;
-  if (Array.isArray(body.tools)) chatBody.tools = toChatTools(body.tools);
-  if (body.tool_choice !== undefined) chatBody.tool_choice = toChatToolChoice(body.tool_choice);
+  if (Array.isArray(body.tools)) chatBody.tools = chatTools(body.tools, names);
+  const toolChoice = toChatToolChoice(body.tool_choice, names);
+  if (toolChoice !== undefined) chatBody.tool_choice = toolChoice;
 
   return chatBody;
 }
@@ -142,24 +184,12 @@ function toChatResponseFormat(text: unknown): JsonRecord | undefined {
   return { type: 'json_schema', json_schema: jsonSchema };
 }
 
-function toChatTools(tools: unknown[]): JsonRecord[] {
-  return tools.filter(isRecord).map((tool) => {
-    if (tool.type !== 'function') return tool;
-    return {
-      type: 'function',
-      function: {
-        name: tool.name,
-        ...(tool.description !== undefined && { description: tool.description }),
-        ...(tool.parameters !== undefined && { parameters: tool.parameters }),
-        ...(tool.strict !== undefined && { strict: tool.strict }),
-      },
-    };
-  });
-}
-
-function toChatToolChoice(toolChoice: unknown): unknown {
-  if (!isRecord(toolChoice) || toolChoice.type !== 'function') return toolChoice;
-  return { type: 'function', function: { name: toolChoice.name } };
+function toChatToolChoice(toolChoice: unknown, names: ResponsesToolNames): unknown {
+  if (toolChoice === 'auto' || toolChoice === 'none' || toolChoice === 'required')
+    return toolChoice;
+  // A hosted tool removed from tools cannot remain as a forced tool choice.
+  if (!isRecord(toolChoice) || toolChoice.type !== 'function') return undefined;
+  return { type: 'function', function: { name: chatToolName(toolChoice, names) } };
 }
 
 /**
@@ -188,9 +218,37 @@ export function toNativeResponsesRequest(
     inputList?: boolean;
     forceStream?: boolean;
     stripCodexUnsupported?: boolean;
+    /** Send `reasoning.summary: 'auto'` with a mapped `reasoning_effort`. */
+    mapReasoningSummary?: boolean;
+    /** Keep a mapped `max_completion_tokens` as `max_output_tokens`; otherwise it is dropped. */
+    mapMaxOutputTokens?: boolean;
+    savedRequestParams?: RequestParamDefaults;
   },
 ): JsonRecord {
   const request: JsonRecord = { ...body, model };
+  // Saved route params are merged under their catalog names. Preserve their
+  // precedence over caller fields when translating them to Responses names.
+  const reasoning = isRecord(request.reasoning) ? request.reasoning : undefined;
+  if (
+    typeof request.reasoning_effort === 'string' &&
+    (!reasoning || typeof opts?.savedRequestParams?.reasoning_effort === 'string')
+  ) {
+    request.reasoning = {
+      ...(opts?.mapReasoningSummary ? { summary: 'auto' } : {}),
+      ...reasoning,
+      effort: request.reasoning_effort,
+    };
+  }
+  delete request.reasoning_effort;
+  if (
+    opts?.mapMaxOutputTokens &&
+    typeof request.max_completion_tokens === 'number' &&
+    (request.max_output_tokens === undefined ||
+      typeof opts.savedRequestParams?.max_completion_tokens === 'number')
+  ) {
+    request.max_output_tokens = request.max_completion_tokens;
+  }
+  delete request.max_completion_tokens;
   if (opts?.stripCodexUnsupported) {
     for (const key of CODEX_SUBSCRIPTION_UNSUPPORTED_PARAMS) {
       delete request[key];
@@ -210,6 +268,14 @@ export function toNativeResponsesRequest(
     request.input = toNativeResponsesInput(body.input);
   } else if (body.input !== undefined) {
     request.input = normalizeNativeResponsesInput(body.input);
+  }
+  // `previous_response_id` means the provider holds the earlier turns, so the
+  // ids in this request can pair with items we cannot see. Leave them alone.
+  if (
+    Array.isArray(request.input) &&
+    (typeof request.previous_response_id !== 'string' || !request.previous_response_id)
+  ) {
+    request.input = deduplicateCallIds(request.input);
   }
   if (
     opts?.defaultInstructions &&
@@ -286,24 +352,6 @@ function extractImageDetail(part: JsonRecord): { detail?: string } {
   return typeof detail === 'string' ? { detail } : {};
 }
 
-function findStructuredOutputToolCall(
-  toolCalls: unknown,
-  toolName: string | undefined,
-): JsonRecord | null {
-  if (!toolName || !Array.isArray(toolCalls)) return null;
-  for (const toolCall of toolCalls) {
-    if (!isRecord(toolCall) || !isRecord(toolCall.function)) continue;
-    if (toolCall.function.name === toolName) return toolCall;
-  }
-  return null;
-}
-
-function toolCallArguments(toolCall: JsonRecord | null): string | null {
-  const fn = isRecord(toolCall?.function) ? toolCall.function : null;
-  if (!fn) return null;
-  return typeof fn.arguments === 'string' ? fn.arguments : '{}';
-}
-
 function responseTextFormat(format: unknown): JsonRecord {
   if (!isRecord(format)) return { type: 'text' };
   if (format.type === 'json_object') return { type: 'json_object' };
@@ -328,36 +376,36 @@ export function fromChatCompletionResponse(
   const firstChoice = isRecord(choices[0]) ? choices[0] : {};
   const message = isRecord(firstChoice.message) ? firstChoice.message : {};
   const output: JsonRecord[] = [];
-  const structuredToolCall = findStructuredOutputToolCall(
-    message.tool_calls,
-    options.structuredOutputToolName,
-  );
-  const structuredText = toolCallArguments(structuredToolCall);
-  const contentText = textFromContent(message.content);
-  const outputText = structuredText ?? contentText;
+  const outputText = textFromContent(message.content);
+  const refusal = textFromRefusal(message.refusal);
+  const reason = incompleteReason(firstChoice.finish_reason);
+  const itemStatus = reason ? 'incomplete' : 'completed';
 
-  if (outputText || structuredText !== null) {
+  const content: JsonRecord[] = [];
+  if (outputText) content.push({ type: 'output_text', text: outputText, annotations: [] });
+  if (refusal) content.push({ type: 'refusal', refusal });
+  if (content.length > 0) {
     output.push({
       type: 'message',
       id: `msg_${randomUUID().replace(/-/g, '')}`,
-      status: 'completed',
+      status: itemStatus,
       role: 'assistant',
-      content: [{ type: 'output_text', text: outputText, annotations: [] }],
+      content,
     });
   }
 
   if (Array.isArray(message.tool_calls)) {
     for (const toolCall of message.tool_calls) {
       if (!isRecord(toolCall) || !isRecord(toolCall.function)) continue;
-      if (toolCall === structuredToolCall) continue;
       output.push({
         type: 'function_call',
         id: `fc_${randomUUID().replace(/-/g, '')}`,
         call_id: typeof toolCall.id === 'string' ? toolCall.id : randomUUID(),
         name: typeof toolCall.function.name === 'string' ? toolCall.function.name : '',
+        ...options.toolNames?.get(String(toolCall.function.name)),
         arguments:
           typeof toolCall.function.arguments === 'string' ? toolCall.function.arguments : '{}',
-        status: 'completed',
+        status: itemStatus,
       });
     }
   }
@@ -367,10 +415,10 @@ export function fromChatCompletionResponse(
     id: `resp_${randomUUID().replace(/-/g, '')}`,
     object: 'response',
     created_at: created,
-    status: 'completed',
-    completed_at: created,
+    status: itemStatus,
+    completed_at: reason ? null : created,
     error: null,
-    incomplete_details: null,
+    incomplete_details: reason ? { reason } : null,
     instructions: null,
     max_output_tokens: null,
     model: typeof body.model === 'string' ? body.model : model,
@@ -398,21 +446,62 @@ function toResponsesUsage(usage: unknown): JsonRecord | null {
     typeof usage.completion_tokens === 'number' ? usage.completion_tokens : 0;
   const totalTokens =
     typeof usage.total_tokens === 'number' ? usage.total_tokens : promptTokens + completionTokens;
+  const promptDetails = isRecord(usage.prompt_tokens_details)
+    ? usage.prompt_tokens_details
+    : undefined;
+  const completionDetails = isRecord(usage.completion_tokens_details)
+    ? usage.completion_tokens_details
+    : undefined;
+  // Raw OpenAI-compatible upstreams report cached input under provider-specific
+  // keys rather than the converted `cache_read_tokens` — same fallbacks as
+  // toAnthropicUsage and parseUsageObject.
   const cachedTokens =
-    typeof usage.cache_read_tokens === 'number' ? usage.cache_read_tokens : undefined;
+    typeof usage.cache_read_tokens === 'number'
+      ? usage.cache_read_tokens
+      : typeof usage.prompt_cache_hit_tokens === 'number'
+        ? usage.prompt_cache_hit_tokens
+        : typeof usage.cached_tokens === 'number'
+          ? usage.cached_tokens
+          : typeof promptDetails?.cached_tokens === 'number'
+            ? promptDetails.cached_tokens
+            : 0;
+  const cacheWriteTokens =
+    typeof usage.cache_creation_tokens === 'number'
+      ? usage.cache_creation_tokens
+      : typeof usage.cache_creation_input_tokens === 'number'
+        ? usage.cache_creation_input_tokens
+        : typeof promptDetails?.cache_write_tokens === 'number'
+          ? promptDetails.cache_write_tokens
+          : typeof promptDetails?.cache_creation_input_tokens === 'number'
+            ? promptDetails.cache_creation_input_tokens
+            : 0;
+  const reasoningTokens =
+    typeof completionDetails?.reasoning_tokens === 'number'
+      ? completionDetails.reasoning_tokens
+      : 0;
 
   return {
     input_tokens: promptTokens,
-    input_tokens_details: { cached_tokens: cachedTokens ?? 0 },
+    input_tokens_details: {
+      cached_tokens: cachedTokens,
+      cache_write_tokens: cacheWriteTokens,
+    },
     output_tokens: completionTokens,
-    output_tokens_details: { reasoning_tokens: 0 },
+    output_tokens_details: { reasoning_tokens: reasoningTokens },
     total_tokens: totalTokens,
   };
 }
 
+// The three events that end a Responses stream; each carries the final snapshot.
+const RESPONSES_TERMINAL_EVENTS: ReadonlySet<string> = new Set([
+  'response.completed',
+  'response.incomplete',
+  'response.failed',
+]);
+
 export function collectResponsesSseResponse(sseText: string): JsonRecord {
   let text = '';
-  let completed: JsonRecord | null = null;
+  let terminal: JsonRecord | null = null;
   // Track function_call output items emitted incrementally. Keyed by
   // `output_index` so a tool call can sit at any position in a mixed-output
   // stream (e.g. assistant message + function_call). Some Codex Responses
@@ -478,14 +567,14 @@ export function collectResponsesSseResponse(sseText: string): JsonRecord {
         // partial state we accumulated from `added` + delta events.
         functionCalls.set(idx, item);
       }
-    } else if (parsed.event === 'response.completed') {
+    } else if (RESPONSES_TERMINAL_EVENTS.has(parsed.event)) {
       const data = safeParse(parsed.data);
-      completed = isRecord(data?.response) ? data.response : null;
+      terminal = isRecord(data?.response) ? data.response : null;
     }
   }
 
-  if (completed) {
-    let result = withCollectedTextOutput(completed, text);
+  if (terminal) {
+    let result = withCollectedTextOutput(terminal, text);
     if (functionCalls.size > 0) {
       result = withCollectedFunctionCalls(result, functionCalls);
     }
@@ -545,7 +634,7 @@ function withCollectedTextOutput(response: JsonRecord, text: string): JsonRecord
       {
         type: 'message',
         id: `msg_${randomUUID().replace(/-/g, '')}`,
-        status: 'completed',
+        status: response.status === 'incomplete' ? 'incomplete' : 'completed',
         role: 'assistant',
         content: [{ type: 'output_text', text, annotations: [] }],
       },
@@ -578,19 +667,38 @@ export interface ResponsesStreamTransformer {
 }
 
 export interface ResponsesStreamTransformerOptions {
-  structuredOutputToolName?: string;
+  toolNames?: ResponsesToolNames;
   textFormat?: JsonRecord;
 }
 
+interface StreamFunctionCall {
+  id: string;
+  callId: string;
+  name: string;
+  arguments: string;
+  outputIndex?: number;
+}
+
 interface ResponsesStreamState {
+  toolNames?: ResponsesToolNames;
+  toolCalls: Map<number, StreamFunctionCall>;
+  // Upstream index of the latest tool call delta, used to place deltas that carry no index.
+  latestToolCallIndex?: number;
+  nextOutputIndex: number;
+  messageOutputIndex: number;
+
   responseId: string;
   itemId: string;
   model: string;
   createdAt: number;
   usage: unknown;
   text: string;
-  structuredOutputToolName?: string;
-  structuredToolCallIndexes: Set<number>;
+  refusal: string;
+  finishReason: string | null;
+  // Content-part positions inside the message item, assigned when each part opens.
+  textPartIndex?: number;
+  refusalPartIndex?: number;
+  nextContentIndex: number;
   textFormat?: JsonRecord;
   createdEmitted: boolean;
   itemOpened: boolean;
@@ -618,6 +726,10 @@ export function createResponsesStreamTransformer(
   options: ResponsesStreamTransformerOptions = {},
 ): ResponsesStreamTransformer {
   const state: ResponsesStreamState = {
+    toolNames: options.toolNames,
+    toolCalls: new Map(),
+    nextOutputIndex: 0,
+    messageOutputIndex: 0,
     responseId: `resp_${randomUUID().replace(/-/g, '')}`,
     itemId: `msg_${randomUUID().replace(/-/g, '')}`,
     model,
@@ -627,8 +739,9 @@ export function createResponsesStreamTransformer(
     createdAt: Math.floor(Date.now() / 1000),
     usage: undefined,
     text: '',
-    structuredOutputToolName: options.structuredOutputToolName,
-    structuredToolCallIndexes: new Set(),
+    refusal: '',
+    finishReason: null,
+    nextContentIndex: 0,
     textFormat: options.textFormat,
     createdEmitted: false,
     itemOpened: false,
@@ -667,10 +780,11 @@ function emitCreated(state: ResponsesStreamState): string[] {
 function emitItemOpen(state: ResponsesStreamState): string[] {
   if (state.itemOpened) return [];
   state.itemOpened = true;
+  state.messageOutputIndex = state.nextOutputIndex++;
   return [
     formatResponsesEvent('response.output_item.added', {
       type: 'response.output_item.added',
-      output_index: 0,
+      output_index: state.messageOutputIndex,
       item: {
         id: state.itemId,
         type: 'message',
@@ -679,52 +793,135 @@ function emitItemOpen(state: ResponsesStreamState): string[] {
         content: [],
       },
     }),
-    formatResponsesEvent('response.content_part.added', {
-      type: 'response.content_part.added',
-      item_id: state.itemId,
-      output_index: 0,
-      content_index: 0,
-      part: { type: 'output_text', text: '', annotations: [] },
-    }),
   ];
 }
 
-function structuredOutputTextDelta(toolCalls: unknown, state: ResponsesStreamState): string {
-  if (!state.structuredOutputToolName || !Array.isArray(toolCalls)) return '';
-
-  let text = '';
-  for (const toolCall of toolCalls) {
-    if (!isRecord(toolCall)) continue;
-    const index = typeof toolCall.index === 'number' ? toolCall.index : 0;
-    const fn = isRecord(toolCall.function) ? toolCall.function : null;
-    if (!fn) continue;
-    if (fn.name === state.structuredOutputToolName) {
-      state.structuredToolCallIndexes.add(index);
-    }
-    if (
-      state.structuredToolCallIndexes.has(index) &&
-      typeof fn.arguments === 'string' &&
-      fn.arguments.length > 0
-    ) {
-      text += fn.arguments;
-    }
-  }
-  return text;
+function emitPartOpen(
+  state: ResponsesStreamState,
+  index: number | undefined,
+  part: JsonRecord,
+): { events: string[]; index: number } {
+  if (index !== undefined) return { events: [], index };
+  const events = emitItemOpen(state);
+  const contentIndex = state.nextContentIndex++;
+  events.push(
+    formatResponsesEvent('response.content_part.added', {
+      type: 'response.content_part.added',
+      item_id: state.itemId,
+      output_index: state.messageOutputIndex,
+      content_index: contentIndex,
+      part,
+    }),
+  );
+  return { events, index: contentIndex };
 }
 
 function emitOutputTextDelta(state: ResponsesStreamState, delta: string): string[] {
   if (!delta) return [];
-  const events = emitItemOpen(state);
+  const opened = emitPartOpen(state, state.textPartIndex, {
+    type: 'output_text',
+    text: '',
+    annotations: [],
+  });
+  state.textPartIndex = opened.index;
   state.text += delta;
-  events.push(
+  return [
+    ...opened.events,
     formatResponsesEvent('response.output_text.delta', {
       type: 'response.output_text.delta',
       item_id: state.itemId,
-      output_index: 0,
-      content_index: 0,
+      output_index: state.messageOutputIndex,
+      content_index: opened.index,
       delta,
     }),
-  );
+  ];
+}
+
+function emitRefusalDelta(state: ResponsesStreamState, delta: string): string[] {
+  const opened = emitPartOpen(state, state.refusalPartIndex, { type: 'refusal', refusal: '' });
+  state.refusalPartIndex = opened.index;
+  state.refusal += delta;
+  return [
+    ...opened.events,
+    formatResponsesEvent('response.refusal.delta', {
+      type: 'response.refusal.delta',
+      item_id: state.itemId,
+      output_index: state.messageOutputIndex,
+      content_index: opened.index,
+      delta,
+    }),
+  ];
+}
+
+function functionCallItem(
+  call: StreamFunctionCall,
+  state: ResponsesStreamState,
+  status: string,
+): JsonRecord {
+  return {
+    type: 'function_call',
+    id: call.id,
+    call_id: call.callId,
+    name: call.name,
+    ...state.toolNames?.get(call.name),
+    arguments: status === 'in_progress' ? '' : call.arguments,
+    status,
+  };
+}
+
+function openFunctionCall(call: StreamFunctionCall, state: ResponsesStreamState): string[] {
+  if (call.outputIndex !== undefined) return [];
+  call.outputIndex = state.nextOutputIndex++;
+  return [
+    formatResponsesEvent('response.output_item.added', {
+      type: 'response.output_item.added',
+      output_index: call.outputIndex,
+      item: functionCallItem(call, state, 'in_progress'),
+    }),
+  ];
+}
+
+function toolCallDeltas(toolCalls: unknown, state: ResponsesStreamState): string[] {
+  if (!Array.isArray(toolCalls)) return [];
+  const events: string[] = [];
+  for (const delta of toolCalls) {
+    if (!isRecord(delta) || !isRecord(delta.function)) continue;
+    const latest =
+      state.latestToolCallIndex === undefined
+        ? undefined
+        : {
+            index: state.latestToolCallIndex,
+            id: state.toolCalls.get(state.latestToolCallIndex)?.callId,
+          };
+    const index = resolveToolCallIndex(delta, latest);
+    state.latestToolCallIndex = index;
+    let call = state.toolCalls.get(index);
+    if (!call) {
+      call = { id: `fc_${randomUUID().replace(/-/g, '')}`, callId: '', name: '', arguments: '' };
+      state.toolCalls.set(index, call);
+    }
+    if (typeof delta.id === 'string') call.callId = delta.id;
+    if (typeof delta.function.name === 'string') call.name += delta.function.name;
+    const args = typeof delta.function.arguments === 'string' ? delta.function.arguments : '';
+    call.arguments += args;
+    // Production forwards the declared names, so complete names can open
+    // immediately even before arguments. Undeclared/partial names wait for
+    // finalization; an arguments delta does not prove the name is complete.
+    if (!call.name || !call.callId) continue;
+    if (state.toolNames ? !state.toolNames.has(call.name) : !call.arguments) continue;
+    const first = call.outputIndex === undefined;
+    events.push(...openFunctionCall(call, state));
+    const text = first ? call.arguments : args;
+    if (text)
+      events.push(
+        formatResponsesEvent('response.function_call_arguments.delta', {
+          type: 'response.function_call_arguments.delta',
+          item_id: call.id,
+          output_index: call.outputIndex,
+          delta: text,
+        }),
+      );
+  }
   return events;
 }
 
@@ -745,14 +942,19 @@ function transformResponsesStreamChunk(chunk: string, state: ResponsesStreamStat
     const choice = isRecord(choices[0]) ? choices[0] : null;
     const delta = isRecord(choice?.delta) ? choice.delta : {};
 
+    if (typeof choice?.finish_reason === 'string' && choice.finish_reason) {
+      state.finishReason = choice.finish_reason;
+    }
+
     if (typeof delta.content === 'string' && delta.content.length > 0) {
       events.push(...emitOutputTextDelta(state, delta.content));
     }
 
-    const structuredDelta = structuredOutputTextDelta(delta.tool_calls, state);
-    if (structuredDelta) {
-      events.push(...emitOutputTextDelta(state, structuredDelta));
+    if (typeof delta.refusal === 'string' && delta.refusal.length > 0) {
+      events.push(...emitRefusalDelta(state, delta.refusal));
     }
+
+    events.push(...toolCallDeltas(delta.tool_calls, state));
   }
 
   return events.length > 0 ? events.join('') : null;
@@ -764,32 +966,84 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
 
   const events: string[] = [...emitCreated(state)];
 
+  const reason = incompleteReason(state.finishReason);
+  const itemStatus = reason ? 'incomplete' : 'completed';
+
+  const parts: JsonRecord[] = [];
   if (state.itemOpened) {
+    if (state.textPartIndex !== undefined) {
+      const part = { type: 'output_text', text: state.text, annotations: [] };
+      parts[state.textPartIndex] = part;
+      events.push(
+        formatResponsesEvent('response.output_text.done', {
+          type: 'response.output_text.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.textPartIndex,
+          text: state.text,
+        }),
+        formatResponsesEvent('response.content_part.done', {
+          type: 'response.content_part.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.textPartIndex,
+          part,
+        }),
+      );
+    }
+    if (state.refusalPartIndex !== undefined) {
+      const part = { type: 'refusal', refusal: state.refusal };
+      parts[state.refusalPartIndex] = part;
+      events.push(
+        formatResponsesEvent('response.refusal.done', {
+          type: 'response.refusal.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.refusalPartIndex,
+          refusal: state.refusal,
+        }),
+        formatResponsesEvent('response.content_part.done', {
+          type: 'response.content_part.done',
+          item_id: state.itemId,
+          output_index: state.messageOutputIndex,
+          content_index: state.refusalPartIndex,
+          part,
+        }),
+      );
+    }
     events.push(
-      formatResponsesEvent('response.output_text.done', {
-        type: 'response.output_text.done',
-        item_id: state.itemId,
-        output_index: 0,
-        content_index: 0,
-        text: state.text,
-      }),
-      formatResponsesEvent('response.content_part.done', {
-        type: 'response.content_part.done',
-        item_id: state.itemId,
-        output_index: 0,
-        content_index: 0,
-        part: { type: 'output_text', text: state.text, annotations: [] },
-      }),
       formatResponsesEvent('response.output_item.done', {
         type: 'response.output_item.done',
-        output_index: 0,
+        output_index: state.messageOutputIndex,
         item: {
           id: state.itemId,
           type: 'message',
-          status: 'completed',
+          status: itemStatus,
           role: 'assistant',
-          content: [{ type: 'output_text', text: state.text, annotations: [] }],
+          content: parts,
         },
+      }),
+    );
+  }
+
+  const toolOutput: { index: number; item: JsonRecord }[] = [];
+  for (const call of state.toolCalls.values()) {
+    if (!call.name) continue;
+    if (!call.callId) call.callId = randomUUID();
+    events.push(...openFunctionCall(call, state));
+    const item = functionCallItem(call, state, itemStatus);
+    toolOutput.push({ index: call.outputIndex!, item });
+    events.push(
+      formatResponsesEvent('response.function_call_arguments.done', {
+        type: 'response.function_call_arguments.done',
+        item_id: call.id,
+        output_index: call.outputIndex,
+        arguments: call.arguments,
+      }),
+      formatResponsesEvent('response.output_item.done', {
+        type: 'response.output_item.done',
+        output_index: call.outputIndex,
+        item,
       }),
     );
   }
@@ -799,28 +1053,40 @@ function finalizeResponsesStream(state: ResponsesStreamState): string | null {
       model: state.model,
       created: state.createdAt,
       usage: isRecord(state.usage) ? state.usage : undefined,
-      choices: [{ message: { content: state.text } }],
+      choices: [
+        {
+          finish_reason: state.finishReason,
+          message: { content: state.text, refusal: state.refusal },
+        },
+      ],
     },
     state.model,
-    {
-      structuredOutputToolName: state.structuredOutputToolName,
-      textFormat: state.textFormat,
-    },
+    { textFormat: state.textFormat },
   );
   response.id = state.responseId;
   // `created_at` is the stream-start stamp (shared across every snapshot for
   // this id), but `completed_at` must reflect when the stream actually
   // finished — fromChatCompletionResponse defaults it to `created`.
-  response.completed_at = Math.floor(Date.now() / 1000);
+  if (!reason) response.completed_at = Math.floor(Date.now() / 1000);
   if (state.itemOpened && Array.isArray(response.output)) {
-    const message = response.output.find((item) => isRecord(item) && item.type === 'message');
-    if (isRecord(message)) message.id = state.itemId;
+    // An opened item always has text or refusal, so the message is present.
+    const message = response.output.find(
+      (item) => isRecord(item) && item.type === 'message',
+    ) as JsonRecord;
+    message.id = state.itemId;
+    message.content = parts;
   }
 
-  events.push(
-    formatResponsesEvent('response.completed', { type: 'response.completed', response }),
-    'data: [DONE]\n\n',
-  );
+  const output = (response.output as JsonRecord[]).map((item) => ({
+    index: state.messageOutputIndex,
+    item,
+  }));
+  response.output = [...output, ...toolOutput]
+    .sort((a, b) => a.index - b.index)
+    .map(({ item }) => item);
+
+  const terminal = reason ? 'response.incomplete' : 'response.completed';
+  events.push(formatResponsesEvent(terminal, { type: terminal, response }), 'data: [DONE]\n\n');
 
   return events.join('');
 }

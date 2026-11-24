@@ -175,8 +175,10 @@ export class S3RecordingStorage implements RecordingStorage {
         Bucket: this.config.bucket,
         Key: key,
         Body: body,
-        ContentType: 'application/json',
-        ContentEncoding: 'gzip',
+        // The body is client-side ciphertext (see request-recording-codec), not
+        // readable JSON, and declaring ContentEncoding: gzip made some
+        // S3-compatible stores and CDNs try to gunzip it transparently on GET.
+        ContentType: 'application/octet-stream',
       }),
     );
   }

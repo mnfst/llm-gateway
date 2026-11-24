@@ -1,0 +1,1752 @@
+/* ── Welcome Onboarding Wizard ─────────────────────
+   Sidebar layout: launch sequence + step list on the left,
+   step content on the right. Tokens from theme.css, BEM-ish naming,
+   route-scoped chunk. */
+
+.welcome {
+  min-height: 100vh;
+  display: flex;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+}
+
+/* ── Sidebar ────────────────────────────────────── */
+
+.welcome__sidebar {
+  width: 304px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 24px 20px;
+  border-right: 1px solid hsl(var(--border));
+  background: linear-gradient(
+    180deg,
+    hsl(var(--sidebar-background)),
+    hsl(var(--sidebar-background) / 0.94)
+  );
+}
+
+.welcome__sidebar-top {
+  padding: 0 4px;
+}
+
+.welcome__logo-mark {
+  height: 32px;
+  display: block;
+}
+.welcome__logo-dark {
+  display: none;
+}
+.dark .welcome__logo-dark {
+  display: block;
+}
+.dark .welcome__logo-light {
+  display: none;
+}
+
+/* Launch sequence — the steps are the flight path. */
+.welcome__launch-stack {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 10px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius) + 4px);
+  background:
+    radial-gradient(circle at 88% 5%, hsl(var(--primary) / 0.14), transparent 23%),
+    linear-gradient(180deg, hsl(var(--card) / 0.72), hsl(var(--muted) / 0.22));
+  box-shadow:
+    inset 0 1px 0 hsl(var(--foreground) / 0.035),
+    0 18px 42px hsl(var(--background) / 0.18);
+  overflow: hidden;
+}
+
+.welcome__launch-stack::before {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(
+    circle,
+    hsl(var(--foreground) / 0.2) 0 0.65px,
+    transparent 0.9px
+  );
+  background-position: 9px 13px;
+  background-size: 37px 43px;
+  content: '';
+  opacity: 0.55;
+  -webkit-mask-image: linear-gradient(90deg, transparent 16%, black 100%);
+  mask-image: linear-gradient(90deg, transparent 16%, black 100%);
+  pointer-events: none;
+}
+
+.welcome__launch-stack::after {
+  position: absolute;
+  z-index: 0;
+  top: -90px;
+  right: -88px;
+  width: 220px;
+  height: 220px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    hsl(var(--success) / 0.3),
+    hsl(var(--primary) / 0.1) 34%,
+    transparent 68%
+  );
+  content: '';
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.35);
+}
+
+.welcome__launch-stack--complete::after {
+  animation: welcome-orbit-flash 1.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.welcome__launch-stack > * {
+  position: relative;
+  z-index: 1;
+}
+
+.welcome__launch-stack-header {
+  padding: 2px 4px 0;
+}
+
+.welcome__launch-stack-header p {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: color 0.3s ease;
+}
+
+.welcome__launch-stack--complete .welcome__launch-stack-header p {
+  color: hsl(var(--success));
+  text-shadow: 0 0 12px hsl(var(--success) / 0.35);
+}
+
+.welcome__launch-track {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  margin-top: 6px;
+}
+
+.welcome__launch-track::before {
+  position: absolute;
+  z-index: 0;
+  top: 4px;
+  right: 21px;
+  bottom: 21px;
+  width: 1px;
+  background: repeating-linear-gradient(
+    to bottom,
+    hsl(var(--muted-foreground) / 0.25) 0 3px,
+    transparent 3px 8px
+  );
+  content: '';
+}
+
+.welcome__launch-stack--complete .welcome__launch-track::before {
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--success) / 0.85),
+    hsl(var(--primary) / 0.55) 36%,
+    hsl(var(--primary) / 0.12) 82%,
+    transparent
+  );
+  box-shadow: 0 0 9px hsl(var(--primary) / 0.7);
+  animation: welcome-trajectory-ignite 1.4s ease-out both;
+}
+
+.welcome__launch-track::after {
+  position: absolute;
+  right: 8px;
+  bottom: 9px;
+  width: 27px;
+  height: 9px;
+  border-right: 1px solid hsl(var(--muted-foreground) / 0.4);
+  border-bottom: 1px solid hsl(var(--muted-foreground) / 0.4);
+  border-left: 1px solid hsl(var(--muted-foreground) / 0.4);
+  content: '';
+  transform: perspective(12px) rotateX(32deg);
+}
+
+.welcome__launch-orbit {
+  position: absolute;
+  z-index: 1;
+  top: -10px;
+  right: 10px;
+  width: 23px;
+  height: 23px;
+  border: 1px solid hsl(var(--primary) / 0.38);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 7px hsl(var(--primary) / 0.055),
+    0 0 18px hsl(var(--primary) / 0.14);
+}
+
+.welcome__launch-orbit::before,
+.welcome__launch-orbit::after {
+  position: absolute;
+  inset: -1px;
+  border: 1px solid hsl(var(--success) / 0.7);
+  border-radius: inherit;
+  content: '';
+  opacity: 0;
+}
+
+.welcome__launch-orbit span {
+  position: absolute;
+  inset: 6px;
+  border: 1px dashed hsl(var(--primary) / 0.5);
+  border-radius: inherit;
+}
+
+.welcome__launch-stack--complete .welcome__launch-orbit {
+  border-color: hsl(var(--success) / 0.85);
+  box-shadow:
+    0 0 0 7px hsl(var(--success) / 0.09),
+    0 0 28px hsl(var(--success) / 0.48);
+  animation: welcome-orbit-lock 1.5s 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.welcome__launch-stack--complete .welcome__launch-orbit::before {
+  animation: welcome-orbit-ring 1.3s 0.48s ease-out both;
+}
+
+.welcome__launch-stack--complete .welcome__launch-orbit::after {
+  animation: welcome-orbit-ring 1.3s 0.72s ease-out both;
+}
+
+.welcome__launch-stack--complete .welcome__launch-orbit span {
+  border-color: hsl(var(--success) / 0.8);
+  animation: welcome-orbit-spin 1.7s 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.welcome__nav {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  list-style: none;
+  margin: 0;
+  padding: 18px 0;
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.welcome__nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  gap: 10px;
+  padding: 9px 42px 9px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: hsl(var(--muted-foreground));
+  transition:
+    color 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.welcome__nav-item--active {
+  border-color: hsl(var(--border) / 0.55);
+  background: linear-gradient(90deg, hsl(var(--sidebar-accent)), hsl(var(--primary) / 0.045));
+  color: hsl(var(--foreground));
+}
+
+.welcome__nav-item--done {
+  color: hsl(var(--foreground));
+}
+
+.welcome__nav-check {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: 12px;
+  width: 19px;
+  height: 19px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: hsl(var(--success));
+  background: hsl(var(--sidebar-background));
+  transform: translateY(-50%);
+}
+
+.welcome__nav-item--done .welcome__nav-check {
+  border-color: hsl(var(--success) / 0.5);
+  background: hsl(var(--success) / 0.1);
+}
+
+.welcome__nav-item--active .welcome__nav-check {
+  border-color: transparent;
+  background: transparent;
+}
+
+.welcome__nav-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+}
+
+.welcome__nav-label {
+  min-width: 0;
+  flex: 1;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.welcome__launch-rocket {
+  position: absolute;
+  z-index: 3;
+  top: var(--rocket-top);
+  right: 7px;
+  width: 28px;
+  height: 42px;
+  color: hsl(var(--foreground));
+  filter: drop-shadow(0 5px 7px hsl(var(--background) / 0.9))
+    drop-shadow(0 0 6px hsl(var(--primary) / 0.24));
+  transform: translateY(-50%);
+  transition:
+    top 0.85s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.3s ease;
+}
+
+.welcome__launch-rocket svg {
+  width: 100%;
+  height: 100%;
+}
+
+.welcome__launch-rocket--complete {
+  color: hsl(var(--success));
+  animation: welcome-orbital-liftoff 1.65s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.welcome__launch-rocket::after {
+  position: absolute;
+  z-index: -1;
+  top: 30px;
+  left: 50%;
+  width: 10px;
+  height: 72px;
+  border-radius: 50%;
+  background: linear-gradient(
+    to bottom,
+    hsl(var(--success) / 0.75),
+    hsl(var(--primary) / 0.42) 36%,
+    transparent
+  );
+  content: '';
+  opacity: 0;
+  filter: blur(4px);
+  transform: translateX(-50%) scaleY(0.2);
+  transform-origin: top;
+}
+
+.welcome__launch-rocket--complete::after {
+  animation: welcome-liftoff-plume 1.25s 0.12s ease-out both;
+}
+
+.welcome__rocket-flame {
+  color: hsl(var(--primary));
+  filter: drop-shadow(0 2px 3px hsl(var(--primary) / 0.8));
+  animation: welcome-rocket-flame 0.65s ease-in-out infinite alternate;
+}
+
+.welcome__nav-mobile-rocket {
+  display: none;
+}
+
+.welcome__nav-mobile-rocket--complete {
+  color: hsl(var(--success));
+  animation: welcome-mobile-orbit 1s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes welcome-mobile-orbit {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  55% {
+    filter: drop-shadow(0 0 8px hsl(var(--success) / 0.8));
+    transform: translateY(-9px) scale(1.18);
+  }
+  100% {
+    transform: translateY(-4px) scale(1);
+  }
+}
+
+@keyframes welcome-rocket-flame {
+  from {
+    opacity: 0.4;
+    transform: scaleY(0.88);
+    transform-origin: 16px 33px;
+  }
+  to {
+    opacity: 1;
+    transform: scaleY(1.08);
+    transform-origin: 16px 33px;
+  }
+}
+
+@keyframes welcome-orbital-liftoff {
+  0% {
+    top: 8%;
+    color: hsl(var(--foreground));
+    filter: drop-shadow(0 5px 7px hsl(var(--background) / 0.9));
+    transform: translateY(-50%) scale(1);
+  }
+  12% {
+    top: 8.4%;
+    transform: translate(-1px, -50%) rotate(-1.5deg) scale(1.02);
+  }
+  24% {
+    top: 7.7%;
+    transform: translate(1px, -50%) rotate(1.5deg) scale(1.04);
+  }
+  68% {
+    top: -2.4%;
+    color: hsl(var(--success));
+    filter: drop-shadow(0 0 9px hsl(var(--success) / 0.75))
+      drop-shadow(0 8px 12px hsl(var(--primary) / 0.45));
+    transform: translateY(-50%) scale(1.16);
+  }
+  84% {
+    top: 1.2%;
+    transform: translateY(-50%) scale(0.94);
+  }
+  100% {
+    top: 0;
+    color: hsl(var(--success));
+    filter: drop-shadow(0 0 7px hsl(var(--success) / 0.55));
+    transform: translateY(-50%) scale(1);
+  }
+}
+
+@keyframes welcome-liftoff-plume {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scaleY(0.15);
+  }
+  28% {
+    opacity: 1;
+    transform: translateX(-50%) scaleY(1);
+  }
+  72% {
+    opacity: 0.7;
+    transform: translateX(-50%) scaleY(0.72);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) scaleY(0.25);
+  }
+}
+
+@keyframes welcome-trajectory-ignite {
+  0% {
+    opacity: 0.2;
+    transform: scaleY(0.05);
+    transform-origin: bottom;
+  }
+  48% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.75;
+    transform: scaleY(1);
+    transform-origin: bottom;
+  }
+}
+
+@keyframes welcome-orbit-flash {
+  0% {
+    opacity: 0;
+    transform: scale(0.35);
+  }
+  54% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0.36;
+    transform: scale(1);
+  }
+}
+
+@keyframes welcome-orbit-ring {
+  0% {
+    opacity: 0.9;
+    transform: scale(0.75);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(3.6);
+  }
+}
+
+@keyframes welcome-orbit-lock {
+  0% {
+    transform: scale(0.7);
+  }
+  62% {
+    transform: scale(1.22);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes welcome-orbit-spin {
+  from {
+    transform: rotate(0deg) scale(0.75);
+  }
+  to {
+    transform: rotate(360deg) scale(1);
+  }
+}
+
+/* Classic progress rail. The launch spectacle is reserved for the moment it earns. */
+.welcome__progress {
+  min-height: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  padding: 6px 4px;
+}
+
+.welcome__progress-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 8px 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.welcome__progress-header p,
+.welcome__progress-header span {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.welcome__progress-header span {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.welcome__progress .welcome__nav {
+  height: auto;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 2px;
+}
+
+.welcome__progress .welcome__nav-item {
+  min-height: 42px;
+  gap: 11px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+}
+
+/* Steps already reached are real navigation; locked ones just look inert. */
+.welcome__progress .welcome__nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.welcome__progress .welcome__nav-btn:disabled {
+  cursor: default;
+}
+
+.welcome__progress .welcome__nav-btn:not(:disabled):hover .welcome__nav-label {
+  color: hsl(var(--foreground));
+}
+
+.welcome__progress .welcome__nav-item--active {
+  background: hsl(var(--sidebar-accent));
+}
+
+.welcome__progress .welcome__nav-check {
+  position: static;
+  width: 22px;
+  height: 22px;
+  border-color: hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  transform: none;
+}
+
+.welcome__progress .welcome__nav-item--active .welcome__nav-check {
+  border-color: hsl(var(--foreground) / 0.35);
+  color: hsl(var(--foreground));
+  background: hsl(var(--background) / 0.65);
+}
+
+.welcome__progress .welcome__nav-item--done .welcome__nav-check {
+  border-color: hsl(var(--success) / 0.38);
+  color: hsl(var(--success));
+  background: hsl(var(--success) / 0.08);
+}
+
+/* ── Main content ───────────────────────────────── */
+
+.welcome__main {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  padding: 56px clamp(20px, 5vw, 72px) 40px;
+  overflow-y: auto;
+}
+
+.welcome__panel {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.welcome__panel--playground {
+  max-width: min(1100px, 100%);
+}
+
+/* Left-aligned page header, mirroring the app's .page-header pattern */
+.welcome__panel-header {
+  text-align: left;
+  padding-bottom: 18px;
+  border-bottom: 1px solid hsl(var(--border));
+}
+
+.welcome__eyebrow {
+  margin: 0 0 8px;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.welcome__panel-title {
+  font-family: var(--font-heading);
+  font-size: clamp(28px, 3vw, 34px);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  margin: 0 0 6px;
+  line-height: 1.2;
+}
+
+.welcome__panel-title:focus-visible {
+  outline: 3px solid hsl(var(--ring));
+  outline-offset: 5px;
+}
+
+.welcome__panel-desc {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+  max-width: 560px;
+}
+
+.welcome__panel-desc strong {
+  color: hsl(var(--foreground));
+}
+
+/* ── Harness created summary ───────────────────── */
+
+.welcome__harness-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.welcome__harness-summary-icon {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.welcome__harness-summary-name {
+  margin: 0;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.welcome__harness-summary-type {
+  margin: 2px 0 0;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+}
+
+/* ── Providers step ─────────────────────────────── */
+
+.welcome__textarea:focus-visible,
+.welcome__text-link:focus-visible,
+.settings-switch:focus-visible {
+  outline: 3px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* Tabs — full width, each tab takes equal share */
+.welcome__panel .panel__tabs {
+  display: flex;
+  width: 100%;
+}
+
+.welcome__panel .panel__tab {
+  flex: 1;
+  gap: 6px;
+}
+
+/* Container border for the provider list (content from routing-providers.css) */
+.welcome__provider-list {
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+}
+
+.welcome__provider-list .provider-toggle {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+}
+
+.welcome__provider-list .provider-toggle:last-child {
+  border-bottom: none;
+}
+
+.welcome__provider-connected {
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: hsl(var(--success));
+}
+
+.welcome__actions {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding-top: 4px;
+}
+.welcome__actions--split {
+  justify-content: space-between;
+}
+
+.welcome__actions--sticky {
+  position: sticky;
+  bottom: -1px;
+  z-index: 3;
+  padding: 12px 0 4px;
+  background: linear-gradient(180deg, hsl(var(--background) / 0), hsl(var(--background)) 24%);
+}
+
+.welcome__actions-note {
+  font-size: var(--font-size-xs);
+  color: hsl(var(--muted-foreground));
+}
+
+/* ── Harness step ───────────────────────────────── */
+
+/* .panel ships overflow-x:auto / overflow-y:hidden (cards.css), which clips
+   the AgentTypeSelect dropdown. The form panel needs free overflow. */
+.welcome__form-panel {
+  overflow: visible;
+}
+
+.welcome__pending {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  padding: 12px 0;
+}
+
+.welcome__spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid hsl(var(--border));
+  border-top-color: hsl(var(--foreground));
+  border-radius: 50%;
+  animation: welcome-rotate 0.6s linear infinite;
+}
+@keyframes welcome-rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.welcome__legal {
+  margin-top: var(--gap-sm);
+}
+
+.welcome__error {
+  margin: 0;
+  color: hsl(var(--destructive));
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.welcome__input-hint,
+.welcome__section-desc,
+.welcome__availability-note {
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.welcome__autofix-section,
+.welcome__first-request,
+.welcome__plan-section {
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 18px;
+}
+
+.welcome__playground-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  margin-top: 10px;
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.welcome__playground-link:hover {
+  color: hsl(var(--foreground));
+}
+
+.welcome__playground-link:focus-visible,
+.welcome__text-link:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.welcome__section-heading,
+.welcome__route-test-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.welcome__section-desc {
+  margin: 4px 0 0;
+  max-width: 560px;
+}
+
+.welcome__availability-note {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--muted) / 0.28);
+}
+
+/* ── Autofix step ──────────────────────────────── */
+
+/* ── Route & test step ──────────────────────────── */
+
+.welcome__route-test-section {
+  border-top: 1px solid hsl(var(--border));
+  padding-top: 16px;
+}
+
+.welcome__route-test-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.welcome__route-test-title {
+  font-family: var(--font-heading);
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  margin: 0;
+  color: hsl(var(--foreground));
+}
+
+.welcome__model-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted));
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+
+.welcome__playground {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.welcome__textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-size: var(--font-size-sm);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.welcome__prompt-label {
+  color: hsl(var(--foreground));
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+.welcome__input-hint {
+  margin-top: -2px;
+}
+
+.welcome__playground-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.welcome__response {
+  padding: 12px;
+  background: hsl(var(--muted) / 0.3);
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
+
+.welcome__output {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.welcome__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: var(--font-size-xs);
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Agent connection step ─────────────────────── */
+
+.welcome__panel--setup {
+  max-width: 640px;
+}
+
+.welcome__setup-snippets {
+  overflow: hidden;
+}
+
+.welcome__agent-wait {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--muted) / 0.28);
+}
+
+.welcome__agent-wait-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.welcome__agent-wait .welcome__spinner {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.welcome__agent-wait--success {
+  color: hsl(var(--success));
+}
+
+.welcome__agent-wait--success .welcome__section-desc {
+  color: hsl(var(--success) / 0.8);
+}
+
+.welcome__request-failure {
+  padding: 12px 14px;
+  border: 1px solid hsl(var(--destructive) / 0.3);
+  border-radius: var(--radius);
+  background: hsl(var(--destructive) / 0.06);
+}
+
+.welcome__request-failure strong {
+  color: hsl(var(--destructive));
+  font-size: var(--font-size-sm);
+}
+
+.welcome__request-failure p {
+  margin: 4px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.welcome__agent-wait--success strong {
+  display: block;
+  font-size: var(--font-size-sm);
+}
+
+.welcome__success-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  font-size: 16px;
+  font-weight: 700;
+  color: hsl(var(--success));
+  animation: welcome-success-icon 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes welcome-success-icon {
+  from {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.welcome__plan-heading {
+  margin: 0 0 12px;
+}
+
+.welcome__inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: hsl(var(--muted));
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ── Autofix step: concrete repair examples ────── */
+
+.welcome__autofix-details {
+  margin-top: 18px;
+}
+
+.welcome__autofix-heading {
+  margin: 0 0 10px;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.welcome__autofix-examples {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.welcome__autofix-examples li {
+  display: grid;
+  gap: 5px;
+  padding: 11px 13px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  background: hsl(var(--card));
+}
+
+.welcome__autofix-examples code {
+  overflow: hidden;
+  color: hsl(var(--destructive) / 0.85);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.welcome__autofix-examples span {
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.welcome__autofix-how {
+  max-width: 640px;
+  margin: 12px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-sm);
+  line-height: 1.55;
+}
+
+.welcome__autofix-how .welcome__text-link {
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.welcome__text-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 6px 0;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.welcome__text-link:hover {
+  color: hsl(var(--foreground));
+}
+
+/* Quiet exit — visible, but never competing with the step content. */
+.welcome__sidebar-footer {
+  margin-top: auto;
+  padding: 0 4px;
+}
+
+.welcome__skip-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* ── Full-screen orbital completion ─────────────── */
+
+.welcome__liftoff {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  overflow: hidden;
+  isolation: isolate;
+  contain: strict;
+  color: hsl(var(--foreground));
+  background:
+    radial-gradient(circle at 50% 112%, hsl(var(--foreground) / 0.055), transparent 42%),
+    radial-gradient(circle at 78% 12%, hsl(var(--success) / 0.035), transparent 28%),
+    hsl(var(--background));
+  opacity: 0;
+}
+
+.welcome__liftoff::before {
+  position: absolute;
+  z-index: 7;
+  inset: 0;
+  border: 1px solid hsl(var(--border) / 0.6);
+  box-shadow: inset 0 0 140px hsl(var(--background) / 0.72);
+  content: '';
+  pointer-events: none;
+}
+
+.welcome__liftoff-stars {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image:
+    radial-gradient(circle, hsl(var(--foreground) / 0.78) 0 1px, transparent 1.4px),
+    radial-gradient(circle, hsl(var(--foreground) / 0.52) 0 0.8px, transparent 1.2px),
+    radial-gradient(circle, hsl(var(--foreground) / 0.32) 0 0.7px, transparent 1px);
+  background-position:
+    13px 19px,
+    71px 43px,
+    29px 81px;
+  background-size:
+    109px 127px,
+    163px 181px,
+    97px 149px;
+  content: '';
+  opacity: 0;
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-stars--near {
+  opacity: 0;
+}
+
+.welcome__liftoff-stars--far {
+  opacity: 0;
+}
+
+.welcome__liftoff-flash {
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  bottom: 2vh;
+  width: 34vw;
+  height: 34vw;
+  min-width: 320px;
+  min-height: 320px;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    hsl(var(--foreground) / 0.96) 0%,
+    hsl(var(--success) / 0.62) 9%,
+    hsl(var(--success) / 0.16) 28%,
+    transparent 69%
+  );
+  opacity: 0;
+  translate: -50% 50%;
+  transform: scale(0.18);
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-earth {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  bottom: min(-61vw, -780px);
+  width: max(138vw, 1760px);
+  height: max(72vw, 920px);
+  border: 1px solid hsl(var(--foreground) / 0.42);
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at 48% 2%, hsl(var(--foreground) / 0.1), transparent 10%),
+    radial-gradient(ellipse at 62% 8%, hsl(var(--muted-foreground) / 0.08), transparent 19%),
+    radial-gradient(
+      circle at 50% 0%,
+      hsl(var(--muted) / 0.72) 0%,
+      hsl(var(--card) / 0.94) 30%,
+      hsl(var(--background)) 67%
+    );
+  box-shadow:
+    0 -1px 8px hsl(var(--foreground) / 0.36),
+    0 -13px 70px hsl(var(--success) / 0.09),
+    inset 0 45px 130px hsl(var(--foreground) / 0.035);
+  opacity: 0;
+  translate: -50% 0;
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-orbit {
+  position: absolute;
+  z-index: 2;
+  top: 13%;
+  left: 50%;
+  width: min(72vw, 1100px);
+  height: min(48vh, 460px);
+  overflow: visible;
+  opacity: 0;
+  translate: -50% 0;
+  rotate: -9deg;
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-orbit ellipse {
+  fill: none;
+  stroke: hsl(var(--foreground) / 0.28);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* The rocket exits the frame under thrust; this beacon on the orbit line is
+   what it became. Timed via animation-delay to land after the ring draws. */
+.welcome__liftoff-beacon {
+  fill: hsl(var(--success));
+  opacity: 0;
+  filter: drop-shadow(0 0 6px hsl(var(--success) / 0.8));
+  animation:
+    welcome-liftoff-beacon-in 0.45s ease-out 5.05s both,
+    welcome-liftoff-beacon-pulse 2.6s ease-in-out 5.5s infinite;
+}
+
+@keyframes welcome-liftoff-beacon-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 0.95;
+  }
+}
+
+@keyframes welcome-liftoff-beacon-pulse {
+  0%,
+  100% {
+    opacity: 0.95;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.welcome__liftoff-smoke {
+  position: absolute;
+  z-index: 4;
+  bottom: 8vh;
+  left: 50%;
+  width: clamp(190px, 24vw, 340px);
+  height: 58px;
+  opacity: 0;
+  translate: -50% 0;
+  transform-origin: center bottom;
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-smoke span {
+  position: absolute;
+  bottom: 0;
+  width: 42%;
+  height: 70%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse, hsl(var(--foreground) / 0.17), transparent 70%);
+  filter: blur(4px);
+}
+
+.welcome__liftoff-smoke span:nth-child(1) {
+  left: 6%;
+}
+
+.welcome__liftoff-smoke span:nth-child(2) {
+  left: 29%;
+  bottom: 8px;
+}
+
+.welcome__liftoff-smoke span:nth-child(3) {
+  right: 6%;
+}
+
+.welcome__liftoff-rocket {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: 12vh;
+  /* Centering lives here (CSS `translate` composes before `transform`), so the
+     motion sequence can treat x as a pure downrange offset from the pad. */
+  translate: -50% 0;
+  width: clamp(66px, 6.5vw, 102px);
+  color: hsl(var(--foreground));
+  filter: drop-shadow(0 0 12px hsl(var(--foreground) / 0.12));
+  opacity: 0;
+  transform-origin: 50% 50%;
+  backface-visibility: hidden;
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-rocket svg {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.welcome__liftoff-plume {
+  position: absolute;
+  z-index: 1;
+  top: 78%;
+  left: 50%;
+  width: 42%;
+  height: clamp(92px, 16vh, 180px);
+  border-radius: 50% 50% 80% 80%;
+  background: linear-gradient(
+    180deg,
+    hsl(var(--foreground)) 0%,
+    hsl(var(--foreground) / 0.78) 12%,
+    hsl(var(--success) / 0.28) 35%,
+    hsl(var(--success) / 0.06) 68%,
+    transparent 100%
+  );
+  box-shadow:
+    0 0 12px hsl(var(--foreground) / 0.32),
+    0 10px 32px hsl(var(--success) / 0.12);
+  filter: blur(1px);
+  translate: -50% 0;
+  transform: scaleY(0.25);
+  transform-origin: top;
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-plume-inner {
+  position: absolute;
+  z-index: 2;
+  top: 79%;
+  left: 50%;
+  width: 16%;
+  height: clamp(52px, 9vh, 105px);
+  border-radius: 45% 45% 70% 70%;
+  background: linear-gradient(
+    180deg,
+    hsl(var(--foreground)) 0%,
+    hsl(var(--foreground) / 0.62) 38%,
+    transparent 100%
+  );
+  opacity: 0;
+  translate: -50% 0;
+  transform: scaleY(0.2);
+  transform-origin: top;
+  will-change: opacity, transform;
+}
+
+.welcome__liftoff-copy {
+  position: absolute;
+  z-index: 8;
+  top: clamp(54px, 9vh, 112px);
+  left: clamp(28px, 7vw, 110px);
+  max-width: min(620px, 78vw);
+}
+
+.welcome__liftoff-kicker,
+.welcome__liftoff-status {
+  margin: 0;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.welcome__liftoff-kicker {
+  opacity: 0;
+}
+
+.welcome__liftoff-titles {
+  display: grid;
+  margin-top: 12px;
+}
+
+.welcome__liftoff-title {
+  grid-area: 1 / 1;
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: clamp(60px, 10vw, 154px);
+  font-weight: 700;
+  line-height: 0.86;
+  letter-spacing: -0.065em;
+  text-wrap: balance;
+}
+
+.welcome__liftoff-title--launch {
+  opacity: 0;
+  transform: translateY(28px);
+}
+
+.welcome__liftoff-title--orbit {
+  max-width: 780px;
+  font-size: clamp(48px, 8.3vw, 126px);
+  opacity: 0;
+  transform: translateY(24px);
+}
+
+.welcome__liftoff-description {
+  max-width: 520px;
+  margin: 22px 0 0;
+  color: hsl(var(--muted-foreground));
+  font-size: clamp(14px, 1.45vw, 18px);
+  line-height: 1.55;
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.welcome__liftoff-exit {
+  position: absolute;
+  z-index: 8;
+  right: clamp(22px, 4vw, 64px);
+  bottom: clamp(20px, 4vh, 48px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.welcome__liftoff-action {
+  min-height: 44px;
+  gap: 8px;
+  border-color: hsl(var(--border));
+  box-shadow:
+    0 14px 40px hsl(var(--background) / 0.3),
+    inset 0 1px 0 hsl(var(--foreground) / 0.12);
+  opacity: 0;
+  transform: translateY(12px);
+}
+
+.welcome__liftoff-status {
+  opacity: 0;
+}
+
+/* ── Responsive ─────────────────────────────────── */
+
+@media (min-width: 861px) and (max-width: 1100px) {
+  .welcome__main {
+    padding-left: clamp(12px, 1.8vw, 28px);
+    padding-right: clamp(12px, 1.8vw, 28px);
+  }
+}
+
+@media (max-width: 860px) {
+  .welcome {
+    flex-direction: column;
+  }
+
+  .welcome__sidebar {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 16px;
+    border-right: none;
+    border-bottom: 1px solid hsl(var(--border));
+  }
+
+  .welcome__sidebar-top {
+    display: none;
+  }
+
+  /* Mobile users are the most likely to need the exit — keep it reachable. */
+  .welcome__sidebar-footer {
+    margin-top: 0;
+    flex-shrink: 0;
+    padding: 0;
+  }
+
+  .welcome__sidebar-footer .welcome__text-link {
+    white-space: nowrap;
+  }
+
+  .welcome__autofix-examples {
+    grid-template-columns: 1fr;
+  }
+
+  .welcome__panel .routing-cards--centered {
+    max-width: 100%;
+    min-width: 340px;
+  }
+
+  .welcome__progress {
+    min-width: 0;
+    width: 100%;
+    padding: 0;
+  }
+
+  .welcome__progress-header {
+    display: none;
+  }
+
+  .welcome__progress .welcome__nav {
+    flex-direction: row;
+    justify-content: flex-start;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    overflow-x: auto;
+  }
+
+  .welcome__nav-hint {
+    display: none;
+  }
+  .welcome__progress .welcome__nav-label {
+    white-space: nowrap;
+    font-size: var(--font-size-xs);
+  }
+
+  .welcome__progress .welcome__nav-item {
+    min-height: 36px;
+    flex: 0 0 auto;
+    padding: 6px 8px;
+  }
+
+  .welcome__progress .welcome__nav-check {
+    width: 17px;
+    height: 17px;
+    font-size: 8px;
+  }
+
+  .welcome__main {
+    padding: 24px 16px;
+  }
+
+  .welcome__section-heading,
+  .welcome__actions--split {
+    align-items: flex-start;
+  }
+
+  .welcome__liftoff-copy {
+    top: 8vh;
+    left: 7vw;
+    max-width: 86vw;
+  }
+
+  .welcome__liftoff-orbit {
+    top: 20%;
+    width: 88vw;
+    height: 35vh;
+  }
+}
+
+@media (max-width: 560px) {
+  .welcome__main {
+    padding: 20px 14px 32px;
+  }
+  .welcome__panel {
+    gap: 14px;
+  }
+  .welcome__actions--split {
+    gap: 12px;
+  }
+  .welcome__actions {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .welcome__liftoff-copy {
+    top: 7vh;
+    left: 22px;
+    max-width: calc(100vw - 44px);
+  }
+
+  .welcome__liftoff-title {
+    font-size: clamp(54px, 20vw, 86px);
+  }
+
+  .welcome__liftoff-title--orbit {
+    font-size: clamp(47px, 17vw, 72px);
+  }
+
+  .welcome__liftoff-description {
+    max-width: 90vw;
+    margin-top: 16px;
+  }
+
+  .welcome__liftoff-rocket {
+    width: 68px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .welcome__launch-rocket {
+    transition: none;
+  }
+  .welcome__launch-stack--complete::after,
+  .welcome__launch-stack--complete .welcome__launch-track::before,
+  .welcome__launch-stack--complete .welcome__launch-orbit,
+  .welcome__launch-stack--complete .welcome__launch-orbit::before,
+  .welcome__launch-stack--complete .welcome__launch-orbit::after,
+  .welcome__launch-stack--complete .welcome__launch-orbit span,
+  .welcome__launch-rocket--complete,
+  .welcome__launch-rocket--complete::after,
+  .welcome__nav-mobile-rocket--complete,
+  .welcome__rocket-flame,
+  .welcome__success-icon {
+    animation: none;
+  }
+  .welcome__launch-stack--complete::after {
+    opacity: 0.36;
+    transform: scale(1);
+  }
+  .welcome__spinner {
+    animation-duration: 1.5s;
+  }
+
+  .welcome__liftoff,
+  .welcome__liftoff-stars,
+  .welcome__liftoff-flash,
+  .welcome__liftoff-earth,
+  .welcome__liftoff-orbit,
+  .welcome__liftoff-orbit ellipse,
+  .welcome__liftoff-beacon,
+  .welcome__liftoff-smoke,
+  .welcome__liftoff-rocket,
+  .welcome__liftoff-plume,
+  .welcome__liftoff-plume-inner,
+  .welcome__liftoff-kicker,
+  .welcome__liftoff-title,
+  .welcome__liftoff-description,
+  .welcome__liftoff-action,
+  .welcome__liftoff-status {
+    animation: none;
+  }
+
+  .welcome__liftoff,
+  .welcome__liftoff-stars--near,
+  .welcome__liftoff-earth,
+  .welcome__liftoff-orbit,
+  .welcome__liftoff-beacon,
+  .welcome__liftoff-kicker,
+  .welcome__liftoff-title--orbit,
+  .welcome__liftoff-description,
+  .welcome__liftoff-action,
+  .welcome__liftoff-status,
+  .welcome__liftoff-orbit ellipse {
+    opacity: 1;
+    transform: none;
+  }
+
+  .welcome__liftoff-title--launch,
+  .welcome__liftoff-flash,
+  .welcome__liftoff-smoke,
+  .welcome__liftoff-plume,
+  .welcome__liftoff-plume-inner {
+    display: none;
+  }
+
+  .welcome__liftoff-rocket {
+    top: 27%;
+    right: 9%;
+    bottom: auto;
+    left: auto;
+    opacity: 1;
+    transform: rotate(90deg) scale(0.55);
+  }
+}

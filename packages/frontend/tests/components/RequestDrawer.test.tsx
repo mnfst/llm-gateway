@@ -114,20 +114,20 @@ describe('RequestDrawer', () => {
 
     await waitFor(() => expect(screen.getByText('Request request-1234')).toBeDefined());
     expect(mockGetMessageDetails).toHaveBeenCalledWith('request-1234567890');
-    expect(screen.getAllByText('Auto-fixed').length).toBeGreaterThan(0);
-    expect(screen.getByText('Auto-fix: Retry succeeded')).toBeDefined();
+    expect(screen.getAllByText('Autofixed').length).toBeGreaterThan(0);
+    expect(screen.getByText('Autofix: Retry succeeded')).toBeDefined();
     // The header meta row carries NO fallback/autofix badge: that story belongs
     // to the attempts (sidebar icons + context cards), not the request title.
     expect(container.querySelector('.drawer__meta-row .trigger-badge')).toBeNull();
     // The branded badges still exist further down, on the attempt content.
-    expect(screen.getAllByText('auto-fix').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('autofix').length).toBeGreaterThan(0);
     // Sidebar attempt icons use the same branded squares.
     expect(container.querySelector('.attempt-item__icon .fallback-icon')).not.toBeNull();
     expect(container.querySelector('.attempt-item__icon .autofix-icon')).not.toBeNull();
     expect(screen.getByText('bad parameter')).toBeDefined();
     expect(screen.getByText('invalid_request')).toBeDefined();
     expect(screen.getByText('$0.0123')).toBeDefined();
-    // Auto-fix context card: role-aware copy + operations table.
+    // Autofix context card: role-aware copy + operations table.
     expect(container.textContent).toContain('rename: old → new');
 
     fireEvent.click(screen.getByText('Request headers'));
@@ -163,12 +163,12 @@ describe('RequestDrawer', () => {
     });
     render(() => <RequestDrawer messageId={`status-${autofix_status}`} onClose={vi.fn()} />);
 
-    await waitFor(() => expect(screen.getByText(`Auto-fix: ${label}`)).toBeDefined());
+    await waitFor(() => expect(screen.getByText(`Autofix: ${label}`)).toBeDefined());
   });
 
   it.each([
     [{ fallback_from_model: 'old' }, 'fallback'],
-    [{ autofix_role: 'retry' }, 'auto-fix'],
+    [{ autofix_role: 'retry' }, 'autofix'],
     [{}, 'initial'],
   ])('builds a single %s attempt when no attempt array is present', async (extra, type) => {
     mockGetMessageDetails.mockResolvedValue({

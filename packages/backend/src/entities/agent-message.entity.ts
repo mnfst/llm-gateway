@@ -12,10 +12,11 @@ import type { CallerAttribution } from '../routing/proxy/caller-classifier';
 @Index(['tenant_id', 'trace_id'])
 @Index(['tenant_id', 'model'])
 @Index(['tenant_id', 'agent_id', 'status'])
-// Originally added for the per-completion success dedup, which is gone. Kept
-// because the planner still picks it for other tenant+agent+model reads; at
-// ~1.7 GB it is a drop candidate once those are attributed to another index.
-@Index(['tenant_id', 'agent_id', 'model', 'status', 'timestamp'])
+// Originally (tenant_id, agent_id, model, status, timestamp) for the
+// per-completion success dedup, which is gone. The per-agent "cost by model"
+// read (agent-analytics.service.ts) only needs the leading three columns, so
+// the trailing status/timestamp were dropped in 1802000000000.
+@Index(['tenant_id', 'agent_id', 'model'])
 // Per-connection analytics scope by the exact key that served each message
 // (tenant_provider_id) ordered by recency, and the FK below resolves its
 // ON DELETE SET NULL against the same column. tenant_provider_id leads so one
@@ -33,8 +34,8 @@ export class AgentMessage {
   request_id!: string | null;
 
   /**
-   * Positive provider-call start order within the parent Request. NULL only for
-   * legacy rows that have not been assigned an unambiguous order.
+   * Positive route-attempt order within the parent Request. NULL only for legacy
+   * rows that have not been assigned an unambiguous order.
    */
   @Column('integer', { nullable: true })
   attempt_number!: number | null;
@@ -82,6 +83,10 @@ export class AgentMessage {
   @Column('varchar', { default: 'pending' })
   status!: string;
 
+  /** Set after this completed Provider Attempt has been added to agent_usage_daily. */
+  @Column(timestampType(), { nullable: true })
+  agent_usage_rolled_up_at?: string | null;
+
   @Column('varchar', { nullable: true })
   error_message!: string | null;
 
@@ -91,7 +96,7 @@ export class AgentMessage {
   /**
    * The documented Manifest error code behind this row ('M100', 'M300', …),
    * NULL for provider/transport failures and successes. Lets the dashboard deep
-   * link to https://manifest.build/docs/errors/<code>. The catalogue lives in
+   * link to https://manifest.build/llm-gateway/docs/errors/<code>. The catalogue lives in
    * common/errors/error-codes.ts.
    */
   @Column('varchar', { length: 8, nullable: true })
@@ -215,7 +220,7 @@ export class AgentMessage {
   @Column('varchar', { nullable: true })
   tenant_provider_id!: string | null;
 
-  // Auto-fix (self-healing) audit. A healed request is recorded as TWO rows:
+  // Autofix (self-healing) audit. A healed request is recorded as TWO rows:
   // the failed original (status='auto_fixed') and the successful retry
   // (status='ok'), both sharing `autofix_group_id`. `autofix_role` distinguishes
   // them; `autofix_operations` holds the Phoenix edits that fixed it.
@@ -227,7 +232,7 @@ export class AgentMessage {
   @Column('varchar', { nullable: true })
   autofix_group_id!: string | null;
 
-  // 'original' (the failed request that was auto-fixed) or 'retry' (the
+  // 'original' (the failed request that was autofixed) or 'retry' (the
   // successful re-send). NULL for non-autofix rows.
   @Column('varchar', { nullable: true })
   autofix_role!: string | null;

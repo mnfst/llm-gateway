@@ -49,8 +49,13 @@ export type ResolvedRouteCredentials =
       resourceUrl?: string;
       providerRegion?: string | null;
       tenantProviderId: string | null;
-      /** Effective key label after unpinned subscription resolution. */
-      keyLabel?: string;
+      /**
+       * Label of the `tenant_providers` row that was actually selected — the
+       * same row `tenantProviderId` points at, never the requested pin. A pin
+       * that matched nothing falls back to the default key, and the recorded
+       * label has to name the connection that really served the call.
+       */
+      keyLabel: string;
     }
   | {
       ok: false;
@@ -105,6 +110,7 @@ export function startCredentialFailureAttempt(
     model: string;
     authType?: string;
     tenantProviderId?: string | null;
+    keyLabel?: string;
   },
 ): ProviderAttemptRef | undefined {
   const attempt = startProviderAttempt?.(start);
@@ -121,6 +127,8 @@ export function buildCredentialFailureForward(opts: {
   model: string;
   authType?: AuthType;
   tenantProviderId: string | null;
+  /** Pinned connection label, so the failed attempt row still names a connection. */
+  keyLabel?: string;
   presentation: CredentialFailurePresentation;
   startProviderAttempt?: StartProviderAttempt;
 }): ForwardResult {
@@ -129,6 +137,7 @@ export function buildCredentialFailureForward(opts: {
     model: opts.model,
     authType: opts.authType,
     tenantProviderId: opts.tenantProviderId,
+    keyLabel: opts.keyLabel,
   });
   return {
     response: new Response(opts.presentation.errorBody, {
@@ -153,6 +162,8 @@ export function buildCredentialFailureFallback(opts: {
   fallbackIndex: number;
   authType?: AuthType;
   tenantProviderId: string | null;
+  /** Pinned connection label, so the failed hop row still names a connection. */
+  keyLabel?: string;
   presentation: CredentialFailurePresentation;
   startProviderAttempt?: StartProviderAttempt;
 }): {
@@ -163,6 +174,7 @@ export function buildCredentialFailureFallback(opts: {
   errorBody: string;
   authType?: AuthType;
   tenantProviderId: string | null;
+  keyLabel?: string;
   attempt?: ProviderAttemptRef;
   providerCallStarted: true;
 } {
@@ -171,6 +183,7 @@ export function buildCredentialFailureFallback(opts: {
     model: opts.model,
     authType: opts.authType,
     tenantProviderId: opts.tenantProviderId,
+    keyLabel: opts.keyLabel,
   });
   return {
     model: opts.model,
@@ -180,6 +193,7 @@ export function buildCredentialFailureFallback(opts: {
     errorBody: opts.presentation.errorBody,
     authType: opts.authType,
     tenantProviderId: opts.tenantProviderId,
+    keyLabel: opts.keyLabel,
     attempt,
     providerCallStarted: true,
   };
@@ -272,6 +286,8 @@ export async function resolveRouteCredentials(
     resourceUrl: unwrapped.resourceUrl,
     providerRegion: key.region,
     tenantProviderId,
-    keyLabel: providerKeyLabel,
+    // The selected row's own label, not `args.providerKeyLabel`: selection may
+    // have fallen back to the default key when the pin matched nothing.
+    keyLabel: key.label,
   };
 }

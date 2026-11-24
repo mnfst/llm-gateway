@@ -71,4 +71,12 @@ export class ResolveAgentService {
   invalidate(tenantId: string, agentName: string): void {
     this.cache.delete(`${tenantId}:${agentName}`);
   }
+
+  /** Invalidate every agent of a tenant (used after a workspace-wide backfill). */
+  invalidateTenant(tenantId: string): void {
+    const prefix = `${tenantId}:`;
+    for (const key of this.cache.keys()) {
+      if (key.startsWith(prefix)) this.cache.delete(key);
+    }
+  }
 }

@@ -16,6 +16,7 @@ describe('InstallIdService', () => {
     created_at: '2026-04-20T00:00:00',
     first_send_at: null,
     last_sent_at: null,
+    autofix_consented_at: null,
   };
 
   beforeEach(async () => {

@@ -63,6 +63,112 @@ describe('ProviderKeyService — selection projections', () => {
       expect(sel?.id).toBe('up-default');
     });
 
+    // Serving the default key silently bills a connection the operator never
+    // chose. The fallback stays (traffic keeps flowing) but it must be visible.
+    it('warns when a supplied label matches no connection', async () => {
+      jest
+        .spyOn(svc, 'getProviderKeys')
+        .mockResolvedValue([key({ id: 'up-default', label: 'Default' })]);
+      const warn = jest
+        .spyOn(svc['logger'], 'warn')
+        .mockImplementation(() => undefined as unknown as void);
+
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'Retired');
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('"Retired"'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('"Default"'));
+    });
+
+    it('throttles repeated warnings for the same stale pin', async () => {
+      jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([key({ label: 'Default' })]);
+      const warn = jest
+        .spyOn(svc['logger'], 'warn')
+        .mockImplementation(() => undefined as unknown as void);
+
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'Retired', 'agent-1');
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'Retired', 'agent-1');
+
+      expect(warn).toHaveBeenCalledTimes(1);
+    });
+
+    it('warns again after the stale-pin throttle window', async () => {
+      jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([key({ label: 'Default' })]);
+      const warn = jest
+        .spyOn(svc['logger'], 'warn')
+        .mockImplementation(() => undefined as unknown as void);
+      const now = jest.spyOn(Date, 'now');
+      now.mockReturnValueOnce(1_000).mockReturnValueOnce(61_000);
+
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'Retired', 'agent-1');
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'Retired', 'agent-1');
+
+      expect(warn).toHaveBeenCalledTimes(2);
+      now.mockRestore();
+    });
+
+    it('bounds stale-pin warning keys', async () => {
+      jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([key({ label: 'Default' })]);
+      jest.spyOn(svc['logger'], 'warn').mockImplementation(() => undefined as unknown as void);
+
+      for (let i = 0; i < 257; i++) {
+        await svc.selectProviderKey('u', 'openai', 'api_key', `Retired-${i}`, 'agent-1');
+      }
+
+      expect(svc['stalePinWarnings'].size).toBe(256);
+      expect(svc['stalePinWarnings'].has('u\0agent-1\0openai\0api_key\0retired-0')).toBe(false);
+    });
+
+    it('names the auth type as "any" in the warning when none was requested', async () => {
+      jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([key({ label: 'Default' })]);
+      const warn = jest
+        .spyOn(svc['logger'], 'warn')
+        .mockImplementation(() => undefined as unknown as void);
+
+      await svc.selectProviderKey('u', 'openai', undefined, 'Retired');
+
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('authType=any'));
+    });
+
+    it('sanitizes a label that carries control characters into the log line', async () => {
+      jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([key({ label: 'Default' })]);
+      const warn = jest
+        .spyOn(svc['logger'], 'warn')
+        .mockImplementation(() => undefined as unknown as void);
+
+      // A newline in a user-authored label would otherwise forge a log line.
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'Work\nWARN fake entry');
+
+      const line = warn.mock.calls[0][0] as string;
+      expect(line).not.toContain('\n');
+      expect(line).toContain('Work WARN fake entry');
+    });
+
+    it('truncates an over-long label in the log line', async () => {
+      jest.spyOn(svc, 'getProviderKeys').mockResolvedValue([key({ label: 'Default' })]);
+      const warn = jest
+        .spyOn(svc['logger'], 'warn')
+        .mockImplementation(() => undefined as unknown as void);
+
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'L'.repeat(200));
+
+      const line = warn.mock.calls[0][0] as string;
+      expect(line).toContain(`${'L'.repeat(64)}…`);
+      expect(line).not.toContain('L'.repeat(65));
+    });
+
+    it('does not warn when the label matches', async () => {
+      jest
+        .spyOn(svc, 'getProviderKeys')
+        .mockResolvedValue([key({ id: 'up-default' }), key({ id: 'up-work', label: 'Work' })]);
+      const warn = jest
+        .spyOn(svc['logger'], 'warn')
+        .mockImplementation(() => undefined as unknown as void);
+
+      await svc.selectProviderKey('u', 'openai', 'api_key', 'Work');
+
+      expect(warn).not.toHaveBeenCalled();
+    });
+
     it('returns the first key when no label is given', async () => {
       jest
         .spyOn(svc, 'getProviderKeys')

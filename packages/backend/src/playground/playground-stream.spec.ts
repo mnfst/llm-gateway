@@ -1,6 +1,7 @@
 import { consumeProviderStream } from './playground-stream';
 import type { ProviderClient } from '../routing/proxy/provider-client';
 import type { ForwardResult } from '../routing/proxy/provider-client';
+import { transformGoogleStreamChunk } from '../routing/proxy/google-adapter';
 
 function sseStream(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
@@ -24,7 +25,7 @@ function providerClientStub(over: Partial<ProviderClient> = {}): ProviderClient 
   return {
     convertGoogleStreamChunk: jest.fn(),
     createAnthropicStreamTransformer: jest.fn(),
-    convertChatGptStreamChunk: jest.fn(),
+    createChatGptStreamTransformer: jest.fn(),
     ...over,
   } as unknown as ProviderClient;
 }
@@ -95,7 +96,7 @@ describe('consumeProviderStream', () => {
 
   it('uses the Google chunk converter for Google-format streams', async () => {
     const convertGoogleStreamChunk = jest.fn(
-      (_e: string, _m: string): { chunk: string | null } => ({
+      (_e: string, _m: string, _s?: unknown): { chunk: string | null } => ({
         chunk: 'data: {"choices":[{"delta":{"content":"G"}}]}\n\n',
       }),
     );
@@ -103,20 +104,70 @@ describe('consumeProviderStream', () => {
       convertGoogleStreamChunk: convertGoogleStreamChunk as never,
     });
     const result = await consumeProviderStream(
-      sseStream(['data: {"candidates":[]}\n\n']),
+      sseStream(['data: {"candidates":[]}\n\n', 'data: {"candidates":[]}\n\n']),
       { isGoogle: true, isAnthropic: false, isChatGpt: false },
       'gemini/x',
       pc,
       () => undefined,
       Date.now(),
     );
-    expect(convertGoogleStreamChunk).toHaveBeenCalledWith('{"candidates":[]}', 'gemini/x');
-    expect(result.content).toBe('G');
+    expect(convertGoogleStreamChunk).toHaveBeenCalledWith(
+      '{"candidates":[]}',
+      'gemini/x',
+      expect.objectContaining({ toolCallCount: 0 }),
+    );
+    // One state object spans the whole stream.
+    const [first, second] = convertGoogleStreamChunk.mock.calls;
+    expect(second[2]).toBe(first[2]);
+    expect(result.content).toBe('GG');
+  });
+
+  describe('Google end-of-stream usage', () => {
+    const GOOGLE: Forward = { isGoogle: true, isAnthropic: false, isChatGpt: false };
+    const usageEvent = (text: string, n: number, finishReason?: string) =>
+      `data: ${JSON.stringify({
+        candidates: [{ content: { parts: [{ text }] }, ...(finishReason ? { finishReason } : {}) }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: n, totalTokenCount: 10 + n },
+      })}\n\n`;
+    // Records what the real converter emitted per event, so a regression to
+    // per-event finish/usage chunks fails even when the aggregate matches.
+    const emitted: (string | null)[] = [];
+    const recordingConverter = (...args: Parameters<typeof transformGoogleStreamChunk>) => {
+      const out = transformGoogleStreamChunk(...args);
+      emitted.push(out.chunk);
+      return out;
+    };
+    const run = (events: string[]) => {
+      emitted.length = 0;
+      return consumeProviderStream(
+        sseStream(events),
+        GOOGLE,
+        'gemini/x',
+        providerClientStub({ convertGoogleStreamChunk: recordingConverter }),
+        () => undefined,
+        Date.now(),
+      );
+    };
+    const closingEvents = () =>
+      emitted.map((chunk) => /"finish_reason":"|"usage":\{/.test(chunk ?? ''));
+
+    it('records the last usage when the stream ends before a finishReason', async () => {
+      const result = await run([usageEvent('a', 1), usageEvent('b', 2)]);
+      expect(result.content).toBe('ab');
+      expect(result.usage).toMatchObject({ prompt_tokens: 10, completion_tokens: 2 });
+      expect(closingEvents()).toEqual([false, false]);
+    });
+
+    it('records the terminal usage of a complete stream', async () => {
+      const result = await run([usageEvent('a', 1), usageEvent('', 4, 'STOP')]);
+      expect(result.usage).toMatchObject({ prompt_tokens: 10, completion_tokens: 4 });
+      expect(closingEvents()).toEqual([false, true]);
+    });
   });
 
   it('unwraps CodeAssist Google stream payloads before conversion', async () => {
     const convertGoogleStreamChunk = jest.fn(
-      (_e: string, _m: string): { chunk: string | null } => ({
+      (_e: string, _m: string, _s?: unknown): { chunk: string | null } => ({
         chunk: 'data: {"choices":[{"delta":{"content":"C"}}]}\n\n',
       }),
     );
@@ -133,7 +184,11 @@ describe('consumeProviderStream', () => {
       Date.now(),
     );
 
-    expect(convertGoogleStreamChunk).toHaveBeenCalledWith(JSON.stringify(inner), 'gemini/x');
+    expect(convertGoogleStreamChunk).toHaveBeenCalledWith(
+      JSON.stringify(inner),
+      'gemini/x',
+      expect.objectContaining({ toolCallCount: 0 }),
+    );
     expect(result.content).toBe('C');
   });
 
@@ -176,12 +231,13 @@ describe('consumeProviderStream', () => {
     expect(result.content).toBe('A');
   });
 
-  it('uses the ChatGPT chunk converter for Responses-format streams', async () => {
-    const convertChatGptStreamChunk = jest.fn(
+  it('uses a per-stream ChatGPT transformer for Responses-format streams', async () => {
+    const transformer = jest.fn(
       (): string | null => 'data: {"choices":[{"delta":{"content":"C"}}]}\n\n',
     );
+    const createChatGptStreamTransformer = jest.fn(() => transformer);
     const pc = providerClientStub({
-      convertChatGptStreamChunk: convertChatGptStreamChunk as never,
+      createChatGptStreamTransformer: createChatGptStreamTransformer as never,
     });
     const result = await consumeProviderStream(
       sseStream(['data: {"type":"response.output_text.delta"}\n\n']),
@@ -191,13 +247,14 @@ describe('consumeProviderStream', () => {
       () => undefined,
       Date.now(),
     );
-    expect(convertChatGptStreamChunk).toHaveBeenCalled();
+    expect(createChatGptStreamTransformer).toHaveBeenCalledWith('openai/gpt-5');
+    expect(transformer).toHaveBeenCalled();
     expect(result.content).toBe('C');
   });
 
   it('skips ChatGPT chunks that convert to null', async () => {
     const pc = providerClientStub({
-      convertChatGptStreamChunk: jest.fn(() => null) as never,
+      createChatGptStreamTransformer: jest.fn(() => jest.fn(() => null)) as never,
     });
     const result = await consumeProviderStream(
       sseStream(['data: {"type":"response.created"}\n\n']),

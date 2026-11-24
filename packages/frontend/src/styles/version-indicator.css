@@ -5,10 +5,70 @@
   bottom: var(--gap-md);
   right: var(--gap-md);
   z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   color: hsl(var(--muted-foreground));
   opacity: 0.5;
   cursor: default;
   user-select: none;
+}
+
+/* The dev-only Wingman FAB (44px tall, 22px from the corner) shares this
+   corner. Lift the badge above it while it is on the page; production
+   builds never render the FAB, so this rule never fires there. */
+body:has(.wingman-fab) .version-indicator {
+  bottom: calc(22px + 44px + var(--gap-sm));
+}
+
+/* A newer release exists: make the badge readable and clickable. */
+.version-indicator--update {
+  opacity: 1;
+  user-select: text;
+  padding: 4px 6px 4px 10px;
+  border-radius: var(--radius-sm);
+  background: hsl(var(--card));
+  border: 1px solid hsl(var(--border));
+  box-shadow: var(--shadow-sm);
+}
+
+.version-indicator__update {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-sm);
+}
+
+.version-indicator__update a {
+  color: hsl(var(--primary));
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.version-indicator__update a:hover,
+.version-indicator__update a:focus-visible {
+  text-decoration: underline;
+}
+
+.version-indicator__dismiss {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  /* 24px minimum hit area so the × is tappable on touch screens. */
+  padding: 0 6px;
+  min-width: 24px;
+  min-height: 24px;
+  font: inherit;
+  font-size: var(--font-size-sm);
+  line-height: 1;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.version-indicator__dismiss:hover,
+.version-indicator__dismiss:focus-visible {
+  color: hsl(var(--foreground));
+  background: hsl(var(--muted));
 }

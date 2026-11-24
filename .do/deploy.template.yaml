@@ -38,6 +38,27 @@ spec:
         - key: MANIFEST_ENCRYPTION_KEY
           scope: RUN_TIME
           type: SECRET
+        - key: REQUEST_RECORDING_STORAGE
+          scope: RUN_TIME
+          value: s3
+        - key: REQUEST_RECORDING_S3_BUCKET
+          scope: RUN_TIME
+          type: SECRET
+        - key: REQUEST_RECORDING_S3_ENDPOINT
+          scope: RUN_TIME
+          type: SECRET
+        - key: REQUEST_RECORDING_S3_REGION
+          scope: RUN_TIME
+          value: us-east-1
+        - key: REQUEST_RECORDING_S3_ACCESS_KEY_ID
+          scope: RUN_TIME
+          type: SECRET
+        - key: REQUEST_RECORDING_S3_SECRET_ACCESS_KEY
+          scope: RUN_TIME
+          type: SECRET
+        - key: REQUEST_RECORDING_S3_FORCE_PATH_STYLE
+          scope: RUN_TIME
+          value: "false"
         - key: DB_POOL_MAX
           scope: RUN_TIME
           value: "10"

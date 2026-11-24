@@ -3,7 +3,7 @@ import { resolve } from 'path';
 
 export const DEFAULT_TELEMETRY_ENDPOINT = 'https://telemetry.manifest.build/v1/report';
 export const TELEMETRY_SCHEMA_VERSION = 1;
-export const TELEMETRY_DOCS_URL = 'https://manifest.build/docs/self-hosted#telemetry';
+export const TELEMETRY_DOCS_URL = 'https://manifest.build/llm-gateway/docs/self-hosted/#telemetry';
 
 export interface TelemetryConfig {
   enabled: boolean;

@@ -32,6 +32,19 @@ describe('computeQualityScore', () => {
       expect(score).toBeGreaterThanOrEqual(1);
       expect(score).toBeLessThanOrEqual(5);
     });
+
+    it('should score the Kimi Coding Plan wire ids as mid-range despite zero price and no flags', () => {
+      for (const name of ['k3', 'k3-256k']) {
+        const model = makeModel({
+          model_name: name,
+          input_price_per_token: 0,
+          output_price_per_token: 0,
+          capability_reasoning: false,
+          capability_code: false,
+        });
+        expect(computeQualityScore(model)).toBe(3);
+      }
+    });
   });
 
   /* ── Zero-price models (Ollama / local) ── */

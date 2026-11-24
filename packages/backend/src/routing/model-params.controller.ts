@@ -1,21 +1,5 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Delete,
-  Get,
-  Param,
-  Put,
-  Query,
-} from '@nestjs/common';
-import {
-  getProviderParamValue,
-  pickProviderCompatibleParams,
-  providerParamValueIsValid,
-  type AuthType,
-  type ProviderParamSpec,
-  type RequestParamDefaults,
-} from 'manifest-shared';
+import { Body, Controller, Delete, Get, Param, Put, Query } from '@nestjs/common';
+import { type AuthType, type ProviderParamSpec, type RequestParamDefaults } from 'manifest-shared';
 import { TenantCtx, TenantContext } from '../common/decorators/tenant-context.decorator';
 import { AgentModelParamsService } from './routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from './routing-core/provider-param-spec.service';
@@ -26,6 +10,7 @@ import {
   ModelParamSpecsQueryDto,
   SetModelParamsBodyDto,
 } from './dto/model-params.dto';
+import { sanitizeModelParams } from './model-params/sanitize-model-params';
 
 @Controller('api/v1/routing')
 export class ModelParamsController {
@@ -149,45 +134,13 @@ export class ModelParamsController {
     return { ok: true };
   }
 
-  /**
-   * Provider/key compatibility gate, driven by the single
-   * MPS provider parameter catalog. Returns the
-   * params trimmed to the keys the provider actually consumes — a partially
-   * incompatible payload still saves the compatible part rather than
-   * throwing, matching the proxy's lenient merge behavior.
-   *
-   * Throws when the payload is empty (no keys at all) or when no key is
-   * compatible with the provider — those are user errors the UI should
-   * surface, not silently swallow.
-   *
-   * Adding a new provider knob is one MPS entry;
-   * this method does not need to change.
-   */
   private async assertCompatibleParams(
     provider: string,
     authType: AuthType,
     model: string,
     params: RequestParamDefaults,
   ): Promise<RequestParamDefaults> {
-    const keys = Object.keys(params).filter(
-      (k) => (params as Record<string, unknown>)[k] !== undefined,
-    );
-    if (keys.length === 0) {
-      throw new BadRequestException('params must contain at least one configurable field');
-    }
     const specs = await this.providerParamSpecs.getSpecs(provider, authType, model);
-    const out = pickProviderCompatibleParams(params, specs);
-    if (Object.keys(out).length === 0) {
-      throw new BadRequestException(
-        `Provider "${provider}" does not consume any of the supplied params`,
-      );
-    }
-    for (const spec of specs) {
-      const value = getProviderParamValue(out, spec.path);
-      if (value !== undefined && !providerParamValueIsValid(spec, value)) {
-        throw new BadRequestException(`Invalid value for param "${spec.path}"`);
-      }
-    }
-    return out;
+    return sanitizeModelParams(provider, params, specs);
   }
 }

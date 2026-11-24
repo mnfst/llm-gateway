@@ -16,7 +16,7 @@ import { routingTierLabel } from './message-table-types.js';
 
 export interface MessageDetailsProps {
   messageId: string;
-  /** Open a linked message (the Auto-fix sibling) in the same list. */
+  /** Open a linked message (the Autofix sibling) in the same list. */
   onOpenMessage?: (id: string) => void;
 }
 
@@ -106,7 +106,7 @@ function describeOperation(op: AutofixOperation): string {
 }
 
 /**
- * Auto-fix card. Shows the branding, a human phrase, the operation details,
+ * Autofix card. Shows the branding, a human phrase, the operation details,
  * Phoenix IDs, and a link to the paired row.
  */
 export function AutofixSection(props: {
@@ -137,7 +137,7 @@ export function AutofixSection(props: {
       return 'Manifest caught an error, repaired the request, and retried it successfully.';
     return props.sibling
       ? 'This request failed. Manifest repaired it automatically and retried.'
-      : 'This request failed. Auto-fix tried but could not find a repair.';
+      : 'This request failed. Autofix tried but could not find a repair.';
   };
   // One row per edit: Phoenix's per-op detail when present, else our local fallback.
   const fixRows = (): Array<{ type: string; detail: string }> => {
@@ -162,7 +162,7 @@ export function AutofixSection(props: {
               <path d="m21.45 11.11-3-1.5-2.68-1.34-.03-.03-1.34-2.68-1.5-3c-.34-.68-1.45-.68-1.79 0l-1.5 3-1.34 2.68-.03.03-2.68 1.34-3 1.5c-.34.17-.55.52-.55.89s.21.72.55.89l3 1.5 2.68 1.34.03.03 1.34 2.68 1.5 3c.17.34.52.55.89.55s.72-.21.89-.55l1.5-3 1.34-2.68.03-.03 2.68-1.34 3-1.5c.34-.17.55-.52.55-.89s-.21-.72-.55-.89Z" />
             </svg>
           </span>
-          <span class="autofix-card__title">auto-fix</span>
+          <span class="autofix-card__title">autofix</span>
         </div>
 
         <p class="autofix-card__phrase">{phrase()}</p>
@@ -228,7 +228,7 @@ export function AutofixSection(props: {
                 >
                   <path d="m21.45 11.11-3-1.5-2.68-1.34-.03-.03-1.34-2.68-1.5-3c-.34-.68-1.45-.68-1.79 0l-1.5 3-1.34 2.68-.03.03-2.68 1.34-3 1.5c-.34.17-.55.52-.55.89s.21.72.55.89l3 1.5 2.68 1.34.03.03 1.34 2.68 1.5 3c.17.34.52.55.89.55s.72-.21.89-.55l1.5-3 1.34-2.68.03-.03 2.68-1.34 3-1.5c.34-.17.55-.52.55-.89s-.21-.72-.55-.89Z" />
                 </svg>
-                View Auto-fix retry
+                View Autofix retry
               </>
             ) : (
               <>← View original request</>
@@ -259,7 +259,7 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
           const d = data()!;
           const m = d.message;
           const provider = m.model ? inferProviderName(m.model) : null;
-          // Normalize status for display: a superseded failure (fallback / auto-fix
+          // Normalize status for display: a superseded failure (fallback / autofix
           // original) still renders its real two-state outcome. isSuccessStatus
           // accepts both the legacy `ok` and the canonical `success`.
           const displayStatus = () => {
@@ -276,7 +276,7 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
           const isAutofixOriginal = m.autofix_applied && m.autofix_role === 'original';
           const isAutofixRetry = m.autofix_applied && m.autofix_role === 'retry';
           // The superseded primary of a fallback flow (legacy status `fallback_error`,
-          // now the canonical `failed` + `superseded`), excluding the Auto-fix original
+          // now the canonical `failed` + `superseded`), excluding the Autofix original
           // which has its own next-action panel.
           const isFallbackError =
             m.status === 'fallback_error' || (m.superseded === true && !isAutofixOriginal);
@@ -296,7 +296,7 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
                     <span class={displayStatus().cls}>{displayStatus().label}</span>
                   </span>
                   <MetaField
-                    label="Auto-fix"
+                    label="Autofix"
                     value={m.autofix_status ? AUTOFIX_STATUS_LABELS[m.autofix_status] : null}
                   />
                   <MetaField label="ID" value={m.id} />
@@ -494,10 +494,10 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
                             <path d="m21.45 11.11-3-1.5-2.68-1.34-.03-.03-1.34-2.68-1.5-3c-.34-.68-1.45-.68-1.79 0l-1.5 3-1.34 2.68-.03.03-2.68 1.34-3 1.5c-.34.17-.55.52-.55.89s.21.72.55.89l3 1.5 2.68 1.34.03.03 1.34 2.68 1.5 3c.17.34.52.55.89.55s.72-.21.89-.55l1.5-3 1.34-2.68.03-.03 2.68-1.34 3-1.5c.34-.17.55-.52.55-.89s-.21-.72-.55-.89Z" />
                           </svg>
                         </span>
-                        <span class="autofix-card__title">auto-fix</span>
+                        <span class="autofix-card__title">autofix</span>
                       </div>
                       <p class="error-autofix-row__autofix-text" style="font-size: 12px;">
-                        This request was triggered by an auto-fix.
+                        This request was triggered by an autofix.
                       </p>
                     </div>
                   );
@@ -547,10 +547,10 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
                             <path d="m21.45 11.11-3-1.5-2.68-1.34-.03-.03-1.34-2.68-1.5-3c-.34-.68-1.45-.68-1.79 0l-1.5 3-1.34 2.68-.03.03-2.68 1.34-3 1.5c-.34.17-.55.52-.55.89s.21.72.55.89l3 1.5 2.68 1.34.03.03 1.34 2.68 1.5 3c.17.34.52.55.89.55s.72-.21.89-.55l1.5-3 1.34-2.68.03-.03 2.68-1.34 3-1.5c.34-.17.55-.52.55-.89s-.21-.72-.55-.89Z" />
                           </svg>
                         </span>
-                        <span class="autofix-card__title">auto-fix</span>
+                        <span class="autofix-card__title">autofix</span>
                       </div>
                       <p class="error-autofix-row__autofix-text">
-                        Auto-fix was attempted after this error.
+                        Autofix was attempted after this error.
                       </p>
                       <Show when={m.autofix_sibling && props.onOpenMessage}>
                         <button
@@ -569,7 +569,7 @@ export default function MessageDetails(props: MessageDetailsProps): JSX.Element 
                           >
                             <path d="m21.45 11.11-3-1.5-2.68-1.34-.03-.03-1.34-2.68-1.5-3c-.34-.68-1.45-.68-1.79 0l-1.5 3-1.34 2.68-.03.03-2.68 1.34-3 1.5c-.34.17-.55.52-.55.89s.21.72.55.89l3 1.5 2.68 1.34.03.03 1.34 2.68 1.5 3c.17.34.52.55.89.55s.72-.21.89-.55l1.5-3 1.34-2.68.03-.03 2.68-1.34 3-1.5c.34-.17.55-.52.55-.89s-.21-.72-.55-.89Z" />
                           </svg>
-                          View Auto-fix retry
+                          View Autofix retry
                         </button>
                       </Show>
                     </div>

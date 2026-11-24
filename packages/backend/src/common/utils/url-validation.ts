@@ -116,7 +116,9 @@ export function isCloudMetadataIp(ip: string): boolean {
 
   if (normalizedIp.includes(':')) {
     const lower = normalizedIp.toLowerCase();
-    return CLOUD_METADATA_V6.some((prefix) => lower.startsWith(prefix));
+    // Exact match, not a prefix: `fd00:ec2::254:1` is a legitimate ULA address,
+    // not the AWS IMDS endpoint.
+    return CLOUD_METADATA_V6.some((metadata) => lower === metadata);
   }
 
   const parsed = normalizedIp.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/);

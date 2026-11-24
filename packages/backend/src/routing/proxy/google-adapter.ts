@@ -131,10 +131,15 @@ function sanitizeSchema(schema: unknown, isPropertiesMap = false): unknown {
 
 function safeParseArgs(args: string | undefined): Record<string, unknown> {
   try {
-    return JSON.parse(args || '{}') as Record<string, unknown>;
+    // JSON.parse('null') and JSON.parse('[]') succeed, but Gemini functionCall
+    // args must be a Struct. A no-arg tool echoed as the string "null" would
+    // otherwise be forwarded as args: null and rejected.
+    const parsed: unknown = JSON.parse(args || '{}');
+    if (isRecord(parsed)) return parsed;
   } catch {
-    return {};
+    // Malformed arguments are an empty object, same as a missing payload.
   }
+  return {};
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -245,8 +250,16 @@ function messageToContent(
     }
   }
 
-  // Handle tool response
-  if (msg.role === 'tool' && typeof msg.content === 'string') {
+  // Handle tool response. Chat completions also accepts a tool message's
+  // content as an array of text parts; it still has to become a
+  // functionResponse, or the preceding functionCall is left unanswered.
+  const toolResult =
+    typeof msg.content === 'string'
+      ? msg.content
+      : Array.isArray(msg.content)
+        ? parts.map((part) => part.text ?? '').join('')
+        : null;
+  if (msg.role === 'tool' && toolResult !== null) {
     const toolCallId = (msg.tool_call_id as string) || '';
     // Resolve the real function name from the tool_call history. Falling back
     // to the id (or 'unknown') is wrong semantically but avoids hard failures
@@ -254,7 +267,7 @@ function messageToContent(
     const functionName = toolNamesById.get(toolCallId) || 'unknown';
     const functionResponse: GeminiFunctionResponse = {
       name: functionName,
-      response: { result: msg.content },
+      response: { result: toolResult },
     };
     if (toolCallId) functionResponse.id = toolCallId;
     return { role: 'user', parts: [{ functionResponse }] };
@@ -270,8 +283,7 @@ function convertTools(tools?: Record<string, unknown>[]): Record<string, unknown
   const declarations = tools
     .map((t) => {
       const fn = t.function as
-        | { name: string; description?: string; parameters?: unknown }
-        | undefined;
+        { name: string; description?: string; parameters?: unknown } | undefined;
       if (!fn) return null;
       return {
         name: fn.name,
@@ -283,6 +295,26 @@ function convertTools(tools?: Record<string, unknown>[]): Record<string, unknown
 
   if (declarations.length === 0) return undefined;
   return [{ functionDeclarations: declarations }];
+}
+
+/**
+ * chat_completions `tool_choice` → Gemini `toolConfig`. A named function is
+ * forced with mode `ANY` limited to that one function.
+ */
+function toGoogleToolConfig(choice: unknown): Record<string, unknown> | undefined {
+  let functionCallingConfig: Record<string, unknown> | undefined;
+  if (choice === 'auto') functionCallingConfig = { mode: 'AUTO' };
+  else if (choice === 'none') functionCallingConfig = { mode: 'NONE' };
+  else if (choice === 'required') functionCallingConfig = { mode: 'ANY' };
+  else if (
+    isRecord(choice) &&
+    choice.type === 'function' &&
+    isRecord(choice.function) &&
+    typeof choice.function.name === 'string'
+  ) {
+    functionCallingConfig = { mode: 'ANY', allowedFunctionNames: [choice.function.name] };
+  }
+  return functionCallingConfig ? { functionCallingConfig } : undefined;
 }
 
 function applyResponseFormatToGenerationConfig(
@@ -311,6 +343,24 @@ function applyResponseFormatToGenerationConfig(
   genConfig.responseSchema = sanitizeSchema(jsonSchema.schema);
 }
 
+/**
+ * System prompts may arrive as content-part arrays (OpenAI SDK clients,
+ * translated Responses `developer` items), not only as plain strings.
+ */
+function systemContentText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter(
+      (part): part is { text: string } =>
+        isRecord(part) &&
+        typeof part.text === 'string' &&
+        (part.type === 'text' || part.type === 'input_text'),
+    )
+    .map((part) => part.text)
+    .join('\n');
+}
+
 /** Extracted thought_signature entries from a Gemini response. */
 export interface ExtractedSignature {
   toolCallId: string;
@@ -327,14 +377,15 @@ export function toGoogleRequest(
   const toolNamesById = buildToolCallNameMap(messages);
 
   // Extract system instruction
-  const systemMsgs = messages.filter((m) => m.role === 'system');
+  const isSystem = (m: OpenAIMessage) => m.role === 'system' || m.role === 'developer';
+  const systemMsgs = messages.filter(isSystem);
   const systemText = systemMsgs
-    .map((m) => (typeof m.content === 'string' ? m.content : ''))
+    .map((m) => systemContentText(m.content))
     .filter(Boolean)
     .join('\n');
 
   for (const msg of messages) {
-    if (msg.role === 'system') continue;
+    if (isSystem(msg)) continue;
     const content = messageToContent(msg, toolNamesById, signatureLookup);
     if (content) contents.push(content);
   }
@@ -369,14 +420,32 @@ export function toGoogleRequest(
   }
 
   const tools = convertTools(body.tools as Record<string, unknown>[] | undefined);
-  if (tools) result.tools = tools;
+  if (tools) {
+    result.tools = tools;
+    const toolConfig = toGoogleToolConfig(body.tool_choice);
+    if (toolConfig) result.toolConfig = toolConfig;
+  }
 
   const genConfig: Record<string, unknown> = isRecord(body.generationConfig)
     ? cloneRecord(body.generationConfig)
     : {};
-  if (body.max_tokens !== undefined) genConfig.maxOutputTokens = body.max_tokens;
+  // OpenAI SDKs send the output cap as `max_completion_tokens` (the
+  // replacement for the deprecated `max_tokens`); accept either.
+  const maxTokens = body.max_tokens ?? body.max_completion_tokens;
+  if (maxTokens !== undefined) genConfig.maxOutputTokens = maxTokens;
   if (body.temperature !== undefined) genConfig.temperature = body.temperature;
   if (body.top_p !== undefined) genConfig.topP = body.top_p;
+  if (body.seed !== undefined) genConfig.seed = body.seed;
+  // chat_completions `stop` accepts a string or string[]; Gemini
+  // `stopSequences` is always an array. An explicit empty `stop` ([] or '')
+  // means "no stop sequences", so it also clears native ones.
+  if (Array.isArray(body.stop) && body.stop.length > 0) {
+    genConfig.stopSequences = body.stop;
+  } else if (typeof body.stop === 'string' && body.stop) {
+    genConfig.stopSequences = [body.stop];
+  } else if (Array.isArray(body.stop) || body.stop === '') {
+    delete genConfig.stopSequences;
+  }
   applyResponseFormatToGenerationConfig(genConfig, body.response_format);
   if (Object.keys(genConfig).length > 0) result.generationConfig = genConfig;
 
@@ -393,12 +462,26 @@ export function fromGoogleResponse(
   const candidate = candidates[0];
 
   if (!candidate) {
+    // A prompt rejected up front comes back with `promptFeedback.blockReason`
+    // and no candidates. Surface it as a content_filter finish rather than an
+    // empty `choices` array, and keep the usage Google still reports.
+    const blocked = hasPromptBlock(googleResp);
+    const blockedUsage = googleResp.usageMetadata as Record<string, number> | undefined;
     return {
       id: `chatcmpl-${randomUUID()}`,
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model,
-      choices: [],
+      choices: blocked
+        ? [
+            {
+              index: 0,
+              message: { role: 'assistant', content: null },
+              finish_reason: 'content_filter',
+            },
+          ]
+        : [],
+      ...(blockedUsage ? { usage: toChatUsage(blockedUsage) } : {}),
     };
   }
 
@@ -423,7 +506,7 @@ export function fromGoogleResponse(
       const toolCall: Record<string, unknown> = {
         id: toolCallId,
         type: 'function',
-        function: { name: fc.name, arguments: JSON.stringify(fc.args) },
+        function: { name: fc.name, arguments: JSON.stringify(fc.args ?? {}) },
       };
       const sig = part.thoughtSignature;
       if (typeof sig === 'string' && sig) {
@@ -447,18 +530,34 @@ export function fromGoogleResponse(
     choices: [
       { index: 0, message, finish_reason: mapFinishReason(candidate, toolCalls.length > 0) },
     ],
-    usage: usage
-      ? {
-          prompt_tokens: usage.promptTokenCount ?? 0,
-          completion_tokens: usage.candidatesTokenCount ?? 0,
-          total_tokens: usage.totalTokenCount ?? 0,
-          prompt_tokens_details: { cached_tokens: usage.cachedContentTokenCount ?? 0 },
-          cache_read_tokens: usage.cachedContentTokenCount ?? 0,
-          cache_creation_tokens: 0,
-        }
-      : undefined,
+    usage: usage ? toChatUsage(usage) : undefined,
     ...(extractedSignatures.length > 0 ? { _extractedSignatures: extractedSignatures } : {}),
   };
+}
+
+/**
+ * Gemini counts thinking tokens in `thoughtsTokenCount`, apart from
+ * `candidatesTokenCount`, and bills them as output. Fold them into
+ * `completion_tokens` (and report them as `reasoning_tokens`, like OpenAI) so
+ * thinking models are not under-counted and under-priced.
+ */
+function toChatUsage(usage: Record<string, number>): Record<string, unknown> {
+  const reasoningTokens = usage.thoughtsTokenCount ?? 0;
+  const cachedTokens = usage.cachedContentTokenCount ?? 0;
+  return {
+    prompt_tokens: usage.promptTokenCount ?? 0,
+    completion_tokens: (usage.candidatesTokenCount ?? 0) + reasoningTokens,
+    total_tokens: usage.totalTokenCount ?? 0,
+    prompt_tokens_details: { cached_tokens: cachedTokens },
+    completion_tokens_details: { reasoning_tokens: reasoningTokens },
+    cache_read_tokens: cachedTokens,
+    cache_creation_tokens: 0,
+  };
+}
+
+function hasPromptBlock(data: Record<string, unknown>): boolean {
+  const feedback = data.promptFeedback as { blockReason?: unknown } | undefined;
+  return Boolean(feedback?.blockReason);
 }
 
 function mapFinishReason(candidate: Record<string, unknown>, hasToolCalls = false): string {
@@ -470,6 +569,13 @@ function mapFinishReason(candidate: Record<string, unknown>, hasToolCalls = fals
     MAX_TOKENS: 'length',
     SAFETY: 'content_filter',
     RECITATION: 'content_filter',
+    BLOCKLIST: 'content_filter',
+    PROHIBITED_CONTENT: 'content_filter',
+    SPII: 'content_filter',
+    IMAGE_SAFETY: 'content_filter',
+    IMAGE_PROHIBITED_CONTENT: 'content_filter',
+    IMAGE_RECITATION: 'content_filter',
+    LANGUAGE: 'content_filter',
   };
   return map[reason] ?? 'stop';
 }
@@ -488,7 +594,42 @@ export interface GoogleStreamChunkResult {
   signatures: ExtractedSignature[];
 }
 
-export function transformGoogleStreamChunk(chunk: string, model: string): GoogleStreamChunkResult {
+/**
+ * Per-stream state. Gemini sends each functionCall in its own SSE event and
+ * repeats usage on every event, so the completion id, tool-call indices, the
+ * finish reason, and the usage must span the whole stream, not one event.
+ */
+export interface GoogleStreamState {
+  id: string;
+  created: number;
+  toolCallCount: number;
+  /** Latest cumulative usageMetadata seen, reported on the terminal event. */
+  usage?: Record<string, number>;
+  /** Set once the finish chunk is sent, so a later usage trailer adds no second one. */
+  finished: boolean;
+  /** Set once the usage chunk is sent, so the stream reports usage exactly once. */
+  usageSent: boolean;
+}
+
+export function createGoogleStreamState(): GoogleStreamState {
+  return {
+    id: `chatcmpl-${randomUUID()}`,
+    created: Math.floor(Date.now() / 1000),
+    toolCallCount: 0,
+    finished: false,
+    usageSent: false,
+  };
+}
+
+/**
+ * Transform one Google SSE event. Pass the same `state` for every event of a
+ * stream; omitting it treats the event as a stream of its own.
+ */
+export function transformGoogleStreamChunk(
+  chunk: string,
+  model: string,
+  state: GoogleStreamState = createGoogleStreamState(),
+): GoogleStreamChunkResult {
   const empty: GoogleStreamChunkResult = { chunk: null, signatures: [] };
   if (!chunk.trim()) return empty;
 
@@ -515,7 +656,7 @@ export function transformGoogleStreamChunk(chunk: string, model: string): Google
       const fc = part.functionCall as GeminiFunctionCall;
       const toolCallId = typeof fc.id === 'string' && fc.id ? fc.id : `call_${randomUUID()}`;
       const toolCall: Record<string, unknown> = {
-        index: toolCalls.length,
+        index: state.toolCallCount++,
         id: toolCallId,
         type: 'function',
         function: { name: fc.name, arguments: JSON.stringify(fc.args ?? {}) },
@@ -536,40 +677,70 @@ export function transformGoogleStreamChunk(chunk: string, model: string): Google
     if (text) delta.content = text;
     if (toolCalls.length > 0) delta.tool_calls = toolCalls;
     result += `data: ${JSON.stringify({
-      id: `chatcmpl-${randomUUID()}`,
+      id: state.id,
       object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
+      created: state.created,
       model,
       choices: [{ index: 0, delta, finish_reason: null }],
     })}\n\n`;
   }
 
+  // Gemini repeats cumulative usageMetadata on every event, so only the
+  // terminal event (a finishReason, or a usage-only trailer with no
+  // candidate) closes the stream; its usage is the total.
   const usage = data.usageMetadata as Record<string, number> | undefined;
-  if (usage) {
-    const finishReason = mapFinishReason(candidate ?? {}, toolCalls.length > 0);
-    result += `data: ${JSON.stringify({
-      id: `chatcmpl-${randomUUID()}`,
-      object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
-    })}\n\n`;
-    result += `data: ${JSON.stringify({
-      id: `chatcmpl-${randomUUID()}`,
-      object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
-      model,
-      choices: [],
-      usage: {
-        prompt_tokens: usage.promptTokenCount ?? 0,
-        completion_tokens: usage.candidatesTokenCount ?? 0,
-        total_tokens: usage.totalTokenCount ?? 0,
-        prompt_tokens_details: { cached_tokens: usage.cachedContentTokenCount ?? 0 },
-        cache_read_tokens: usage.cachedContentTokenCount ?? 0,
-        cache_creation_tokens: 0,
-      },
-    })}\n\n`;
+  if (usage) state.usage = usage;
+  const promptBlocked = !candidate && hasPromptBlock(data);
+  const isTerminal =
+    Boolean(candidate?.finishReason) || (Boolean(usage) && !candidate) || promptBlocked;
+  if (isTerminal) {
+    if (!state.finished) {
+      state.finished = true;
+      const finishReason = promptBlocked
+        ? 'content_filter'
+        : mapFinishReason(candidate ?? {}, state.toolCallCount > 0);
+      result += `data: ${JSON.stringify({
+        id: state.id,
+        object: 'chat.completion.chunk',
+        created: state.created,
+        model,
+        choices: [{ index: 0, delta: {}, finish_reason: finishReason }],
+      })}\n\n`;
+    }
+    // A trailer after the finish event can still supply usage the finish
+    // event lacked, but never a second usage chunk.
+    if (state.usage && !state.usageSent) {
+      state.usageSent = true;
+      result += usageChunk(state, state.usage, model);
+    }
   }
 
   return { chunk: result || null, signatures };
+}
+
+function usageChunk(
+  state: GoogleStreamState,
+  usage: Record<string, number>,
+  model: string,
+): string {
+  return `data: ${JSON.stringify({
+    id: state.id,
+    object: 'chat.completion.chunk',
+    created: state.created,
+    model,
+    choices: [],
+    usage: toChatUsage(usage),
+  })}\n\n`;
+}
+
+/**
+ * End-of-stream hook. Gemini has no terminal event of its own, so an upstream
+ * that ends before any finishReason never reported usage; return the last
+ * cumulative usage seen so the request still records it. Usage only: no
+ * finish chunk is invented for a stream the provider did not finish.
+ */
+export function finishGoogleStream(state: GoogleStreamState, model: string): string | null {
+  if (state.usageSent || !state.usage) return null;
+  state.usageSent = true;
+  return usageChunk(state, state.usage, model);
 }

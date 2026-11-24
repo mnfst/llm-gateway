@@ -6,7 +6,7 @@ export interface OpencodeGoCatalogEntry {
   /** Human-readable display name from the docs (e.g. "GLM-5.1"). */
   displayName: string;
   /** Which upstream API format the model expects. */
-  format: 'openai' | 'anthropic';
+  format: 'openai' | 'anthropic' | 'responses';
   /**
    * Cost in USD attributed to one request, derived from the docs Usage Limits
    * table: `OPENCODE_GO_BUDGET_5H_USD / requestsPer5h`. `null` when the docs
@@ -196,7 +196,7 @@ export class OpencodeGoCatalogService implements OnModuleInit {
   parse(mdx: string): OpencodeGoCatalogEntry[] {
     const costByName = this.parseLimits(mdx);
     const rowRe =
-      /\|\s*([A-Za-z][^|]*?)\s*\|\s*([a-z][a-z0-9.-]*)\s*\|\s*`?https:\/\/opencode\.ai\/zen\/go\/v1\/(chat\/completions|messages)`?\s*\|/g;
+      /\|\s*([A-Za-z][^|]*?)\s*\|\s*([a-z][a-z0-9.-]*)\s*\|\s*`?https:\/\/opencode\.ai\/zen\/go\/v1\/(chat\/completions|messages|responses)`?\s*\|/g;
     const entries: OpencodeGoCatalogEntry[] = [];
     const seen = new Set<string>();
     let match: RegExpExecArray | null;
@@ -211,7 +211,12 @@ export class OpencodeGoCatalogService implements OnModuleInit {
       entries.push({
         id: modelId,
         displayName,
-        format: endpointSuffix === 'messages' ? 'anthropic' : 'openai',
+        format:
+          endpointSuffix === 'messages'
+            ? 'anthropic'
+            : endpointSuffix === 'responses'
+              ? 'responses'
+              : 'openai',
         costPerRequestUsd: costByName.get(normalizeDisplayName(displayName)) ?? null,
       });
     }
@@ -221,17 +226,28 @@ export class OpencodeGoCatalogService implements OnModuleInit {
   /**
    * Parse the Usage Limits table. Maps normalized display name → USD per
    * request, derived from the published 5-hour request count. The Endpoints
-   * table is excluded by anchoring on three numeric columns after the name.
+   * table and the token-price table are excluded because their first column
+   * after the name is a model id or a dollar amount, not a bare count, and a
+   * cost is only ever read back for a name the Endpoints table also lists.
+   *
+   * Parsed row by row rather than with one table-wide regex because the docs
+   * dress these cells up: a promotional row strikes the superseded count
+   * through and bolds the new one (`~~6,500~~<br />**26,000**`) and hangs a
+   * `<small>` note off the model name. A regex anchored on a bare number
+   * silently skipped those rows, so the model showed as quota-less.
    */
   private parseLimits(mdx: string): Map<string, number> {
-    const limitsRe =
-      /\|\s*([A-Za-z][^|]*?)\s*\|\s*([0-9][0-9,]*)\s*\|\s*([0-9][0-9,]*)\s*\|\s*([0-9][0-9,]*)\s*\|/g;
     const out = new Map<string, number>();
-    let match: RegExpExecArray | null;
-    while ((match = limitsRe.exec(mdx)) !== null) {
-      const [, rawName, rawRequests] = match;
-      const requestsPer5h = Number(rawRequests.replace(/,/g, ''));
-      if (!Number.isFinite(requestsPer5h) || requestsPer5h <= 0) continue;
+    for (const line of mdx.split('\n')) {
+      const cells = splitTableRow(line);
+      if (cells === null || cells.length < 4) continue;
+      const [rawName, ...rest] = cells;
+      if (!/^[A-Za-z]/.test(rawName)) continue;
+      // Only the per-5-hour count is consumed. Gating on the per-week and
+      // per-month columns too would drop the whole row the day the docs dress
+      // one of them up, which is the failure this parser exists to prevent.
+      const requestsPer5h = parseRequestCount(rest[0]);
+      if (requestsPer5h === null) continue;
       const key = normalizeDisplayName(rawName);
       // First occurrence wins, mirroring the Endpoints table's dedup behaviour.
       if (out.has(key)) continue;
@@ -275,9 +291,43 @@ function bareOpencodeGoModelId(modelId: string | null | undefined): string | nul
  * collapse whitespace so the two forms collide on the same key.
  */
 function normalizeDisplayName(name: string): string {
-  return name
-    .replace(/\s*\([^)]*\)\s*/g, ' ')
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toLowerCase();
+  return (
+    name
+      // A name cell can carry an inline note ("DeepSeek V4.1 Flash<br
+      // /><small>4x · Ends Sep 20</small>"). Names never contain '<', so cutting
+      // there leaves the name the Endpoints table publishes.
+      .split('<')[0]
+      .replace(/\s*\([^)]*\)\s*/g, ' ')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase()
+  );
+}
+
+/**
+ * Split one markdown table line into trimmed cells, or null when the line is
+ * not a table row.
+ */
+function splitTableRow(line: string): string[] | null {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith('|')) return null;
+  const body = trimmed.endsWith('|') ? trimmed.slice(1, -1) : trimmed.slice(1);
+  return body.split('|').map((cell) => cell.trim());
+}
+
+/**
+ * Read a request count out of one cell, or null when the cell holds anything
+ * else ("Unlimited", a dollar amount, a model id). Struck-through values are
+ * superseded by the promoted one next to them, so they are dropped before the
+ * number is read; the surviving markup (`<br />`, `**`) is stripped.
+ */
+function parseRequestCount(cell: string): number | null {
+  const effective = cell
+    .replace(/~~[^~]*~~/g, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\*/g, '')
+    .trim();
+  if (!/^[0-9][0-9,]*$/.test(effective)) return null;
+  const value = Number(effective.replace(/,/g, ''));
+  return Number.isFinite(value) && value > 0 ? value : null;
 }

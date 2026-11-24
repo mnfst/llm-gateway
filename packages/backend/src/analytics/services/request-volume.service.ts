@@ -1,3 +1,4 @@
+import type { AgentScope } from './analytics-scope.service';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -6,13 +7,14 @@ import { rangeToInterval } from '../../common/utils/range.util';
 import { computeCutoff, sqlDateBucket, sqlHourBucket } from '../../common/utils/postgres-sql';
 import {
   sqlExcludePlayground,
+  sqlAgentScope,
   sqlIsCompletedStatus,
   sqlIsFailedStatus,
   sqlIsSuccessStatus,
 } from './query-helpers';
 
 /**
- * Request-level volume metrics (mnfst/manifest#2511).
+ * Request-level volume metrics (mnfst/llm-gateway#2511).
  *
  * Grouping is a lens, not a filter: the Overview's Requests chart must stack
  * to the same total in all three views (By request status / By provider /
@@ -37,7 +39,7 @@ const TERMINAL_RANK = `CASE WHEN ${sqlIsSuccessStatus('pa.status')} THEN 3
 const REQUEST_SUCCEEDED = sqlIsSuccessStatus('t.request_status');
 
 /**
- * How the request CONCLUDED. Auto-fix comes from the request outcome; fallback
+ * How the request CONCLUDED. Autofix comes from the request outcome; fallback
  * comes from the terminal attempt. These mark the method that produced the
  * conclusion, never mere attempts along the way.
  */
@@ -52,6 +54,15 @@ export interface DispositionRow {
   bucket: string;
   dim: string | null;
   count: string;
+}
+
+/** Request-level disposition totals over one window: one row per logical request. */
+export interface DispositionTotals {
+  total: number;
+  success: number;
+  healed: number;
+  fallback: number;
+  error: number;
 }
 
 export interface VolumeSeriesRow {
@@ -77,7 +88,7 @@ export interface DimensionVolumeRow {
   requests: number;
   failed: number;
   succeeded: number;
-  /** Requests recovered by Auto-fix (autofix_status = retry_succeeded). */
+  /** Requests recovered by Autofix (autofix_status = retry_succeeded). */
   healed: number;
   /** Requests recovered by fallback (terminal ok attempt with a fallback origin). */
   fallback: number;
@@ -92,28 +103,16 @@ export class RequestVolumeService {
 
   /**
    * The shared reduction: one row per logical request carrying its terminal
-   * attempt's attribution fields. `$1` tenant, `$2` cutoff, `$3` agent name
+   * attempt's attribution fields. `$1` tenant, `$2` cutoff, `$3` agent ID
    * (only when scoped). In-flight requests (`pending`) are excluded — they
    * have no outcome to chart yet.
    */
-  private terminalCte(agentName?: string, hasTo = false): string {
+  private terminalCte(agentScope?: AgentScope, hasTo = false): string {
     const agentIdx = hasTo ? 4 : 3;
     const toR = hasTo ? 'AND r.timestamp < $3' : '';
     const toPa = hasTo ? 'AND pa.timestamp < $3' : '';
-    const agentPredicateR = agentName
-      ? `AND r.agent_id = (
-           SELECT id FROM agents
-           WHERE tenant_id = $1 AND name = $${agentIdx} AND deleted_at IS NULL
-           LIMIT 1
-         )`
-      : '';
-    const agentPredicatePa = agentName
-      ? `AND pa.agent_id = (
-           SELECT id FROM agents
-           WHERE tenant_id = $1 AND name = $${agentIdx} AND deleted_at IS NULL
-           LIMIT 1
-         )`
-      : '';
+    const agentPredicateR = sqlAgentScope('r', `$${agentIdx}`, agentScope);
+    const agentPredicatePa = sqlAgentScope('pa', `$${agentIdx}`, agentScope);
     return `WITH terminal AS (
       (
         SELECT DISTINCT ON (r.id)
@@ -170,9 +169,9 @@ export class RequestVolumeService {
     )`;
   }
 
-  private params(tenantId: string, range: string, agentName?: string): unknown[] {
+  private params(tenantId: string, range: string, agentScope?: AgentScope): unknown[] {
     const cutoff = computeCutoff(rangeToInterval(range));
-    return agentName ? [tenantId, cutoff, agentName] : [tenantId, cutoff];
+    return agentScope ? [tenantId, cutoff, agentScope.agentId] : [tenantId, cutoff];
   }
 
   /**
@@ -208,39 +207,73 @@ export class RequestVolumeService {
   }
 
   /**
-   * Request-level disposition totals over an explicit [from, to) window: the
-   * SINGLE definition behind the KPI cards, the Recovered tab count and the
-   * By request status chart. One request, one disposition.
+   * Request-level disposition totals for the current and previous window from
+   * ONE terminal-CTE scan.
+   *
+   * The KPI cards report the current window and need the previous window only
+   * for the trend arrow. Scanning `[from, to)` once and splitting the counts at
+   * `splitAt` with FILTER aggregates replaces two scans of the same
+   * request/attempt window. The terminal reduction is the same one the By
+   * request status chart uses, so both windows cover the identical universe.
    */
-  async getDispositionTotals(params: {
+  async getDispositionTotalsForWindows(params: {
     tenantId: string | null;
     from: string;
+    splitAt: string;
     to?: string;
-    agentName?: string;
-  }): Promise<{ total: number; success: number; healed: number; fallback: number; error: number }> {
-    const empty = { total: 0, success: 0, healed: 0, fallback: 0, error: 0 };
-    if (!params.tenantId) return empty;
-    const sqlParams: unknown[] = [params.tenantId, params.from];
-    if (params.to) sqlParams.push(params.to);
-    if (params.agentName) sqlParams.push(params.agentName);
-    const sql = `${this.terminalCte(params.agentName, !!params.to)}
-      SELECT ${DISPOSITION_EXPR} AS dim, COUNT(*)::int AS count
+    agentScope?: AgentScope;
+  }): Promise<{ current: DispositionTotals; previous: DispositionTotals }> {
+    const empty = (): DispositionTotals => ({
+      total: 0,
+      success: 0,
+      healed: 0,
+      fallback: 0,
+      error: 0,
+    });
+    if (!params.tenantId) return { current: empty(), previous: empty() };
+    // `terminalCte(..., hasTo=true)` expects $2 = lower bound, $3 = upper bound,
+    // $4 = agent ID. The window split then becomes the next parameter.
+    const sqlParams: unknown[] = [
+      params.tenantId,
+      params.from,
+      params.to ?? computeCutoff('0 hours'),
+    ];
+    if (params.agentScope) sqlParams.push(params.agentScope.agentId);
+    sqlParams.push(params.splitAt);
+    const splitIdx = sqlParams.length;
+    const sql = `${this.terminalCte(params.agentScope, true)}
+      SELECT ${DISPOSITION_EXPR} AS dim,
+        COUNT(*) FILTER (WHERE t.ts >= $${splitIdx})::int AS current_count,
+        COUNT(*) FILTER (WHERE t.ts < $${splitIdx})::int AS previous_count
       FROM terminal t
       GROUP BY 1`;
     const rows = (await this.messageRepo.query(sql, sqlParams)) as Array<{
       dim: string;
-      count: number;
+      current_count: number;
+      previous_count: number;
     }>;
-    const totals = { ...empty };
+    const current = empty();
+    const previous = empty();
     for (const r of rows) {
-      const n = Number(r.count);
-      totals.total += n;
-      if (r.dim === 'success') totals.success += n;
-      else if (r.dim === 'healed') totals.healed += n;
-      else if (r.dim === 'fallback') totals.fallback += n;
-      else totals.error += n;
+      const c = Number(r.current_count);
+      const p = Number(r.previous_count);
+      current.total += c;
+      previous.total += p;
+      if (r.dim === 'success') {
+        current.success += c;
+        previous.success += p;
+      } else if (r.dim === 'healed') {
+        current.healed += c;
+        previous.healed += p;
+      } else if (r.dim === 'fallback') {
+        current.fallback += c;
+        previous.fallback += p;
+      } else {
+        current.error += c;
+        previous.error += p;
+      }
     }
-    return totals;
+    return { current, previous };
   }
 
   /**
@@ -252,18 +285,18 @@ export class RequestVolumeService {
     tenantId: string | null;
     range: string;
     hourly: boolean;
-    agentName?: string;
+    agentScope?: AgentScope;
     failedOnly?: boolean;
     connection?: ConnectionScope;
   }): Promise<DispositionRow[]> {
     if (!params.tenantId) return [];
     const bucketExpr = params.hourly ? sqlHourBucket('t.ts') : sqlDateBucket('t.ts');
-    const sqlParams = this.params(params.tenantId, params.range, params.agentName);
+    const sqlParams = this.params(params.tenantId, params.range, params.agentScope);
     const predicates = [
       params.failedOnly ? `${DISPOSITION_EXPR} = 'error'` : '',
       this.connectionPredicate(params.connection, sqlParams).replace(/^AND /, ''),
     ].filter(Boolean);
-    const sql = `${this.terminalCte(params.agentName)}
+    const sql = `${this.terminalCte(params.agentScope)}
       SELECT ${bucketExpr} AS bucket, ${DISPOSITION_EXPR} AS dim, COUNT(*)::int AS count
       FROM terminal t
       ${predicates.length ? `WHERE ${predicates.join(' AND ')}` : ''}
@@ -301,7 +334,7 @@ export class RequestVolumeService {
    */
   async getVolumeByDimension(
     dim: 'provider' | 'agent_name' | 'model',
-    params: { tenantId: string | null; range?: string; agentName?: string },
+    params: { tenantId: string | null; range?: string; agentScope?: AgentScope },
   ): Promise<DimensionVolumeRow[]> {
     if (!params.tenantId) return [];
     const range = params.range ?? '7d';
@@ -309,7 +342,7 @@ export class RequestVolumeService {
       dim === 'provider'
         ? `CASE WHEN t.provider LIKE 'custom:%' THEN 'custom' ELSE COALESCE(t.provider, 'manifest') END`
         : `t.${dim}`;
-    const sql = `${this.terminalCte(params.agentName)}
+    const sql = `${this.terminalCte(params.agentScope)}
       SELECT ${keyExpr} AS key,
         COUNT(*)::int AS requests,
         COUNT(*) FILTER (WHERE ${sqlIsFailedStatus('t.request_status')})::int AS failed,
@@ -321,7 +354,7 @@ export class RequestVolumeService {
       GROUP BY 1`;
     const rows = (await this.messageRepo.query(
       sql,
-      this.params(params.tenantId, range, params.agentName),
+      this.params(params.tenantId, range, params.agentScope),
     )) as Array<{
       key: string;
       requests: number;

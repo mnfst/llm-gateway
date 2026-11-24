@@ -1,3 +1,4 @@
+import { selectedAgent } from '../__tests__/scope.fixture';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { TimeseriesQueriesService } from './timeseries-queries.service';
@@ -343,14 +344,27 @@ describe('TimeseriesQueriesService', () => {
 
     it('excludes client-pinned (direct) requests when excludeDirect=true', async () => {
       mockGetRawMany.mockResolvedValue([]);
-      await service.getRecentActivity('24h', 'tenant-1', 5, 'bot-1', true, true);
+      await service.getRecentActivity(
+        '24h',
+        'tenant-1',
+        5,
+        selectedAgent('tenant-1', 'bot-1'),
+        true,
+        true,
+      );
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0] as string);
       expect(clauses).toContain(EXCLUDE_DIRECT_ATTEMPTS_PREDICATE);
     });
 
     it('keeps direct requests by default', async () => {
       mockGetRawMany.mockResolvedValue([]);
-      await service.getRecentActivity('24h', 'tenant-1', 5, 'bot-1', true);
+      await service.getRecentActivity(
+        '24h',
+        'tenant-1',
+        5,
+        selectedAgent('tenant-1', 'bot-1'),
+        true,
+      );
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0] as string);
       expect(clauses).not.toContain(EXCLUDE_DIRECT_ATTEMPTS_PREDICATE);
     });
@@ -367,7 +381,7 @@ describe('TimeseriesQueriesService', () => {
             '24h',
             't1',
             true,
-            'bot-1',
+            selectedAgent('t1', 'bot-1'),
             undefined,
             undefined,
             true,
@@ -376,8 +390,14 @@ describe('TimeseriesQueriesService', () => {
             true,
           ),
       ],
-      ['getActiveSkills', () => service.getActiveSkills('24h', 't1', 'bot-1', true, true)],
-      ['getCostByModel', () => service.getCostByModel('24h', 't1', 'bot-1', true, true)],
+      [
+        'getActiveSkills',
+        () => service.getActiveSkills('24h', 't1', selectedAgent('t1', 'bot-1'), true, true),
+      ],
+      [
+        'getCostByModel',
+        () => service.getCostByModel('24h', 't1', selectedAgent('t1', 'bot-1'), true, true),
+      ],
     ])('%s applies the predicate when excludeDirect=true', async (_name, call) => {
       await call();
       expect(clauses()).toContain(EXCLUDE_DIRECT_ATTEMPTS_PREDICATE);
@@ -386,10 +406,25 @@ describe('TimeseriesQueriesService', () => {
     it.each([
       [
         'getTimeseries',
-        () => service.getTimeseries('24h', 't1', true, 'bot-1', undefined, undefined, true),
+        () =>
+          service.getTimeseries(
+            '24h',
+            't1',
+            true,
+            selectedAgent('t1', 'bot-1'),
+            undefined,
+            undefined,
+            true,
+          ),
       ],
-      ['getActiveSkills', () => service.getActiveSkills('24h', 't1', 'bot-1', true)],
-      ['getCostByModel', () => service.getCostByModel('24h', 't1', 'bot-1', true)],
+      [
+        'getActiveSkills',
+        () => service.getActiveSkills('24h', 't1', selectedAgent('t1', 'bot-1'), true),
+      ],
+      [
+        'getCostByModel',
+        () => service.getCostByModel('24h', 't1', selectedAgent('t1', 'bot-1'), true),
+      ],
     ])('%s keeps direct requests by default', async (_name, call) => {
       await call();
       expect(clauses()).not.toContain(EXCLUDE_DIRECT_ATTEMPTS_PREDICATE);
@@ -403,15 +438,33 @@ describe('TimeseriesQueriesService', () => {
     it.each([
       [
         'getPerProviderTimeseries',
-        (agent?: string) => service.getPerProviderTimeseries('24h', 't1', true, agent),
+        (agent?: string) =>
+          service.getPerProviderTimeseries(
+            '24h',
+            't1',
+            true,
+            agent ? selectedAgent('t1', agent) : undefined,
+          ),
       ],
       [
         'getPerProviderMessageTimeseries',
-        (agent?: string) => service.getPerProviderMessageTimeseries('24h', 't1', true, agent),
+        (agent?: string) =>
+          service.getPerProviderMessageTimeseries(
+            '24h',
+            't1',
+            true,
+            agent ? selectedAgent('t1', agent) : undefined,
+          ),
       ],
       [
         'getPerProviderCostTimeseries',
-        (agent?: string) => service.getPerProviderCostTimeseries('24h', 't1', true, agent),
+        (agent?: string) =>
+          service.getPerProviderCostTimeseries(
+            '24h',
+            't1',
+            true,
+            agent ? selectedAgent('t1', agent) : undefined,
+          ),
       ],
     ])('%s excludes direct when agent-scoped and keeps it globally', async (_name, call) => {
       await call('bot-1');
@@ -490,7 +543,12 @@ describe('TimeseriesQueriesService', () => {
 
     it('passes agentName to tenant filter', async () => {
       mockGetRawMany.mockResolvedValue([]);
-      const result = await service.getTimeseries('24h', 'tenant-123', true, 'bot-1');
+      const result = await service.getTimeseries(
+        '24h',
+        'tenant-123',
+        true,
+        selectedAgent('tenant-123', 'bot-1'),
+      );
       expect(result.tokenUsage).toEqual([]);
     });
 
@@ -530,7 +588,7 @@ describe('TimeseriesQueriesService', () => {
         '24h',
         'tenant-1',
         true,
-        'agent-1',
+        selectedAgent('tenant-1', 'agent-1'),
         undefined,
         undefined,
         true,
@@ -544,12 +602,11 @@ describe('TimeseriesQueriesService', () => {
         },
       ]);
       expect(result.messageUsage).toEqual([{ hour: '2026-07-14T10:00:00Z', count: 3 }]);
+      expect(requestQb.andWhere).toHaveBeenCalledWith('r.agent_id = :liveAgentId', {
+        liveAgentId: 'agent-1',
+      });
       expect(requestQb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining('deleted_at IS NULL'),
-        expect.objectContaining({ requestAgentName: 'agent-1' }),
-      );
-      expect(requestQb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining('playag.is_playground = true'),
+        expect.stringContaining('is_playground = true'),
       );
     });
 
@@ -631,6 +688,50 @@ describe('TimeseriesQueriesService', () => {
       expect(result.messageUsage).toEqual([{ date: '2026-07-14', count: 2 }]);
     });
 
+    it('uses daily rollups for non-hourly overview usage', async () => {
+      const daily = {
+        supportsRange: jest.fn().mockReturnValue(true),
+        getRangeRows: jest.fn().mockResolvedValue([
+          {
+            agent_name: 'alpha',
+            day: '2026-09-20',
+            request_count: '2',
+            input_tokens: '10',
+            output_tokens: '5',
+            cost_usd: '1',
+          },
+          {
+            agent_name: 'bravo',
+            day: '2026-09-20',
+            request_count: '3',
+            input_tokens: '20',
+            output_tokens: '10',
+            cost_usd: '2',
+          },
+        ]),
+      };
+      const rollupAware = new TimeseriesQueriesService(
+        { createQueryBuilder: jest.fn() } as never,
+        {} as never,
+        undefined,
+        undefined,
+        undefined,
+        daily as never,
+      );
+
+      await expect(
+        rollupAware.getTimeseries('90d', 'tenant-1', false, undefined, undefined, undefined, true),
+      ).resolves.toEqual({
+        tokenUsage: [{ date: '2026-09-20', input_tokens: 30, output_tokens: 15 }],
+        costUsage: [{ date: '2026-09-20', cost: 3 }],
+        messageUsage: [{ date: '2026-09-20', count: 5 }],
+      });
+      expect(daily.getRangeRows).toHaveBeenCalledWith('tenant-1', '90d', {
+        agentScope: undefined,
+        excludeDirect: false,
+      });
+    });
+
     it('returns no request buckets when tenant scope is absent', async () => {
       const makeQb = () => ({
         select: jest.fn().mockReturnThis(),
@@ -657,7 +758,7 @@ describe('TimeseriesQueriesService', () => {
 
       await requestAware.getTimeseries('7d', null, false);
 
-      expect(requestQb.andWhere).toHaveBeenCalledWith('1 = 0');
+      expect(requestQb.andWhere).toHaveBeenCalledWith('1 = 0', { tenantId: null });
     });
   });
 
@@ -675,6 +776,158 @@ describe('TimeseriesQueriesService', () => {
       await service.getAgentList('u1', true);
       const clauses = mockAgentQb.andWhere.mock.calls.map((c) => c[0] as string);
       expect(clauses).not.toContain('a.is_playground = false');
+    });
+
+    it('uses bounded daily rows after the tenant read cutover', async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const oldDay = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const agentQb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'agent-1',
+            name: 'bot-1',
+            display_name: 'Bot One',
+            agent_category: 'code',
+            agent_platform: 'codex',
+            created_at: '2026-01-01',
+          },
+        ]),
+      };
+      const turnRepo = { createQueryBuilder: jest.fn() };
+      const daily = {
+        readsEnabledFor: jest.fn().mockReturnValue(true),
+        getRows: jest.fn().mockResolvedValue([
+          {
+            agent_id: 'agent-1',
+            day: today,
+            request_count: '3',
+            input_tokens: '100',
+            output_tokens: '50',
+            cost_usd: '1.25',
+            last_active_at: '2026-09-21T10:00:00.000Z',
+          },
+          {
+            agent_id: 'agent-1',
+            day: oldDay,
+            request_count: '2',
+            input_tokens: '20',
+            output_tokens: '5',
+            cost_usd: '0.25',
+            last_active_at: '2026-09-11T10:00:00.000Z',
+          },
+        ]),
+      };
+      const rollupAware = new TimeseriesQueriesService(
+        turnRepo as never,
+        { createQueryBuilder: jest.fn(() => agentQb) } as never,
+        undefined,
+        undefined,
+        undefined,
+        daily as never,
+      );
+
+      const result = await rollupAware.getAgentList('tenant-1');
+
+      expect(daily.getRows).toHaveBeenCalledWith('tenant-1');
+      expect(turnRepo.createQueryBuilder).not.toHaveBeenCalled();
+      expect(result).toEqual([
+        {
+          agent_name: 'bot-1',
+          display_name: 'Bot One',
+          agent_category: 'code',
+          agent_platform: 'codex',
+          message_count: 5,
+          last_active: '2026-09-21T10:00:00.000Z',
+          total_cost: 1.5,
+          total_tokens: 175,
+          sparkline: [150],
+        },
+      ]);
+    });
+
+    it('defaults missing daily values and agents without usage', async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const lastActive = new Date('2026-09-21T10:00:00.000Z');
+      const agentQb = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'agent-1',
+            name: 'bot-1',
+            display_name: 'Bot One',
+            created_at: '2026-01-01',
+          },
+          {
+            id: 'agent-2',
+            name: 'bot-2',
+            display_name: null,
+            agent_category: null,
+            agent_platform: null,
+            created_at: null,
+          },
+        ]),
+      };
+      const daily = {
+        readsEnabledFor: jest.fn().mockReturnValue(true),
+        getRows: jest.fn().mockResolvedValue([
+          {
+            agent_id: 'agent-1',
+            day: today,
+            request_count: null,
+            input_tokens: null,
+            output_tokens: null,
+            cost_usd: null,
+            last_active_at: lastActive,
+          },
+          {
+            agent_id: 'agent-1',
+            day: today,
+            request_count: null,
+            input_tokens: null,
+            output_tokens: null,
+            cost_usd: null,
+            last_active_at: null,
+          },
+        ]),
+      };
+      const rollupAware = new TimeseriesQueriesService(
+        { createQueryBuilder: jest.fn() } as never,
+        { createQueryBuilder: jest.fn(() => agentQb) } as never,
+        undefined,
+        undefined,
+        undefined,
+        daily as never,
+      );
+
+      await expect(rollupAware.getAgentList('tenant-1')).resolves.toEqual([
+        {
+          agent_name: 'bot-1',
+          display_name: 'Bot One',
+          agent_category: null,
+          agent_platform: null,
+          message_count: 0,
+          last_active: lastActive.toISOString(),
+          total_cost: 0,
+          total_tokens: 0,
+          sparkline: [0, 0],
+        },
+        {
+          agent_name: 'bot-2',
+          display_name: 'bot-2',
+          agent_category: null,
+          agent_platform: null,
+          message_count: 0,
+          last_active: '',
+          total_cost: 0,
+          total_tokens: 0,
+          sparkline: [],
+        },
+      ]);
     });
 
     it('returns agents with sparkline data and display_name', async () => {
@@ -832,7 +1085,14 @@ describe('TimeseriesQueriesService', () => {
   describe('getTimeseries with authType/provider filters', () => {
     it('applies auth_type and provider andWhere clauses', async () => {
       mockGetRawMany.mockResolvedValue([]);
-      await service.getTimeseries('24h', 'tenant-1', true, 'agent-x', 'subscription', 'openai');
+      await service.getTimeseries(
+        '24h',
+        'tenant-1',
+        true,
+        selectedAgent('tenant-1', 'agent-x'),
+        'subscription',
+        'openai',
+      );
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0]);
       expect(clauses).toContain('at.auth_type = :authType');
       expect(clauses).toContain('at.provider = :provider');
@@ -904,8 +1164,9 @@ describe('TimeseriesQueriesService', () => {
       expect(mockTurnQb.leftJoin).not.toHaveBeenCalled();
       // Matching by name (not just id) means a Playground row carrying only
       // agent_name (NULL agent_id) is excluded too — no leak.
+      expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('at.agent_id IN (SELECT plg.id');
       expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain(
-        'playag.id = at.agent_id OR playag.name = at.agent_name',
+        '(at.tenant_id, at.agent_name) IN (SELECT plg.tenant_id, plg.name',
       );
     });
 
@@ -944,7 +1205,7 @@ describe('TimeseriesQueriesService', () => {
 
       expect(out.timeseries).toEqual([{ hour: '01', alpha: 3, bravo: 1 }]);
       expect(requestQb.andWhere).toHaveBeenCalledWith(
-        expect.stringContaining('playag.name = r.agent_name'),
+        expect.stringContaining('(r.tenant_id, r.agent_name) IN (SELECT plg.tenant_id, plg.name'),
       );
     });
 
@@ -1014,6 +1275,36 @@ describe('TimeseriesQueriesService', () => {
       expect(clauses).toContain('at.provider = :provider');
     });
 
+    it('pivots daily rollups by agent for long overview ranges', async () => {
+      const daily = {
+        supportsRange: jest.fn().mockReturnValue(true),
+        getRangeRows: jest.fn().mockResolvedValue([
+          {
+            agent_name: 'alpha',
+            day: '2026-09-20',
+            request_count: '2',
+            input_tokens: '10',
+            output_tokens: '5',
+            cost_usd: '1.5',
+          },
+        ]),
+      };
+      const rollupAware = new TimeseriesQueriesService(
+        { createQueryBuilder: jest.fn() } as never,
+        {} as never,
+        undefined,
+        undefined,
+        undefined,
+        daily as never,
+      );
+
+      const result = await rollupAware.getAgentUsageTimeseries('365d', 'tenant-1', false);
+
+      expect(result.tokenUsage.timeseries).toEqual([{ date: '2026-09-20', alpha: 15 }]);
+      expect(result.messageUsage.timeseries).toEqual([{ date: '2026-09-20', alpha: 2 }]);
+      expect(result.costUsage.timeseries).toEqual([{ date: '2026-09-20', alpha: 1.5 }]);
+    });
+
     const labelClause = "LOWER(COALESCE(at.provider_key_label, 'Default')) = LOWER(:keyLabel)";
 
     it('scopes each per-agent timeseries to a connection label when provided', async () => {
@@ -1046,24 +1337,25 @@ describe('TimeseriesQueriesService', () => {
         { hour: '01', provider: 'openai', tokens: 7 },
         { hour: '01', provider: 'anthropic', tokens: 3 },
       ]);
-      const out = await service.getPerProviderTimeseries('24h', 'tenant-1', true, 'agent-x');
+      const out = await service.getPerProviderTimeseries(
+        '24h',
+        'tenant-1',
+        true,
+        selectedAgent('tenant-1', 'agent-x'),
+      );
       expect(out.agents).toEqual(['anthropic', 'openai']);
       expect(out.timeseries[0]).toEqual({ hour: '01', anthropic: 3, openai: 7 });
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0]);
-      // Scope to the LIVE agent owning the slug (agent_id subquery), not a raw
-      // name match — a soft-deleted agent sharing the slug must not leak rows.
+      // Bind the already-resolved live identity rather than matching historical names.
       const liveAgentClause = clauses.find(
-        (c) =>
-          typeof c === 'string' &&
-          c.includes('at.agent_id = (') &&
-          c.includes('deleted_at IS NULL'),
+        (c) => typeof c === 'string' && c.includes('at.agent_id = :liveAgentId'),
       );
       expect(liveAgentClause).toBeDefined();
       expect(clauses).not.toContain('at.agent_name = :agentName');
       const liveAgentCall = mockTurnQb.andWhere.mock.calls.find(
-        (c) => typeof c[0] === 'string' && c[0].includes('at.agent_id = ('),
+        (c) => typeof c[0] === 'string' && c[0].includes('at.agent_id = :liveAgentId'),
       );
-      expect(liveAgentCall![1]).toEqual({ liveAgentName: 'agent-x', liveTenantId: 'tenant-1' });
+      expect(liveAgentCall![1]).toEqual({ liveAgentId: 'agent-x' });
       // Playground (is_playground) usage must be excluded from per-provider totals,
       // via the same NOT EXISTS semi-join as the per-agent endpoints (no join).
       expect(clauses).toContain(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE);
@@ -1105,13 +1397,15 @@ describe('TimeseriesQueriesService', () => {
 
     it('getPerModelTimeseries scopes to the live agent id when an agent is given', async () => {
       mockGetRawMany.mockResolvedValue([{ hour: '01', model: 'gpt-4o', tokens: 9 }]);
-      await service.getPerModelTimeseries('24h', 'tenant-1', true, 'agent-x');
+      await service.getPerModelTimeseries(
+        '24h',
+        'tenant-1',
+        true,
+        selectedAgent('tenant-1', 'agent-x'),
+      );
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0]);
       const liveAgentClause = clauses.find(
-        (c) =>
-          typeof c === 'string' &&
-          c.includes('at.agent_id = (') &&
-          c.includes('deleted_at IS NULL'),
+        (c) => typeof c === 'string' && c.includes('at.agent_id = :liveAgentId'),
       );
       expect(liveAgentClause).toBeDefined();
       expect(clauses).not.toContain('at.agent_name = :agentName');
@@ -1121,20 +1415,22 @@ describe('TimeseriesQueriesService', () => {
       mockGetRawMany.mockResolvedValue([{ hour: '01', provider: 'openai', tokens: 1 }]);
       await service.getPerProviderTimeseries('24h', 'tenant-1', true);
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0]);
-      expect(clauses.some((c) => typeof c === 'string' && c.includes('at.agent_id = ('))).toBe(
-        false,
-      );
+      expect(
+        clauses.some((c) => typeof c === 'string' && c.includes('at.agent_id = :liveAgentId')),
+      ).toBe(false);
     });
 
     it('getPerModelTimeseries scopes to the live agent id when an agent is given', async () => {
       mockGetRawMany.mockResolvedValue([{ hour: '01', model: 'gpt-4o', tokens: 9 }]);
-      await service.getPerModelTimeseries('24h', 'tenant-1', true, 'agent-x');
+      await service.getPerModelTimeseries(
+        '24h',
+        'tenant-1',
+        true,
+        selectedAgent('tenant-1', 'agent-x'),
+      );
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0]);
       const liveAgentClause = clauses.find(
-        (c) =>
-          typeof c === 'string' &&
-          c.includes('at.agent_id = (') &&
-          c.includes('deleted_at IS NULL'),
+        (c) => typeof c === 'string' && c.includes('at.agent_id = :liveAgentId'),
       );
       expect(liveAgentClause).toBeDefined();
       expect(clauses).not.toContain('at.agent_name = :agentName');
@@ -1144,9 +1440,9 @@ describe('TimeseriesQueriesService', () => {
       mockGetRawMany.mockResolvedValue([{ hour: '01', provider: 'openai', tokens: 1 }]);
       await service.getPerProviderTimeseries('24h', 'tenant-1', true);
       const clauses = mockTurnQb.andWhere.mock.calls.map((c) => c[0]);
-      expect(clauses.some((c) => typeof c === 'string' && c.includes('at.agent_id = ('))).toBe(
-        false,
-      );
+      expect(
+        clauses.some((c) => typeof c === 'string' && c.includes('at.agent_id = :liveAgentId')),
+      ).toBe(false);
     });
 
     it('getPerProviderMessageTimeseries pivots message counts', async () => {
@@ -1178,7 +1474,12 @@ describe('TimeseriesQueriesService', () => {
       mockGetRawMany.mockResolvedValue([
         { date: '2026-01-01', provider: 'openai', tokens: 10, messages: 2, cost: 1.5 },
       ]);
-      const out = await service.getProviderUsageTimeseries('7d', 'u1', false, 'agent-x');
+      const out = await service.getProviderUsageTimeseries(
+        '7d',
+        'u1',
+        false,
+        selectedAgent('u1', 'agent-x'),
+      );
 
       expect(out.tokenUsage.timeseries[0]).toEqual({ date: '2026-01-01', openai: 10 });
       expect(out.messageUsage.timeseries[0]).toEqual({ date: '2026-01-01', openai: 2 });
@@ -1187,7 +1488,12 @@ describe('TimeseriesQueriesService', () => {
 
     it('getPerModelTimeseries pivots tokens', async () => {
       mockGetRawMany.mockResolvedValue([{ hour: '01', model: 'gpt-4o', tokens: 9 }]);
-      const out = await service.getPerModelTimeseries('24h', 'tenant-1', true, 'agent-x');
+      const out = await service.getPerModelTimeseries(
+        '24h',
+        'tenant-1',
+        true,
+        selectedAgent('tenant-1', 'agent-x'),
+      );
       expect(out.agents).toEqual(['gpt-4o']);
       expect(out.timeseries).toEqual([{ hour: '01', 'gpt-4o': 9 }]);
       // Playground (is_playground) usage must be excluded from per-model totals.

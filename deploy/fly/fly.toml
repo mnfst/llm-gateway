@@ -21,6 +21,11 @@ kill_timeout = "30s"
   SEED_DATA = "false"
   DB_POOL_MAX = "8"
   AUTH_DB_POOL_MAX = "4"
+  REQUEST_RECORDING_STORAGE = "s3"
+  REQUEST_RECORDING_S3_BUCKET = "manifest-recordings-bucket"
+  REQUEST_RECORDING_S3_ENDPOINT = "https://fly.storage.tigris.dev"
+  REQUEST_RECORDING_S3_REGION = "auto"
+  REQUEST_RECORDING_S3_FORCE_PATH_STYLE = "false"
 
 [http_service]
   internal_port = 2099

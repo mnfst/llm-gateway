@@ -1,5 +1,7 @@
 import type { Response as ExpressResponse } from 'express';
 import { PlaygroundService } from './playground.service';
+import { CustomProviderService } from '../routing/custom-provider/custom-provider.service';
+import { OpencodeGoCatalogService } from '../model-discovery/opencode-go-catalog.service';
 import type { ProviderClient } from '../routing/proxy/provider-client';
 import type { ProviderKeyService } from '../routing/routing-core/provider-key.service';
 import type { PlaygroundAgentService } from './playground-agent.service';
@@ -85,6 +87,8 @@ function mockRes(): MockRes {
 const asRes = (r: MockRes): ExpressResponse => r as unknown as ExpressResponse;
 
 interface Mocks {
+  customProviders: { canonicalizeAgentMessageKeys: jest.Mock };
+  opencodeGoCatalog: { resolveCostPerRequest: jest.Mock };
   playgroundAgent: { resolve: jest.Mock };
   providerKeyService: {
     hasActiveProvider: jest.Mock;
@@ -96,7 +100,7 @@ interface Mocks {
     forward: jest.Mock;
     convertGoogleStreamChunk: jest.Mock;
     createAnthropicStreamTransformer: jest.Mock;
-    convertChatGptStreamChunk: jest.Mock;
+    createChatGptStreamTransformer: jest.Mock;
   };
   openaiOauth: { unwrapToken: jest.Mock };
   minimaxOauth: { unwrapToken: jest.Mock };
@@ -126,7 +130,7 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
       forward: jest.fn(),
       convertGoogleStreamChunk: jest.fn(),
       createAnthropicStreamTransformer: jest.fn(),
-      convertChatGptStreamChunk: jest.fn(),
+      createChatGptStreamTransformer: jest.fn(),
     },
     openaiOauth: { unwrapToken: jest.fn().mockResolvedValue(null) },
     minimaxOauth: { unwrapToken: jest.fn().mockResolvedValue(null) },
@@ -144,6 +148,14 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     history: { saveColumn: jest.fn().mockResolvedValue('col-1') },
     messageRepo: { insert: jest.fn().mockResolvedValue(undefined) },
     customProviderRepo: { findOne: jest.fn().mockResolvedValue(null) },
+    customProviders: {
+      canonicalizeAgentMessageKeys: jest
+        .fn()
+        .mockImplementation((_t: string, provider: string | null, model: string | null) =>
+          Promise.resolve({ provider, model }),
+        ),
+    },
+    opencodeGoCatalog: { resolveCostPerRequest: jest.fn().mockResolvedValue(null) },
     ...mocks,
   };
   const service = new PlaygroundService(
@@ -161,6 +173,8 @@ function buildService(mocks: Partial<Mocks> = {}): { service: PlaygroundService;
     full.history as unknown as PlaygroundHistoryService,
     full.messageRepo as unknown as Repository<AgentMessage>,
     full.customProviderRepo as unknown as Repository<CustomProvider>,
+    full.customProviders as unknown as CustomProviderService,
+    full.opencodeGoCatalog as unknown as OpencodeGoCatalogService,
   );
   return { service, mocks: full };
 }

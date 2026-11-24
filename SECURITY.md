@@ -6,7 +6,7 @@ Thank you for helping us maintain the security of Manifest. If you discover a se
 
 To report a security vulnerability, please fill out our private security form:
 
-[Submit Security Issue](https://github.com/mnfst/manifest/security/advisories/new)
+[Submit Security Issue](https://github.com/mnfst/llm-gateway/security/advisories/new)
 
 Please provide as much detail as possible, including steps to reproduce the issue, potential impact, and any additional context.
 

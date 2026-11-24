@@ -1,3 +1,4 @@
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
 import { Controller, Get, Query, UseInterceptors } from '@nestjs/common';
 import { CacheTTL } from '@nestjs/cache-manager';
 import { RangeQueryDto } from '../../common/dto/range-query.dto';
@@ -10,7 +11,10 @@ import { DASHBOARD_CACHE_TTL_MS } from '../../common/constants/cache.constants';
 @UseInterceptors(UserCacheInterceptor)
 @CacheTTL(DASHBOARD_CACHE_TTL_MS)
 export class ErrorsController {
-  constructor(private readonly errorBreakdown: ErrorBreakdownService) {}
+  constructor(
+    private readonly analyticsScope: AnalyticsScopeService,
+    private readonly errorBreakdown: ErrorBreakdownService,
+  ) {}
 
   /**
    * Error breakdown split by origin (provider vs. transport vs. Manifest's own
@@ -23,7 +27,7 @@ export class ErrorsController {
     return this.errorBreakdown.getBreakdown({
       tenantId: ctx.tenantId,
       range: query.range,
-      agentName: query.agent_name,
+      agentScope: await this.analyticsScope.resolve(ctx.tenantId, query.agent_name),
     });
   }
 }

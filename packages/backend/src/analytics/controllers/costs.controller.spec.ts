@@ -1,3 +1,5 @@
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
+import { mockScopeResolver, selectedAgent } from '../__tests__/scope.fixture';
 import { Test, TestingModule } from '@nestjs/testing';
 import { CacheModule } from '@nestjs/cache-manager';
 import { CostsController } from './costs.controller';
@@ -32,6 +34,7 @@ describe('CostsController', () => {
       imports: [CacheModule.register()],
       controllers: [CostsController],
       providers: [
+        { provide: AnalyticsScopeService, useValue: mockScopeResolver() },
         {
           provide: AggregationService,
           useValue: { getPreviousCostTotal: mockGetPreviousCostTotal },
@@ -70,10 +73,28 @@ describe('CostsController', () => {
   it('passes agent_name to service calls', async () => {
     await controller.getCosts({ range: '30d', agent_name: 'bot' }, ctx as never);
 
-    expect(mockGetPreviousCostTotal).toHaveBeenCalledWith('30d', 'tenant-1', 'bot');
-    expect(mockGetTimeseries).toHaveBeenCalledWith('30d', 'tenant-1', true, 'bot');
-    expect(mockGetTimeseries).toHaveBeenCalledWith('30d', 'tenant-1', false, 'bot');
-    expect(mockGetCostByModel).toHaveBeenCalledWith('30d', 'tenant-1', 'bot');
+    expect(mockGetPreviousCostTotal).toHaveBeenCalledWith(
+      '30d',
+      'tenant-1',
+      selectedAgent('tenant-1', 'bot'),
+    );
+    expect(mockGetTimeseries).toHaveBeenCalledWith(
+      '30d',
+      'tenant-1',
+      true,
+      selectedAgent('tenant-1', 'bot'),
+    );
+    expect(mockGetTimeseries).toHaveBeenCalledWith(
+      '30d',
+      'tenant-1',
+      false,
+      selectedAgent('tenant-1', 'bot'),
+    );
+    expect(mockGetCostByModel).toHaveBeenCalledWith(
+      '30d',
+      'tenant-1',
+      selectedAgent('tenant-1', 'bot'),
+    );
   });
 
   it('returns zero trend when previous cost is zero', async () => {

@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ManifestApi = void 0;
+const attribution_1 = require("../nodes/shared/attribution");
 class ManifestApi {
     constructor() {
         this.name = 'manifestApi';
@@ -9,7 +10,7 @@ class ManifestApi {
             light: 'file:../nodes/Manifest/manifest-logo.svg',
             dark: 'file:../nodes/Manifest/manifest-logo.dark.svg',
         };
-        this.documentationUrl = 'https://manifest.build/docs';
+        this.documentationUrl = 'https://manifest.build/llm-gateway/docs/introduction/';
         this.properties = [
             {
                 displayName: 'Base URL',
@@ -37,6 +38,7 @@ class ManifestApi {
             properties: {
                 headers: {
                     Authorization: '=Bearer {{$credentials.apiKey}}',
+                    ...attribution_1.MANIFEST_ATTRIBUTION_HEADERS,
                 },
             },
         };
@@ -47,6 +49,7 @@ class ManifestApi {
                 url: '/v1/models',
                 headers: {
                     Authorization: '=Bearer {{$credentials.apiKey}}',
+                    ...attribution_1.MANIFEST_ATTRIBUTION_HEADERS,
                 },
             },
         };

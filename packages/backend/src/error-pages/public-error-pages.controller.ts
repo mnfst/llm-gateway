@@ -5,9 +5,8 @@ import { ErrorPagesService } from './error-pages.service';
 
 /**
  * Public, unauthenticated read API consumed by the marketing site
- * (manifest.build/errors/...). Gated by the same MANIFEST_PUBLIC_STATS flag as
- * the other /api/v1/public/* endpoints — 404 (not 403) when disabled so probes
- * can't distinguish "off" from "absent".
+ * (manifest.build/errors/...). Gated by MANIFEST_PUBLIC_STATS, 404 (not 403)
+ * when disabled so probes can't distinguish "off" from "absent".
  */
 @Controller('api/v1/public/error-pages')
 export class PublicErrorPagesController {
@@ -17,7 +16,7 @@ export class PublicErrorPagesController {
   ) {}
 
   private assertEnabled(): void {
-    if (!this.config.get<boolean>('app.publicStatsEnabled')) {
+    if (!this.config.get<boolean>('app.publicErrorPagesEnabled')) {
       throw new NotFoundException();
     }
   }

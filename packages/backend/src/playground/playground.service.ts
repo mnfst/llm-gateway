@@ -7,6 +7,7 @@ import type { AuthType, PlaygroundStreamEvent } from 'manifest-shared';
 import { AgentMessage } from '../entities/agent-message.entity';
 import { CustomProvider } from '../entities/custom-provider.entity';
 import { ProviderClient } from '../routing/proxy/provider-client';
+import { buildProviderExtraHeaders } from '../routing/proxy/provider-hooks';
 import { resolveForwardEndpoint } from '../routing/proxy/forward-endpoint-resolver';
 import { CustomProviderService } from '../routing/custom-provider/custom-provider.service';
 import {
@@ -15,6 +16,9 @@ import {
   resolveApiKey,
 } from '../routing/proxy/oauth-credentials';
 import { ProviderKeyService } from '../routing/routing-core/provider-key.service';
+import { isLocalOnlyProvider } from '../common/utils/provider-availability';
+import { OpencodeGoCatalogService } from '../model-discovery/opencode-go-catalog.service';
+import { PROVIDER_BY_ID_OR_ALIAS } from '../common/constants/providers';
 import { PlaygroundAgentService } from './playground-agent.service';
 import { OpenaiOauthService } from '../routing/oauth/openai/openai-oauth.service';
 import { MinimaxOauthService } from '../routing/oauth/minimax/minimax-oauth.service';
@@ -57,7 +61,35 @@ export class PlaygroundService {
     private readonly messageRepo: Repository<AgentMessage>,
     @InjectRepository(CustomProvider)
     private readonly customProviderRepo: Repository<CustomProvider>,
+    private readonly customProviders: CustomProviderService,
+    private readonly opencodeGoCatalog: OpencodeGoCatalogService,
   ) {}
+
+  /**
+   * Headers forwarded with the upstream request: the provider-required ones the
+   * proxy attaches (e.g. OpenCode's x-opencode-session) underneath the
+   * sanitized user-supplied ones, which win on a case-insensitive name clash.
+   * The Playground has no x-session-key, so providers that need a session id
+   * fall back to the same tenant+agent scope key the proxy uses.
+   */
+  private buildExtraHeaders(
+    agent: { id: string; tenant_id: string },
+    dto: RunPlaygroundDto,
+  ): Record<string, string> | undefined {
+    const userHeaders = sanitizeRequestHeaders(dto.requestHeaders);
+    const providerHeaders = buildProviderExtraHeaders(
+      dto.provider,
+      undefined,
+      `${agent.tenant_id}\u0000${agent.id}`,
+    );
+    if (!providerHeaders) return userHeaders;
+    if (!userHeaders) return providerHeaders;
+    const userNames = new Set(Object.keys(userHeaders).map((name) => name.toLowerCase()));
+    const missing = Object.entries(providerHeaders).filter(
+      ([name]) => !userNames.has(name.toLowerCase()),
+    );
+    return { ...Object.fromEntries(missing), ...userHeaders };
+  }
 
   /**
    * Streams one model's response over SSE. Failures *before* the stream opens
@@ -172,7 +204,7 @@ export class PlaygroundService {
       return this.sendPreStreamError(res, status, message);
     }
 
-    const extraHeaders = sanitizeRequestHeaders(dto.requestHeaders);
+    const extraHeaders = this.buildExtraHeaders(agent, dto);
     const abort = new AbortController();
     res.on('close', () => abort.abort());
 
@@ -327,14 +359,45 @@ export class PlaygroundService {
       const outputTokens = usage?.completion_tokens ?? 0;
       const cacheReadTokens = usage?.cache_read_tokens ?? 0;
       const cacheCreationTokens = usage?.cache_creation_tokens ?? 0;
+      // Tile-connected local runtimes arrive as `custom:<uuid>`; only the
+      // canonical provider says whether one is local. A tenant-less context
+      // has no custom providers to resolve, so it degrades to the raw name.
+      //
+      // Best-effort by design: the answer has already been streamed to the
+      // client, so a metadata lookup that fails must not turn a delivered run
+      // into an error one. It only refines the cost inputs below, and the raw
+      // name is where the lookup starts from anyway.
+      const canonicalProvider = await this.customProviders
+        .canonicalizeAgentMessageKeys(ctx.tenantId ?? '', dto.provider, dto.model)
+        .then(({ provider }) => provider ?? dto.provider)
+        .catch(() => dto.provider);
       const cost = computeTokenCost({
         inputTokens,
         outputTokens,
         cacheReadTokens,
         cacheCreationTokens,
         model: dto.model,
-        pricing: this.pricingCache.getByModel(dto.model),
+        pricing: this.pricingCache.getByModel(dto.model, dto.provider),
         isSubscription: authType === 'subscription',
+        // Same source order as the proxy recorder: a playground run against
+        // the same provider must not report a different cost. That parity is
+        // the whole point, so each input is resolved the way the recorder
+        // resolves it — the local check on the canonical provider, because a
+        // tile-connected llama.cpp arrives as `custom:<uuid>`, and the
+        // per-request rate from the OpenCode Go catalogue.
+        isLocalProvider: isLocalOnlyProvider(canonicalProvider),
+        perRequestCostUsd:
+          authType === 'subscription' &&
+          PROVIDER_BY_ID_OR_ALIAS.get(canonicalProvider.toLowerCase())?.id === 'opencode-go'
+            ? await this.opencodeGoCatalog.resolveCostPerRequest(dto.model)
+            : null,
+        reportedCostUsd: usage?.reported_cost_usd,
+        // The request start, not the completion time. A stream that opens at
+        // 09:59 UTC and closes at 10:01 crossed out of a DeepSeek peak window
+        // mid-answer; the proxy recorder bills such a run from `startedAt`, so
+        // billing the playground from `Date.now()` would price the same run
+        // two different ways.
+        at: new Date(startedAt),
       });
       const tokensPerSec = outputTokens > 0 ? outputTokens / (Math.max(totalMs, 1) / 1000) : null;
 
@@ -487,6 +550,9 @@ export class PlaygroundService {
           error_origin: null,
           error_class: null,
           requested_model: dto.model,
+          // The Playground calls a provider directly; it never enters through
+          // one of the proxy's public API surfaces.
+          api_mode: null,
           caller_attribution: null,
           request_headers: null,
           request_params: null,
@@ -562,6 +628,9 @@ export class PlaygroundService {
           error_origin: errorOrigin,
           error_class: null,
           requested_model: dto.model,
+          // The Playground calls a provider directly; it never enters through
+          // one of the proxy's public API surfaces.
+          api_mode: null,
           caller_attribution: null,
           request_headers: null,
           request_params: null,

@@ -239,8 +239,26 @@ export function getPerProviderCostTimeseries(agentName: string, range = '24h'): 
   }) as PivotedTimeseries;
 }
 
-export function getOverview(range = '24h', agentName?: string) {
-  return fetchJson('/overview', { range, ...(agentName ? { agent_name: agentName } : {}) });
+export function getOverview(range = '24h', agentName?: string, fast = false) {
+  return fetchJson('/overview', {
+    range,
+    ...(agentName ? { agent_name: agentName } : {}),
+    ...(fast ? { fast: 'true' } : {}),
+  });
+}
+
+export function getModelUsage(range = '24h', agentName?: string) {
+  return fetchJson('/overview/model-usage', {
+    range,
+    ...(agentName ? { agent_name: agentName } : {}),
+  });
+}
+
+export function getOverviewDetails(range = '24h', agentName?: string) {
+  return fetchJson('/overview/details', {
+    range,
+    ...(agentName ? { agent_name: agentName } : {}),
+  });
 }
 
 export interface AttemptMetric {
@@ -263,13 +281,18 @@ export interface AttemptTimeseries {
 }
 
 // ---------------------------------------------------------------------------
-// Auto-fix analytics
+// Autofix analytics
 // ---------------------------------------------------------------------------
 
 export interface AutofixStatus {
-  available: boolean;
   any_enabled: boolean;
   enabled_agents: string[];
+  /** Agents effectively running without Autofix after deployment-mode defaults. */
+  disabled_agents: string[];
+  /** True only when legacy/unconfigured agents need the fleet enable action. */
+  needs_enable_all: boolean;
+  /** Self-hosted consent-once; cloud always true. */
+  consented: boolean;
 }
 
 export interface AutofixStats {
@@ -359,9 +382,9 @@ export interface ProviderReliabilityRow {
 
 /** One-line definition surfaced by the ⓘ tooltips next to "Recovered requests". */
 export const RECOVERED_REQUESTS_TOOLTIP =
-  'Successful requests that were recovered by Auto-fix or fallback.';
+  'Successful requests that were recovered by Autofix or fallback.';
 
-/** Self-healed = recovered by Auto-fix + recovered by fallback. */
+/** Self-healed = recovered by Autofix + recovered by fallback. */
 export function selfHealedCount(row: { autofixed: number; fallback_saves?: number }): number {
   return row.autofixed + (row.fallback_saves ?? 0);
 }
@@ -379,13 +402,13 @@ export function attemptSuccessRate(row: { attempts: number; succeeded?: number }
 }
 
 /**
- * Total attempts ⓘ: the Doctor version (Auto-fix) owns the auto-fixed
- * vocabulary, so tenants without it get the same sentence minus Auto-fix.
- * House vocabulary: a FALLBACK is a retry; an AUTO-FIX produces an attempt.
+ * Total attempts ⓘ: the Doctor version (Autofix) owns the autofixed
+ * vocabulary, so tenants without it get the same sentence minus Autofix.
+ * House vocabulary: a FALLBACK is a retry; an AUTOFIX produces an attempt.
  */
 export function totalAttemptsTooltip(doctorAvailable: boolean): string {
   return doctorAvailable
-    ? 'Every provider call counts here, including fallback retries and auto-fixed attempts. One request can produce several attempts.'
+    ? 'Every provider call counts here, including fallback retries and autofixed attempts. One request can produce several attempts.'
     : 'Every provider call counts here, including fallback retries. One request can produce several attempts.';
 }
 

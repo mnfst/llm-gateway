@@ -198,7 +198,7 @@ describe('Login', () => {
     });
     fireEvent.submit(container.querySelector('form')!);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Resend verification email');
+      expect(container.textContent).toContain('Send verification email');
     });
   });
 
@@ -216,10 +216,10 @@ describe('Login', () => {
     });
     fireEvent.submit(container.querySelector('form')!);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Resend verification email');
+      expect(container.textContent).toContain('Send verification email');
     });
     const resendBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Resend verification email'),
+      b.textContent?.includes('Send verification email'),
     )!;
     fireEvent.click(resendBtn);
     await vi.waitFor(() => {
@@ -280,6 +280,30 @@ describe('Login', () => {
     locationSpy.mockRestore();
   });
 
+  it('resumes a signed MCP authorization request after successful login', async () => {
+    const locationSpy = vi.spyOn(window, 'location', 'get').mockReturnValue({
+      ...window.location,
+      href: '',
+    });
+    const hrefSetter = vi.fn();
+    Object.defineProperty(window.location, 'href', { set: hrefSetter, configurable: true });
+    mockLocationSearch =
+      '?client_id=client&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&ba_param=client_id&ba_param=redirect_uri&sig=abc';
+    mockSignInEmail.mockResolvedValue({ error: null });
+    const { container } = render(() => <Login />);
+    fireEvent.input(container.querySelector('input[type="email"]')!, {
+      target: { value: 'user@test.com' },
+    });
+    fireEvent.input(container.querySelector('input[type="password"]')!, {
+      target: { value: 'password123' },
+    });
+    fireEvent.submit(container.querySelector('form')!);
+    await vi.waitFor(() => {
+      expect(hrefSetter).toHaveBeenCalledWith(`/api/auth/oauth2/authorize${mockLocationSearch}`);
+    });
+    locationSpy.mockRestore();
+  });
+
   it('resends unverified pro logins with an upgrade callback', async () => {
     mockSearchParams = { plan: 'pro' };
     mockSignInEmail.mockResolvedValue({
@@ -295,10 +319,10 @@ describe('Login', () => {
     });
     fireEvent.submit(container.querySelector('form')!);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Resend verification email');
+      expect(container.textContent).toContain('Send verification email');
     });
     const resendBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Resend verification email'),
+      b.textContent?.includes('Send verification email'),
     )!;
     fireEvent.click(resendBtn);
     await vi.waitFor(() => {
@@ -332,6 +356,38 @@ describe('Login', () => {
     });
   });
 
+  it('offers email verification after an unlinked social login', async () => {
+    mockSearchParams = { oauth: 'failed', error: 'account_not_linked', redirect: '/upgrade' };
+    mockSendVerificationEmail.mockResolvedValue({ error: null });
+    const { container } = render(() => <Login />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('This email already has an account');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send verification email' }));
+    expect(mockSendVerificationEmail).not.toHaveBeenCalled();
+
+    fireEvent.input(container.querySelector('input[type="email"]')!, {
+      target: { value: 'user@test.com' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send verification email' }));
+    await vi.waitFor(() => {
+      expect(mockSendVerificationEmail).toHaveBeenCalledWith({
+        email: 'user@test.com',
+        callbackURL: '/upgrade',
+      });
+      expect(container.textContent).toContain('Verification email sent');
+    });
+  });
+
+  it('shows a generic error when social login has no error code', async () => {
+    mockSearchParams = { oauth: 'failed' };
+    const { container } = render(() => <Login />);
+    await vi.waitFor(() => {
+      expect(container.textContent).toContain('Login failed');
+    });
+  });
+
   it('starts cooldown timer after resending verification email', async () => {
     vi.useFakeTimers();
     mockSignInEmail.mockResolvedValue({
@@ -347,10 +403,10 @@ describe('Login', () => {
     });
     fireEvent.submit(container.querySelector('form')!);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Resend verification email');
+      expect(container.textContent).toContain('Send verification email');
     });
     const resendBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Resend verification email'),
+      b.textContent?.includes('Send verification email'),
     )!;
     fireEvent.click(resendBtn);
     await vi.waitFor(() => {
@@ -364,7 +420,7 @@ describe('Login', () => {
     // Advance to expire cooldown
     vi.advanceTimersByTime(60000);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Resend verification email');
+      expect(container.textContent).toContain('Send verification email');
     });
     vi.useRealTimers();
   });
@@ -425,10 +481,10 @@ describe('Login', () => {
     });
     fireEvent.submit(container.querySelector('form')!);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Resend verification email');
+      expect(container.textContent).toContain('Send verification email');
     });
     const resendBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Resend verification email'),
+      b.textContent?.includes('Send verification email'),
     )!;
     fireEvent.click(resendBtn);
     await vi.waitFor(() => {
@@ -451,10 +507,10 @@ describe('Login', () => {
     });
     fireEvent.submit(container.querySelector('form')!);
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Resend verification email');
+      expect(container.textContent).toContain('Send verification email');
     });
     const resendBtn = Array.from(container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Resend verification email'),
+      b.textContent?.includes('Send verification email'),
     )!;
     fireEvent.click(resendBtn);
     await vi.waitFor(() => {

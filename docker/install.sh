@@ -24,13 +24,13 @@
 # file; `.env` and `docker-compose.override.yml` remain untouched.
 #
 # Review before running:
-#   curl -sSLO https://raw.githubusercontent.com/mnfst/manifest/main/docker/install.sh
+#   curl -sSLO https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/install.sh
 #   less install.sh
 #   bash install.sh --dry-run
 #   bash install.sh
 #
 # If you trust the source, one-shot:
-#   bash <(curl -sSL https://raw.githubusercontent.com/mnfst/manifest/main/docker/install.sh)
+#   bash <(curl -sSL https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker/install.sh)
 
 set -euo pipefail
 
@@ -39,7 +39,7 @@ set -euo pipefail
 # or a local HTTP server hosting a pre-release copy (this is how the
 # Docker smoke CI exercises the script end-to-end against the branch
 # under test, not the published files on GitHub).
-REPO_RAW="${MANIFEST_INSTALLER_SOURCE:-https://raw.githubusercontent.com/mnfst/manifest/main/docker}"
+REPO_RAW="${MANIFEST_INSTALLER_SOURCE:-https://raw.githubusercontent.com/mnfst/llm-gateway/main/docker}"
 # Default to $HOME/manifest so running the one-liner from inside another
 # project (a git worktree, a dotfiles checkout, etc.) doesn't silently
 # litter that directory with `./manifest/`.

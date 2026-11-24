@@ -17,6 +17,9 @@ export interface AgentUsageResult {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_rate: number;
+  cache_write_rate: number;
   message_count: number;
   trend_pct: number;
 }
@@ -47,6 +50,7 @@ export class AgentAnalyticsService {
         .select('COALESCE(SUM(at.input_tokens), 0)', 'input')
         .addSelect('COALESCE(SUM(at.output_tokens), 0)', 'output')
         .addSelect('COALESCE(SUM(at.cache_read_tokens), 0)', 'cache_read')
+        .addSelect('COALESCE(SUM(at.cache_creation_tokens), 0)', 'cache_creation')
         .addSelect(sqlCountMessages(), 'messages')
         .where('at.timestamp >= :cutoff', { cutoff })
         .andWhere('at.tenant_id = :tenantId', { tenantId: scope.tenantId })
@@ -65,6 +69,7 @@ export class AgentAnalyticsService {
     const input = Number(currentRows?.input ?? 0);
     const output = Number(currentRows?.output ?? 0);
     const cacheRead = Number(currentRows?.cache_read ?? 0);
+    const cacheCreation = Number(currentRows?.cache_creation ?? 0);
     const messages = Number(currentRows?.messages ?? 0);
     const currentTotal = input + output;
     const previousTotal = Number(prevRows?.total ?? 0);
@@ -75,6 +80,9 @@ export class AgentAnalyticsService {
       input_tokens: input,
       output_tokens: output,
       cache_read_tokens: cacheRead,
+      cache_creation_tokens: cacheCreation,
+      cache_read_rate: input > 0 ? cacheRead / input : 0,
+      cache_write_rate: input > 0 ? cacheCreation / input : 0,
       message_count: messages,
       trend_pct: computeTrend(currentTotal, previousTotal),
     };

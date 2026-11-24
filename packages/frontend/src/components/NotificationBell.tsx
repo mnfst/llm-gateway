@@ -11,9 +11,8 @@ import {
 import '../styles/notifications-bell.css';
 import { A } from '@solidjs/router';
 import { getWorkspaceAutofixStatus } from '../services/api/analytics.js';
-import { getAutofixCohort } from '../services/api/autofix.js';
 import { getAgents } from '../services/api.js';
-import { messagePing, agentPing, routingPing } from '../services/sse.js';
+import { agentPing, routingPing } from '../services/sse.js';
 
 const READ_KEY = 'manifest_notif_read';
 
@@ -56,26 +55,17 @@ const NotificationBell: Component = () => {
     onCleanup(() => document.removeEventListener('mousedown', handler));
   }
 
-  // Poll every 15s to catch autofix toggle changes (no SSE for this mutation)
+  // Poll once a minute to catch autofix toggle changes (no SSE for this
+  // mutation). The status only changes on a toggle, never on traffic, so it
+  // must not key on messagePing: every gateway request fires that ping, and
+  // refetching on each one made this bell the busiest dashboard endpoint in
+  // production, competing with the Overview for the same database pool.
   const [tick, setTick] = createSignal(0);
-  const interval = setInterval(() => setTick((n) => n + 1), 15_000);
+  const interval = setInterval(() => setTick((n) => n + 1), 60_000);
   onCleanup(() => clearInterval(interval));
 
-  const [cohort] = createResource(
-    () => ({ _a: agentPing(), _m: messagePing(), _r: routingPing(), _t: tick() }),
-    async () => {
-      try {
-        return await getAutofixCohort();
-      } catch {
-        return null;
-      }
-    },
-  );
-  const eligible = () => cohort()?.eligible ?? false;
-
   const [status] = createResource(
-    () =>
-      eligible() ? { _a: agentPing(), _m: messagePing(), _r: routingPing(), _t: tick() } : false,
+    () => ({ _a: agentPing(), _r: routingPing(), _t: tick() }),
     async () => {
       try {
         return await getWorkspaceAutofixStatus();
@@ -100,7 +90,7 @@ const NotificationBell: Component = () => {
   const disabledAgents = createMemo(() => {
     const s = status();
     const list = agentList() ?? [];
-    if (!eligible() || !s?.available) return [];
+    if (!s) return [];
     const enabledSet = new Set(s.enabled_agents);
     return list
       .filter((a) => !enabledSet.has(a.agent_name))
@@ -142,7 +132,7 @@ const NotificationBell: Component = () => {
   };
 
   return (
-    <Show when={eligible() && disabledAgents().length > 0}>
+    <Show when={disabledAgents().length > 0}>
       <div ref={rootRef} style="position: relative;">
         <button
           class="btn btn--outline btn--sm"
@@ -166,7 +156,7 @@ const NotificationBell: Component = () => {
 
         <Show when={open()}>
           <div class="notif-dropdown">
-            <div class="notif-dropdown__header">Auto-fix notifications</div>
+            <div class="notif-dropdown__header">Autofix notifications</div>
             <div class="notif-dropdown__list">
               <For each={disabledAgents()}>
                 {(agent) => {
@@ -184,7 +174,7 @@ const NotificationBell: Component = () => {
                         </Show>
                       </div>
                       <span style="font-size: 14px;">
-                        Auto-fix is inactive on <strong>{agent.display}</strong>. Enable it to get
+                        Autofix is inactive on <strong>{agent.display}</strong>. Enable it to get
                         the full dashboard experience.
                       </span>
                     </A>

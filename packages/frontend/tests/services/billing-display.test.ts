@@ -1,18 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  FREE_REQUEST_LIMIT,
-  FREE_REQUEST_LIMIT_LABEL,
   billingIntervalSuffix,
   formatBillingPrice,
   formatBillingPriceWithInterval,
 } from '../../src/services/billing-display';
 
 describe('billing-display', () => {
-  it('exports the shared free request limit label', () => {
-    expect(FREE_REQUEST_LIMIT).toBe(10_000);
-    expect(FREE_REQUEST_LIMIT_LABEL).toBe('10,000');
-  });
-
   it('formats whole and fractional Stripe prices with currency', () => {
     expect(formatBillingPrice({ amount: 20, currency: 'USD', interval: 'month' })).toBe('$20');
     expect(formatBillingPrice({ amount: 19.99, currency: 'USD', interval: 'month' })).toBe(

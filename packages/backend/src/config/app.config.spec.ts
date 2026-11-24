@@ -61,10 +61,10 @@ describe('appConfig', () => {
     expect(config.nodeEnv).toBe('production');
   });
 
-  it('defaults dbPoolMax to 30', async () => {
+  it('defaults dbPoolMax to 10', async () => {
     delete process.env['DB_POOL_MAX'];
     const config = await loadConfig();
-    expect(config.dbPoolMax).toBe(30);
+    expect(config.dbPoolMax).toBe(10);
   });
 
   it('reads DB_POOL_MAX from env', async () => {
@@ -72,6 +72,15 @@ describe('appConfig', () => {
     const config = await loadConfig();
     expect(config.dbPoolMax).toBe(50);
   });
+
+  it.each(['', '0', '-1', '1.5', 'Infinity', '5abc'])(
+    'uses the default DB_POOL_MAX for invalid value %p',
+    async (value) => {
+      process.env['DB_POOL_MAX'] = value;
+      const config = await loadConfig();
+      expect(config.dbPoolMax).toBe(10);
+    },
+  );
 
   it('defaults dbTuneSession to true when DB_TUNE_SESSION is unset', async () => {
     delete process.env['DB_TUNE_SESSION'];
@@ -115,6 +124,50 @@ describe('appConfig', () => {
       process.env['REQUEST_RECORDING_RETENTION_DAYS'] = value;
       const config = await loadConfig();
       expect(config.requestRecordingRetentionDays).toBeNull();
+    },
+  );
+
+  it('defaults the CLI token TTL to 30 days', async () => {
+    delete process.env['CLI_TOKEN_TTL_DAYS'];
+    const config = await loadConfig();
+    expect(config.cliTokenTtlDays).toBe(30);
+  });
+
+  it('reads a positive CLI token TTL override', async () => {
+    process.env['CLI_TOKEN_TTL_DAYS'] = '7';
+    const config = await loadConfig();
+    expect(config.cliTokenTtlDays).toBe(7);
+  });
+
+  it.each(['0', '-1', '1.5', 'invalid', ''])(
+    'falls back to 30 days for a malformed CLI token TTL %s',
+    async (value) => {
+      // The value is interpolated into an SQL INTERVAL literal, so anything
+      // that is not a plain positive integer must never reach the query.
+      process.env['CLI_TOKEN_TTL_DAYS'] = value;
+      const config = await loadConfig();
+      expect(config.cliTokenTtlDays).toBe(30);
+    },
+  );
+
+  it('defaults the CLI token absolute ceiling to 90 days', async () => {
+    delete process.env['CLI_TOKEN_ABSOLUTE_TTL_DAYS'];
+    const config = await loadConfig();
+    expect(config.cliTokenAbsoluteTtlDays).toBe(90);
+  });
+
+  it('reads a positive CLI token absolute ceiling override', async () => {
+    process.env['CLI_TOKEN_ABSOLUTE_TTL_DAYS'] = '365';
+    const config = await loadConfig();
+    expect(config.cliTokenAbsoluteTtlDays).toBe(365);
+  });
+
+  it.each(['0', '-1', '1.5', 'invalid', ''])(
+    'falls back to 90 days for a malformed CLI token absolute ceiling %s',
+    async (value) => {
+      process.env['CLI_TOKEN_ABSOLUTE_TTL_DAYS'] = value;
+      const config = await loadConfig();
+      expect(config.cliTokenAbsoluteTtlDays).toBe(90);
     },
   );
 

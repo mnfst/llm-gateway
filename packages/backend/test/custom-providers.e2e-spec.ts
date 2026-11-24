@@ -402,4 +402,107 @@ describe('Custom Providers (e2e)', () => {
       .set(headers)
       .expect(200);
   });
+
+  describe('connections', () => {
+    const server = () => app.getHttpServer();
+    let id: string;
+    let key: string;
+
+    const connectionsOf = async () => {
+      const res = await request(server()).get('/api/v1/providers').set(headers).expect(200);
+      const group = res.body.providers.find((p: { provider: string }) => p.provider === key);
+      return (group?.connections ?? [])
+        .filter((c: { is_active: boolean }) => c.is_active)
+        .sort((a: { priority: number }, b: { priority: number }) => a.priority - b.priority)
+        .map((c: { label: string; key_prefix: string | null }) => [c.label, c.key_prefix]);
+    };
+
+    beforeAll(async () => {
+      const res = await request(server())
+        .post(`/api/v1/routing/${agentName}/custom-providers`)
+        .set(headers)
+        .send({
+          name: 'Pooled Gateway',
+          base_url: 'https://pooled.example.com/v1',
+          apiKey: 'sk-account-a',
+          models: [{ model_name: 'pooled-model' }],
+        })
+        .expect(201);
+      id = res.body.id;
+      key = `custom:${id}`;
+    });
+
+    it('adds a second labeled connection through the provider connect endpoint', async () => {
+      await request(server())
+        .post(`/api/v1/routing/${agentName}/providers`)
+        .set(headers)
+        .send({ provider: key, apiKey: 'sk-account-b', label: 'Account B' })
+        .expect(201);
+
+      expect(await connectionsOf()).toEqual([
+        ['Default', 'sk-accou'],
+        ['Account B', 'sk-accou'],
+      ]);
+    });
+
+    it('updates the primary connection after it was renamed, without adding a row', async () => {
+      await request(server())
+        .patch(`/api/v1/providers/${encodeURIComponent(key)}/keys/Default`)
+        .set(headers)
+        .send({ newLabel: 'Account A' })
+        .expect(200);
+
+      await request(server())
+        .put(`/api/v1/routing/${agentName}/custom-providers/${id}`)
+        .set(headers)
+        .send({ apiKey: 'sk-rot1-account-a' })
+        .expect(200);
+      await request(server())
+        .post(`/api/v1/routing/${agentName}/providers`)
+        .set(headers)
+        .send({ provider: key, apiKey: 'sk-rot2-account-a' })
+        .expect(201);
+
+      expect(await connectionsOf()).toEqual([
+        ['Account A', 'sk-rot2-'],
+        ['Account B', 'sk-accou'],
+      ]);
+    });
+
+    it('rejects a connection for a custom provider that does not exist', async () => {
+      await request(server())
+        .post(`/api/v1/routing/${agentName}/providers`)
+        .set(headers)
+        .send({
+          provider: 'custom:00000000-0000-4000-8000-000000000000',
+          apiKey: 'sk-x',
+          label: 'Nope',
+        })
+        .expect(404);
+    });
+
+    it('removes one connection by label and keeps the provider', async () => {
+      await request(server())
+        .delete(`/api/v1/providers/${encodeURIComponent(key)}`)
+        .query({ label: 'Account B' })
+        .set(headers)
+        .expect(200);
+
+      expect(await connectionsOf()).toEqual([['Account A', 'sk-rot2-']]);
+    });
+
+    it('deleting the custom provider removes every connection', async () => {
+      await request(server())
+        .post(`/api/v1/routing/${agentName}/providers`)
+        .set(headers)
+        .send({ provider: key, apiKey: 'sk-account-c', label: 'Account C' })
+        .expect(201);
+      await request(server())
+        .delete(`/api/v1/routing/${agentName}/custom-providers/${id}`)
+        .set(headers)
+        .expect(200);
+
+      expect(await connectionsOf()).toEqual([]);
+    });
+  });
 });

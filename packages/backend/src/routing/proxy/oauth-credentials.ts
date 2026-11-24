@@ -2,7 +2,7 @@ import { OpenaiOauthService } from '../oauth/openai/openai-oauth.service';
 import { MinimaxOauthService } from '../oauth/minimax/minimax-oauth.service';
 import { AnthropicOauthService } from '../oauth/anthropic/anthropic-oauth.service';
 import { GeminiOauthService } from '../oauth/gemini/gemini-oauth.service';
-import { parseOAuthTokenBlob } from '../oauth/core';
+import { parseOAuthTokenBlob, REJECTED_TOKEN_EXPIRY } from '../oauth/core';
 import { KiroOauthService } from '../oauth/kiro/kiro-oauth.service';
 import { XaiOauthService } from '../oauth/xai/xai-oauth.service';
 
@@ -29,7 +29,7 @@ function expireRefreshableOAuthBlob(rawValue: string): string | null {
       return null;
     }
     if (!blob.r) return null;
-    return JSON.stringify({ ...blob, e: 0 });
+    return JSON.stringify({ ...blob, e: REJECTED_TOKEN_EXPIRY });
   } catch {
     return null;
   }

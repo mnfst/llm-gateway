@@ -23,6 +23,7 @@ resource "google_project_service" "required" {
     "run.googleapis.com",
     "secretmanager.googleapis.com",
     "sqladmin.googleapis.com",
+    "storage.googleapis.com",
   ])
 
   project            = var.project_id
@@ -119,6 +120,21 @@ resource "google_project_iam_member" "cloudsql_client" {
   member  = "serviceAccount:${google_service_account.manifest.email}"
 }
 
+resource "google_storage_bucket" "recordings" {
+  name                        = "${local.name_prefix}-recordings"
+  location                    = var.region
+  force_destroy               = false
+  uniform_bucket_level_access = true
+
+  depends_on = [google_project_service.required["storage.googleapis.com"]]
+}
+
+resource "google_storage_bucket_iam_member" "recordings" {
+  bucket = google_storage_bucket.recordings.name
+  role   = "roles/storage.objectUser"
+  member = "serviceAccount:${google_service_account.manifest.email}"
+}
+
 resource "google_cloud_run_v2_service" "manifest" {
   name                = var.service_name
   location            = var.region
@@ -138,6 +154,15 @@ resource "google_cloud_run_v2_service" "manifest" {
       name = "cloudsql"
       cloud_sql_instance {
         instances = [google_sql_database_instance.manifest.connection_name]
+      }
+    }
+
+    volumes {
+      name = "recordings"
+      gcs {
+        bucket        = google_storage_bucket.recordings.name
+        read_only     = false
+        mount_options = ["uid=65532", "gid=65532", "file-mode=0660", "dir-mode=0770"]
       }
     }
 
@@ -176,6 +201,16 @@ resource "google_cloud_run_v2_service" "manifest" {
       }
 
       env {
+        name  = "REQUEST_RECORDING_STORAGE"
+        value = "filesystem"
+      }
+
+      env {
+        name  = "REQUEST_RECORDING_FILESYSTEM_PATH"
+        value = "/data/request-recordings"
+      }
+
+      env {
         name = "DATABASE_URL"
         value_source {
           secret_key_ref {
@@ -208,6 +243,11 @@ resource "google_cloud_run_v2_service" "manifest" {
       volume_mounts {
         name       = "cloudsql"
         mount_path = "/cloudsql"
+      }
+
+      volume_mounts {
+        name       = "recordings"
+        mount_path = "/data/request-recordings"
       }
 
       startup_probe {
@@ -245,6 +285,7 @@ resource "google_cloud_run_v2_service" "manifest" {
     google_project_iam_member.cloudsql_client,
     google_secret_manager_secret_iam_member.managed,
     google_secret_manager_secret_version.managed,
+    google_storage_bucket_iam_member.recordings,
     google_project_service.required["run.googleapis.com"],
   ]
 }
@@ -257,11 +298,14 @@ resource "google_cloud_run_v2_service_iam_member" "public" {
   member   = "allUsers"
 }
 
-resource "terraform_data" "set_better_auth_url" {
-  triggers_replace = [google_cloud_run_v2_service.manifest.uri]
+resource "terraform_data" "set_runtime_urls" {
+  triggers_replace = [
+    google_cloud_run_v2_service.manifest.uri,
+    google_storage_bucket.recordings.name,
+  ]
 
   provisioner "local-exec" {
-    command = "gcloud run services update ${google_cloud_run_v2_service.manifest.name} --project ${var.project_id} --region ${var.region} --update-env-vars 'BETTER_AUTH_URL=${google_cloud_run_v2_service.manifest.uri}' --quiet"
+    command = "gcloud run services update ${google_cloud_run_v2_service.manifest.name} --project ${var.project_id} --region ${var.region} --update-env-vars 'BETTER_AUTH_URL=${google_cloud_run_v2_service.manifest.uri},REQUEST_RECORDING_STORAGE=filesystem,REQUEST_RECORDING_FILESYSTEM_PATH=/data/request-recordings' --quiet"
   }
 
   depends_on = [

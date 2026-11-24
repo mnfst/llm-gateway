@@ -224,3 +224,26 @@
   box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.06);
   font-weight: 600;
 }
+
+/* ── Info Card (Autofix Extension Prompt) ──────────── */
+.settings-card--info {
+  background: hsl(var(--muted));
+  border: 1px solid hsl(var(--primary) / 0.3);
+}
+
+.info-card__content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-md);
+  padding: var(--gap-md);
+  flex-wrap: wrap;
+}
+
+.info-card__text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: hsl(var(--foreground));
+  flex: 1 1 auto;
+}

@@ -87,8 +87,26 @@ describe('MessagesController', () => {
       specificity_category: undefined,
       header_tier_id: undefined,
       include_total: undefined,
+      cache_total: undefined,
       include_filter_options: undefined,
     });
+  });
+
+  it('splits the model filter into a trimmed list, dropping empty entries', async () => {
+    await controller.getMessages({ model: 'gpt-4o, , claude-3.5-sonnet ' } as never, ctx as never);
+
+    expect(mockGetMessages).toHaveBeenCalledWith(
+      expect.objectContaining({ models: ['gpt-4o', 'claude-3.5-sonnet'] }),
+    );
+  });
+
+  it('caps the model filter so a long query string cannot widen the IN clause', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => `model-${i}`).join(',');
+    await controller.getMessages({ model: many } as never, ctx as never);
+
+    const sent = mockGetMessages.mock.calls.at(-1)?.[0] as { models: string[] };
+    expect(sent.models).toHaveLength(50);
+    expect(sent.models.at(-1)).toBe('model-49');
   });
 
   it('passes all filter parameters', async () => {
@@ -107,7 +125,9 @@ describe('MessagesController', () => {
       specificity_category: 'coding',
       header_tier_id: 'ht-premium',
       include_total: false,
+      cache_total: true,
       include_filter_options: false,
+      exclude_playground: true,
     };
     await controller.getMessages(query as never, ctx as never);
 
@@ -129,7 +149,9 @@ describe('MessagesController', () => {
       specificity_category: 'coding',
       header_tier_id: 'ht-premium',
       include_total: false,
+      cache_total: true,
       include_filter_options: false,
+      exclude_playground: true,
     });
   });
 

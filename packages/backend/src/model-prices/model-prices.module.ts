@@ -20,6 +20,7 @@ import { CustomProvider } from '../entities/custom-provider.entity';
     ProviderModelRegistryService,
   ],
   exports: [
+    ModelPricesService,
     ModelPricingCacheService,
     PricingSyncService,
     ModelsDevSyncService,

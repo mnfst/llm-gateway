@@ -1,5 +1,10 @@
 import type { DiscoveredModel } from '../../../model-discovery/model-fetcher';
-import { openAiModelId, routeForOpenAiModelId } from '../openai-model-id';
+import {
+  explicitModelRouteCandidate,
+  openAiModelId,
+  routeForOpenAiModelId,
+  subscriptionOpenAiModelId,
+} from '../openai-model-id';
 
 function model(overrides: Partial<DiscoveredModel> = {}): DiscoveredModel {
   return {
@@ -33,6 +38,17 @@ describe('OpenAI model ids', () => {
     );
   });
 
+  it('encodes native subscription models idempotently', () => {
+    expect(subscriptionOpenAiModelId('openai', 'auto')).toBe('auto');
+    expect(subscriptionOpenAiModelId('openai', 'gpt-5.5')).toBe('openai/gpt-5.5-subscription');
+    expect(subscriptionOpenAiModelId('openai', 'openai/gpt-5.5-subscription')).toBe(
+      'openai/gpt-5.5-subscription',
+    );
+    expect(subscriptionOpenAiModelId('opencode-go', 'opencode-go/glm-5.1')).toBe(
+      'opencode-go/glm-5.1-subscription',
+    );
+  });
+
   it('preserves provider-prefixed provider-native model ids', () => {
     expect(
       openAiModelId(
@@ -45,7 +61,7 @@ describe('OpenAI model ids', () => {
     ).toBe('opencode-go/glm-5.1-subscription');
   });
 
-  it('leaves custom model ids unchanged', () => {
+  it('leaves custom model ids unchanged when the provider has no alias', () => {
     expect(
       openAiModelId(
         model({
@@ -54,6 +70,43 @@ describe('OpenAI model ids', () => {
         }),
       ),
     ).toBe('custom:provider-1/model-a');
+  });
+
+  it('publishes custom models under the provider alias', () => {
+    expect(
+      openAiModelId(
+        model({
+          id: 'custom:provider-1/alibaba/qwen-3-14b',
+          provider: 'custom:provider-1',
+          providerAlias: 'vercel-ai-gateway',
+        }),
+      ),
+    ).toBe('vercel-ai-gateway/alibaba/qwen-3-14b');
+  });
+
+  it('keeps a custom model id without the provider prefix intact under the alias', () => {
+    expect(
+      openAiModelId(
+        model({ id: 'bare-model', provider: 'custom:provider-1', providerAlias: 'gw' }),
+      ),
+    ).toBe('gw/bare-model');
+  });
+
+  it('resolves the alias form and the internal form of a custom model to the same route', () => {
+    const custom = model({
+      id: 'custom:provider-1/alibaba/qwen-3-14b',
+      provider: 'custom:provider-1',
+      providerAlias: 'vercel-ai-gateway',
+    });
+    const route = {
+      provider: 'custom:provider-1',
+      authType: 'api_key',
+      model: 'custom:provider-1/alibaba/qwen-3-14b',
+    };
+
+    expect(routeForOpenAiModelId('vercel-ai-gateway/alibaba/qwen-3-14b', [custom])).toEqual(route);
+    expect(routeForOpenAiModelId('custom:provider-1/alibaba/qwen-3-14b', [custom])).toEqual(route);
+    expect(routeForOpenAiModelId('alibaba/qwen-3-14b', [custom])).toBeNull();
   });
 
   it('resolves listed ids back to routable provider/auth/model triples', () => {
@@ -116,5 +169,33 @@ describe('OpenAI model ids', () => {
 
   it('returns null for a bare name that matches nothing', () => {
     expect(routeForOpenAiModelId('some-retired-model', [model()])).toBeNull();
+  });
+
+  it('parses an uncatalogued provider-qualified model into its transport route', () => {
+    expect(explicitModelRouteCandidate('openrouter/anthropic/claude-new')).toEqual({
+      provider: 'openrouter',
+      model: 'anthropic/claude-new',
+      providerQualified: true,
+    });
+  });
+
+  it('preserves a custom provider model id for custom endpoint resolution', () => {
+    expect(explicitModelRouteCandidate('custom:provider-1/model-new')).toEqual({
+      provider: 'custom:provider-1',
+      model: 'custom:provider-1/model-new',
+      providerQualified: true,
+    });
+  });
+
+  it('infers the provider for an uncatalogued bare native model', () => {
+    expect(explicitModelRouteCandidate('claude-new')).toEqual({
+      provider: 'anthropic',
+      model: 'claude-new',
+      providerQualified: false,
+    });
+  });
+
+  it('refuses a bare model whose provider cannot be inferred', () => {
+    expect(explicitModelRouteCandidate('some-retired-model')).toBeNull();
   });
 });

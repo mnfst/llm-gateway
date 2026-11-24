@@ -13,7 +13,7 @@ export interface MessageTableProps {
   ) => { platform: string | null; category: string | null } | undefined;
   onFallbackErrorClick?: (model: string) => void;
   onTriggerClick?: (id: string) => void;
-  /** Open a linked message (Auto-fix sibling) from an expanded row's detail. */
+  /** Open a linked message (Autofix sibling) from an expanded row's detail. */
   onOpenMessage?: (id: string) => void;
   rowIdPrefix?: string;
   showHeaderTooltips?: boolean;

@@ -21,6 +21,7 @@ const KNOWN_PROVIDERS = [
   'qwen',
   'moonshot',
   'openrouter',
+  'vertex',
   'ollama',
   'ollama-cloud',
   'pioneer',
@@ -46,6 +47,15 @@ describe('providerIcon', () => {
     expect(img).not.toBeNull();
     expect(img?.getAttribute('src')).toBe('/icons/manifest.svg');
     expect(img?.getAttribute('alt')).toBe('Manifest');
+  });
+
+  it('returns the Meta logo image for "meta"', () => {
+    const { container } = render(() => <div>{providerIcon('meta', 24)}</div>);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute('src')).toBe('/icons/providers/meta.svg');
+    expect(img?.getAttribute('width')).toBe('24');
+    expect(img?.getAttribute('height')).toBe('24');
   });
 
   it('returns an SVG for "llamacpp"', () => {
@@ -160,6 +170,36 @@ describe('customProviderLogo', () => {
     const img = container.querySelector('img');
     expect(img).not.toBeNull();
     expect(img!.getAttribute('src')).toBe('/icons/pioneer.svg');
+  });
+
+  it('resolves Vertex AI by base URL when name does not match', () => {
+    const { container } = render(() => (
+      <div>
+        {customProviderLogo(
+          'my-provider',
+          16,
+          'https://us-central1-aiplatform.googleapis.com/v1/projects/p/locations/us-central1',
+        )}
+      </div>
+    ));
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/vertex.svg');
+  });
+
+  it.each(['vertex', 'google-vertex', 'vertex-ai', 'Vertex AI'])(
+    'resolves %s to the branded inline Vertex icon via the shared registry',
+    (name: string) => {
+      const { container } = render(() => <div>{customProviderLogo(name)}</div>);
+      expect(container.querySelector('svg')).not.toBeNull();
+    },
+  );
+
+  it('falls back to the Vertex logo image for an unregistered Vertex name', () => {
+    const { container } = render(() => <div>{customProviderLogo('Google Vertex AI')}</div>);
+    const img = container.querySelector('img');
+    expect(img).not.toBeNull();
+    expect(img!.getAttribute('src')).toBe('/icons/vertex.svg');
   });
 
   it('resolves Azure by name', () => {

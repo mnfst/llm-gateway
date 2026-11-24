@@ -8,7 +8,7 @@ import { ModelPricingCacheService } from '../../model-prices/model-pricing-cache
 import { ModelDiscoveryService } from '../../model-discovery/model-discovery.service';
 import { CachedProviderKey, RoutingCacheService } from './routing-cache.service';
 import { ProviderService } from './provider.service';
-import { decrypt, getEncryptionSecret } from '../../common/utils/crypto.util';
+import { decryptWithAny, getDecryptionSecrets } from '../../common/utils/crypto.util';
 import {
   expandProviderNames,
   inferProviderFromModelName,
@@ -23,9 +23,32 @@ import { isManifestUsableProvider } from '../../common/utils/subscription-suppor
  */
 export const SYNTHETIC_OLLAMA_PROVIDER_ID = 'ollama';
 
+/** Longest connection label echoed into a log line. */
+const MAX_LOGGED_LABEL_LENGTH = 64;
+const STALE_PIN_WARN_WINDOW_MS = 60_000;
+const MAX_STALE_PIN_WARNING_KEYS = 256;
+
+/**
+ * Connection labels are user-authored text. Strip control characters (a
+ * newline would let a label forge extra log lines) and cap the length before
+ * interpolating one into a log message.
+ */
+function forLog(label: string): string {
+  const cleaned = [...label]
+    .map((c) => {
+      const code = c.codePointAt(0) ?? 0;
+      return code < 0x20 || code === 0x7f ? ' ' : c;
+    })
+    .join('');
+  return cleaned.length > MAX_LOGGED_LABEL_LENGTH
+    ? `${cleaned.slice(0, MAX_LOGGED_LABEL_LENGTH)}…`
+    : cleaned;
+}
+
 @Injectable()
 export class ProviderKeyService {
   private readonly logger = new Logger(ProviderKeyService.name);
+  private readonly stalePinWarnings = new Map<string, number>();
 
   constructor(
     @InjectRepository(TenantProvider)
@@ -105,6 +128,28 @@ export class ProviderKeyService {
     if (label) {
       const match = keys.find((k) => k.label.toLowerCase() === label.toLowerCase());
       if (match) return match;
+      // A pin that names no connection is a stale route (the key was renamed
+      // or deleted). Serving the default keeps traffic flowing, but it silently
+      // bills a connection the operator did not choose. Throttle identical
+      // warnings so subscription re-reads and fallback retries stay diagnosable
+      // without producing one log line per lookup.
+      const warningKey = [tenantId, agentId ?? '', provider.toLowerCase(), authType ?? '', label]
+        .join('\0')
+        .toLowerCase();
+      const now = Date.now();
+      const warnedAt = this.stalePinWarnings.get(warningKey);
+      if (warnedAt === undefined || now - warnedAt >= STALE_PIN_WARN_WINDOW_MS) {
+        this.stalePinWarnings.delete(warningKey);
+        this.stalePinWarnings.set(warningKey, now);
+        if (this.stalePinWarnings.size > MAX_STALE_PIN_WARNING_KEYS) {
+          const oldest = this.stalePinWarnings.keys().next().value as string | undefined;
+          if (oldest !== undefined) this.stalePinWarnings.delete(oldest);
+        }
+        this.logger.warn(
+          `Key label "${forLog(label)}" matches no ${provider} connection for tenant=${tenantId} ` +
+            `authType=${authType ?? 'any'} — falling back to "${forLog(keys[0].label)}"`,
+        );
+      }
     }
     return keys[0];
   }
@@ -307,7 +352,7 @@ export class ProviderKeyService {
           id: record.id,
           label: record.label,
           priority: record.priority,
-          apiKey: decrypt(record.api_key_encrypted, getEncryptionSecret()),
+          apiKey: decryptWithAny(record.api_key_encrypted, getDecryptionSecrets()).plaintext,
           region: record.region,
         },
       ];

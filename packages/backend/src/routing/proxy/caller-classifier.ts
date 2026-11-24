@@ -106,6 +106,9 @@ function detectSdk(
 
     const axios = ua.match(/^axios\/([\d.]+)/i);
     if (axios) return { sdk: 'axios', sdkVersion: axios[1] };
+
+    const n8nNode = ua.match(/^n8n-nodes-manifest(?:\/([\d.]+))?/i);
+    if (n8nNode) return { sdk: 'n8n-nodes-manifest', sdkVersion: n8nNode[1] };
   }
 
   if (stainlessLang) {

@@ -1,11 +1,11 @@
 # Deploy Manifest on AWS
 
-This walkthrough deploys Manifest on AWS with ECS Fargate, RDS PostgreSQL, Secrets Manager, and an Application Load Balancer. The stack uses public ECS tasks behind the load balancer and private RDS subnets, so it does not create a NAT gateway.
+This walkthrough deploys Manifest on AWS with ECS Fargate, RDS PostgreSQL, a private S3 bucket for request recordings, Secrets Manager, and an Application Load Balancer. The stack uses public ECS tasks behind the load balancer and private RDS subnets, so it does not create a NAT gateway.
 
 ## Prerequisites
 
 - An AWS account with billing enabled.
-- Permission to create CloudFormation stacks, IAM roles, VPC resources, ECS, RDS, Elastic Load Balancing, CloudWatch Logs, and Secrets Manager secrets.
+- Permission to create CloudFormation stacks, IAM roles, VPC resources, ECS, RDS, S3, Elastic Load Balancing, CloudWatch Logs, and Secrets Manager secrets.
 - AWS CloudShell or a local shell with `aws` and `git` installed.
 
 This stack creates paid resources, including an Application Load Balancer, ECS Fargate tasks, and RDS PostgreSQL.
@@ -17,8 +17,8 @@ The default template exposes Manifest over HTTP on the generated load balancer D
 Open [AWS CloudShell](https://console.aws.amazon.com/cloudshell/home), choose the region you want to deploy into, then run:
 
 ```bash
-git clone https://github.com/mnfst/manifest.git
-cd manifest
+git clone https://github.com/mnfst/llm-gateway.git
+cd llm-gateway
 AWS_REGION=us-east-1 ./deploy/aws/deploy.sh
 ```
 
@@ -52,6 +52,11 @@ Manifest runs with:
 - `BIND_ADDRESS=0.0.0.0`
 - `MANIFEST_MODE=selfhosted`
 - `BETTER_AUTH_URL=http://<load-balancer-dns-name>`
+- `REQUEST_RECORDING_STORAGE=s3`
+- `REQUEST_RECORDING_S3_BUCKET=<generated-private-bucket>`
+- `REQUEST_RECORDING_S3_REGION=<stack-region>`
+
+The ECS task uses its IAM task role to access only the request-recording object prefix, so no static S3 access keys are stored in the container. The recording bucket is retained when the CloudFormation stack is deleted to avoid accidental recording loss; remove it manually after exporting or deleting its contents.
 
 ## Open Manifest
 
@@ -63,7 +68,7 @@ To fetch them again:
 aws cloudformation describe-stacks \
   --region us-east-1 \
   --stack-name manifest \
-  --query "Stacks[0].Outputs[?OutputKey=='ServiceUrl' || OutputKey=='HealthCheckUrl'].[OutputKey,OutputValue]" \
+  --query "Stacks[0].Outputs[?OutputKey=='ServiceUrl' || OutputKey=='HealthCheckUrl' || OutputKey=='RecordingBucketName'].[OutputKey,OutputValue]" \
   --output table
 ```
 

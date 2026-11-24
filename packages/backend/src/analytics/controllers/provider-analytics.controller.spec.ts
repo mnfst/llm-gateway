@@ -1,3 +1,4 @@
+import { mockScopeResolver, selectedAgent } from '../__tests__/scope.fixture';
 import { ProviderAnalyticsController } from './provider-analytics.controller';
 import type { AggregationService } from '../services/aggregation.service';
 import type { TimeseriesQueriesService } from '../services/timeseries-queries.service';
@@ -94,6 +95,7 @@ describe('ProviderAnalyticsController', () => {
     };
 
     controller = new ProviderAnalyticsController(
+      mockScopeResolver(),
       aggregation as unknown as AggregationService,
       timeseries as unknown as TimeseriesQueriesService,
       autofixStats as never,
@@ -147,7 +149,7 @@ describe('ProviderAnalyticsController', () => {
         '7d',
         'tenant-1',
         false,
-        'agent-x',
+        selectedAgent('tenant-1', 'agent-x'),
         'api_key',
         'openai',
         true,

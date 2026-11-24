@@ -4,10 +4,14 @@ services:
     runtime: image
     image:
       url: docker.io/manifestdotbuild/manifest:6
-    plan: free
+    plan: starter
     numInstances: 1
     healthCheckPath: /api/v1/health
     autoDeployTrigger: off
+    disk:
+      name: manifest-recordings
+      mountPath: /data/request-recordings
+      sizeGB: 1
     envVars:
       - key: PORT
         value: 2099
@@ -26,6 +30,10 @@ services:
           envVarKey: RENDER_EXTERNAL_URL
       - key: MANIFEST_MODE
         value: selfhosted
+      - key: REQUEST_RECORDING_STORAGE
+        value: filesystem
+      - key: REQUEST_RECORDING_FILESYSTEM_PATH
+        value: /data/request-recordings
 
 databases:
   - name: manifest-postgres

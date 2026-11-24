@@ -1,6 +1,10 @@
 /* ── LLM Provider definitions (shared by Routing page) ── */
 
-import { SHARED_PROVIDER_BY_ID, type SharedProviderEntry } from 'manifest-shared';
+import {
+  META_MODEL_API_MODELS,
+  SHARED_PROVIDER_BY_ID,
+  type SharedProviderEntry,
+} from 'manifest-shared';
 
 export interface SubscriptionEndpointRegion {
   value: string;
@@ -28,6 +32,12 @@ export interface ProviderDef {
   subscriptionKeyPlaceholder?: string;
   /** Optional note shown near the subscription credential field. */
   subscriptionRequirementNote?: string;
+  /**
+   * Set when the provider accepts no new subscription connections. Existing
+   * connections keep working and stay manageable; this note replaces the
+   * connect flow, and catalogs list the provider only where it is connected.
+   */
+  subscriptionClosedNote?: string;
   /**
    * Credential kind used for subscription auth. Drives the input label and
    * aria-labels in the subscription detail view. Defaults to 'setup-token'
@@ -87,6 +97,7 @@ interface ProviderUIOverlay {
   subscriptionLabel?: string;
   subscriptionKeyPlaceholder?: string;
   subscriptionRequirementNote?: string;
+  subscriptionClosedNote?: string;
   subscriptionCredentialKind?: 'setup-token' | 'api-key';
   subscriptionCredentialName?: string;
   subscriptionCommand?: string;
@@ -156,6 +167,11 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     supportsSubscription: true,
     subscriptionLabel: 'Claude Max / Pro subscription',
     subscriptionAuthMode: 'popup_paste',
+    models: [],
+  },
+  vertex: {
+    initial: 'GV',
+    subtitle: 'Gemini via Google Cloud Vertex AI',
     models: [],
   },
   bedrock: {
@@ -259,10 +275,14 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   },
   gemini: {
     initial: 'G',
-    subtitle: 'Gemini 3.6 Flash, 3.1 Pro, Gemini 2.5',
+    subtitle: 'Gemini 3.5 Flash, 3.1 Flash-Lite, Gemini 2.5',
     supportsSubscription: true,
     subscriptionLabel: 'Sign in with Google',
     subscriptionAuthMode: 'popup_oauth',
+    // Google refuses gemini-cli's OAuth client for Gemini Code Assist for
+    // individuals (google-gemini/gemini-cli#29279), so new sign-ins fail.
+    subscriptionClosedNote:
+      'Google no longer allows new Gemini sign-ins from apps outside Google. Existing connections keep working. To add Gemini, connect a Gemini API key under Usage-based providers.',
     models: [],
   },
   'gemini-free': {
@@ -312,6 +332,10 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
   minimax: {
     initial: 'Mm',
     subtitle: 'MiniMax M3, M2.7, M2.5',
+    apiKeyEndpointRegions: [
+      { value: 'global', label: 'Global' },
+      { value: 'cn', label: 'China' },
+    ],
     supportsSubscription: true,
     subscriptionLabel: 'MiniMax Coding Plan',
     subscriptionAuthMode: 'device_code',
@@ -321,6 +345,14 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
       dividerLabel: 'Or paste your Coding Plan token',
     },
     models: [],
+  },
+  meta: {
+    initial: 'Me',
+    subtitle: 'Muse Spark 1.2, Contributor, and 1.1',
+    models: META_MODEL_API_MODELS.map((model) => ({
+      label: model.displayName,
+      value: model.id,
+    })),
   },
   xiaomi: {
     initial: 'Mi',
@@ -498,12 +530,14 @@ const PROVIDER_ORDER = [
   'gemini-free',
   'copilot',
   'gemini',
+  'vertex',
   'groq',
   'huggingface',
   'kilo',
   'kiro',
   'llamacpp',
   'lmstudio',
+  'meta',
   'minimax',
   'mistral',
   'moonshot',
@@ -529,6 +563,20 @@ export const PROVIDERS: ProviderDef[] = PROVIDER_ORDER.map((id) => {
   }
   return buildProviderDef(shared);
 });
+
+/**
+ * Providers a subscription catalog lists. One closed to new subscriptions
+ * stays listed only where the workspace already has that subscription, so
+ * existing connections remain reachable.
+ */
+export function subscriptionCatalog(
+  providers: readonly ProviderDef[],
+  hasSubscription: (providerId: string) => boolean,
+): ProviderDef[] {
+  return providers.filter(
+    (p) => p.supportsSubscription && (!p.subscriptionClosedNote || hasSubscription(p.id)),
+  );
+}
 
 /* ── Pipeline stage definitions ────────────────────── */
 

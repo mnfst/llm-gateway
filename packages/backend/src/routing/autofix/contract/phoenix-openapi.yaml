@@ -19,6 +19,12 @@ paths:
   /api/heal:
     post:
       summary: Resolve a patch for a failed request
+      security:
+        - ApiKeyAuth: []
+        - ManifestInstanceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ManifestVersion'
+        - $ref: '#/components/parameters/ManifestHarness'
       description: >
         Fingerprints the error and returns a healed request body if a
         deterministic patch exists. Only request-side errors are healable.
@@ -46,6 +52,27 @@ paths:
         '422':
           description: Error is not request-side (5xx / auth / rate-limit); nothing to heal.
 
+  /api/heal/observe:
+    post:
+      summary: Record failed requests as diagnostic evidence
+      security:
+        - ApiKeyAuth: []
+        - ManifestInstanceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ManifestVersion'
+        - $ref: '#/components/parameters/ManifestHarness'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ObservationBatch'
+      responses:
+        '200':
+          description: Observation batch accepted.
+        '401':
+          description: Missing or invalid static key or instance credential.
+
   /api/heal-attempts/{id}:
     parameters:
       - $ref: '#/components/parameters/Id'
@@ -64,6 +91,12 @@ paths:
           description: Unknown or non-UUID id.
     patch:
       summary: Report the outcome of a retried request
+      security:
+        - ApiKeyAuth: []
+        - ManifestInstanceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ManifestVersion'
+        - $ref: '#/components/parameters/ManifestHarness'
       requestBody:
         required: true
         content:
@@ -266,6 +299,16 @@ components:
         Static API key. Send as `x-api-key: <key>` (an `Authorization: Bearer
         <key>` header is also accepted). Enforced in deployed environments where
         the API_KEY env var is set; disabled locally when it is unset.
+    ManifestInstanceAuth:
+      type: apiKey
+      in: header
+      name: X-Manifest-Instance
+      description: >
+        Anonymous install identifier announced by a self-hosted Manifest. This
+        is an identifier, not a credential: it is not secret and no registration
+        handshake issues it. Phoenix creates the instance row the first time it
+        sees an id. Accepted in place of ApiKeyAuth on the gateway write
+        operations.
 
   parameters:
     Id:
@@ -285,8 +328,73 @@ components:
       in: query
       description: Rows to skip for pagination.
       schema: { type: integer, minimum: 0, default: 0 }
-
+    ManifestVersion:
+      name: X-Manifest-Version
+      in: header
+      required: false
+      description: Running Manifest release version. Invalid values become `unknown` in analytics.
+      schema:
+        type: string
+        maxLength: 32
+        pattern: '^[0-9]+\.[0-9]+\.[0-9]+'
+    ManifestHarness:
+      name: X-Manifest-Harness
+      in: header
+      required: false
+      description: Agent platform slug. Missing or unknown values become `other` in analytics.
+      schema:
+        type: string
+        enum:
+          [
+            openclaw,
+            hermes,
+            nanobot,
+            craft,
+            n8n,
+            claude-code,
+            opencode,
+            codex,
+            openai-sdk,
+            anthropic-sdk,
+            vercel-ai-sdk,
+            langchain,
+            curl,
+            other,
+          ]
   schemas:
+    InstanceRegistration:
+      type: object
+      required: [version, schema_version]
+      properties:
+        version:
+          type: string
+          maxLength: 32
+          pattern: '^[0-9]+\.[0-9]+\.[0-9]+'
+        schema_version:
+          type: integer
+          const: 1
+      additionalProperties: true
+
+    InstanceCredential:
+      type: object
+      required: [instance_id, secret]
+      properties:
+        instance_id: { type: string, format: uuid }
+        secret:
+          type: string
+          description: Opaque 256-bit base64url bearer token. Returned only once.
+      additionalProperties: false
+
+    ObservationBatch:
+      type: object
+      required: [observations]
+      properties:
+        observations:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: '#/components/schemas/HealRequest' }
+
     ProviderError:
       type: object
       required: [message]

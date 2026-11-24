@@ -1,3 +1,4 @@
+import type { AgentScope } from './analytics-scope.service';
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -21,10 +22,10 @@ export interface ErrorBreakdownResponse {
   /** Manifest's OWN config/policy/internal rejections — NOT a provider failure. */
   manifest_errors: number;
   /**
-   * Requests healed by Auto-fix in the window — one per healed request. NOT additive with
+   * Requests healed by Autofix in the window — one per healed request. NOT additive with
    * `total_errors`: the healed original is a superseded attempt that is already
    * included in `total_errors`/`by_origin`, so treat this as "of those errors,
-   * this many were auto-fixed", never as a separate error bucket to sum.
+   * this many were autofixed", never as a separate error bucket to sum.
    */
   auto_fixed: number;
   by_origin: Record<string, number>;
@@ -49,15 +50,15 @@ export class ErrorBreakdownService {
   async getBreakdown(params: {
     tenantId: string | null;
     range?: string;
-    agentName?: string;
+    agentScope?: AgentScope;
   }): Promise<ErrorBreakdownResponse> {
     const range = params.range ?? '30d';
     const cutoff = computeCutoff(rangeToInterval(range));
 
     const [groups, successful, autoFixed] = await Promise.all([
-      this.queryErrorGroups(cutoff, params.tenantId, params.agentName),
-      this.querySuccessful(cutoff, params.tenantId, params.agentName),
-      this.queryAutoFixed(cutoff, params.tenantId, params.agentName),
+      this.queryErrorGroups(cutoff, params.tenantId, params.agentScope),
+      this.querySuccessful(cutoff, params.tenantId, params.agentScope),
+      this.queryAutoFixed(cutoff, params.tenantId, params.agentScope),
     ]);
 
     return this.assemble(range, groups, successful, autoFixed);
@@ -66,7 +67,7 @@ export class ErrorBreakdownService {
   private async queryErrorGroups(
     cutoff: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<ErrorGroupRow[]> {
     const qb = this.messageRepo
       .createQueryBuilder('at')
@@ -77,7 +78,7 @@ export class ErrorBreakdownService {
       .andWhere('at.error_origin IS NOT NULL')
       .groupBy('at.error_origin')
       .addGroupBy('at.error_class');
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     excludePlaygroundAgents(qb);
     const rows = await qb.getRawMany<{
       origin: string;
@@ -94,23 +95,23 @@ export class ErrorBreakdownService {
   private async querySuccessful(
     cutoff: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<number> {
     const qb = this.messageRepo
       .createQueryBuilder('at')
       .select(`COUNT(*) FILTER (WHERE ${sqlIsSuccessStatus('at.status')})`, 'count')
       .where('at.timestamp >= :cutoff', { cutoff });
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     excludePlaygroundAgents(qb);
     const row = await qb.getRawOne<{ count: string }>();
     return Number(row?.count ?? 0);
   }
 
-  /** Count each request whose Auto-fix retry actually succeeded. */
+  /** Count each request whose Autofix retry actually succeeded. */
   private async queryAutoFixed(
     cutoff: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<number> {
     const qb = this.messageRepo
       .createQueryBuilder('at')
@@ -131,7 +132,7 @@ export class ErrorBreakdownService {
           )
         ))`,
       );
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     excludePlaygroundAgents(qb);
     const row = await qb.getRawOne<{ count: string }>();
     return Number(row?.count ?? 0);

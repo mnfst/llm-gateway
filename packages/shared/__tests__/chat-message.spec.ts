@@ -174,9 +174,12 @@ describe('recorded chat message helpers', () => {
     ]);
   });
 
-  it('reads Gemini contents and normalizes model roles', () => {
+  it('reads Gemini system instructions and normalizes model roles', () => {
     expect(
       extractRequestMessages({
+        systemInstruction: {
+          parts: [{ text: 'Be concise.' }, { text: 'Use metric units.' }],
+        },
         contents: [
           { role: 'model', parts: [{ text: 'Answer' }] },
           { role: 'custom', parts: [{ text: 'Custom' }] },
@@ -185,9 +188,26 @@ describe('recorded chat message helpers', () => {
         ],
       }),
     ).toEqual([
+      { role: 'system', content: 'Be concise.\nUse metric units.' },
       { role: 'assistant', content: [{ text: 'Answer' }] },
       { role: 'custom', content: [{ text: 'Custom' }] },
       { role: 'user', content: [{ text: 'Prompt' }] },
+    ]);
+  });
+
+  it('unwraps Gemini CodeAssist request envelopes', () => {
+    expect(
+      extractRequestMessages({
+        model: 'gemini-2.5-pro',
+        project: 'project-id',
+        request: {
+          systemInstruction: { parts: [{ text: 'Answer in French.' }] },
+          contents: [{ role: 'user', parts: [{ text: 'Hello' }] }],
+        },
+      }),
+    ).toEqual([
+      { role: 'system', content: 'Answer in French.' },
+      { role: 'user', content: [{ text: 'Hello' }] },
     ]);
   });
 
@@ -343,6 +363,64 @@ describe('recorded chat message helpers', () => {
       { role: 'user', content: 'Hello' },
       { role: 'assistant', content: 'Hi there' },
     ]);
+  });
+
+  it('keeps streamed tool calls apart when the provider omits their index', () => {
+    const messages = extractRecordedConversationMessages(
+      { messages: [{ role: 'user', content: 'Weather and time?' }] },
+      {
+        type: 'stream',
+        raw_sse: [
+          'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"get_weather","arguments":"{\\"city\\":"}}]}}]}',
+          'data: {"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"\\"Paris\\"}"}}]}}]}',
+          'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"get_time","arguments":"{\\"tz\\":\\"CET\\"}"}}]}}]}',
+          'data: [DONE]',
+        ].join('\n\n'),
+      },
+    );
+
+    expect(messages[1]!.tool_calls).toEqual([
+      {
+        id: 'call_a',
+        type: 'function',
+        function: { name: 'get_weather', arguments: '{"city":"Paris"}' },
+      },
+      {
+        id: 'call_b',
+        type: 'function',
+        function: { name: 'get_time', arguments: '{"tz":"CET"}' },
+      },
+    ]);
+  });
+
+  it('keeps an index-less tool call name split over several deltas whole', () => {
+    const messages = extractRecordedConversationMessages(
+      { messages: [{ role: 'user', content: 'Weather?' }] },
+      {
+        type: 'stream',
+        raw_sse: [
+          'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"get_","arguments":""}}]}}]}',
+          'data: {"choices":[{"delta":{"tool_calls":[{"function":{"name":"weather","arguments":"{}"}}]}}]}',
+          'data: [DONE]',
+        ].join('\n\n'),
+      },
+    );
+
+    expect(messages[1]!.tool_calls).toEqual([
+      { id: 'call_a', type: 'function', function: { name: 'get_weather', arguments: '{}' } },
+    ]);
+  });
+
+  it('reconstructs Gemini streaming text from candidate parts', () => {
+    expect(
+      extractResponseMessages({
+        type: 'stream',
+        raw_sse: [
+          'data: {"candidates":[{"content":{"parts":[{"text":"Hello! ","thoughtSignature":"signature"}],"role":"model"},"index":0}]}',
+          'data: {"candidates":[{"content":{"parts":[{"text":"How can I help?"}],"role":"model"},"finishReason":"STOP","index":0}]}',
+        ].join('\r\n\r\n'),
+      }),
+    ).toEqual([{ role: 'assistant', content: 'Hello! How can I help?' }]);
   });
 
   it('reconstructs Responses and Anthropic streaming text and skips bad events', () => {
@@ -544,5 +622,154 @@ describe('recorded chat message helpers', () => {
         body: { choices: [{ message: { role: 'assistant', content: 'No call' } }] },
       }),
     ).toEqual([]);
+  });
+
+  it('keeps top-level tool calls and tool ids on messages with array content (#3048)', () => {
+    expect(
+      extractRequestMessages({
+        messages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Checking' }],
+            tool_calls: [
+              { id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' } },
+              null,
+            ],
+          },
+          {
+            role: 'tool',
+            name: 'lookup',
+            tool_call_id: 'call_1',
+            content: [{ type: 'text', text: 'Found' }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Checking' }],
+        tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' } },
+        ],
+      },
+      {
+        role: 'tool',
+        name: 'lookup',
+        tool_call_id: 'call_1',
+        content: [{ type: 'text', text: 'Found' }],
+      },
+    ]);
+  });
+
+  it('keeps Gemini streamed function calls like the JSON response path (#3049)', () => {
+    const reply = {
+      candidates: [
+        {
+          content: {
+            role: 'model',
+            parts: [{ functionCall: { id: 'call_1', name: 'lookup', args: { q: 'a' } } }],
+          },
+        },
+      ],
+    };
+    const call = {
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'lookup', arguments: { q: 'a' } },
+    };
+    expect(
+      extractResponseMessages({ type: 'stream', raw_sse: `data: ${JSON.stringify(reply)}\n\n` }),
+    ).toEqual(extractResponseMessages({ type: 'json', body: reply }));
+    expect(
+      extractResponseMessages({
+        type: 'stream',
+        raw_sse: [
+          'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"Let me look."}]}}]}',
+          `data: ${JSON.stringify(reply)}`,
+          '',
+        ].join('\n\n'),
+      }),
+    ).toEqual([{ role: 'assistant', content: 'Let me look.', tool_calls: [call] }]);
+  });
+
+  it('joins multi-line SSE data fields before parsing (#3050)', () => {
+    expect(
+      extractResponseMessages({
+        type: 'stream',
+        raw_sse: 'data: {\ndata: "choices":[{"delta":{"content":"Hello"}}]}\n\n',
+      }),
+    ).toEqual([{ role: 'assistant', content: 'Hello' }]);
+    expect(
+      extractResponseMessages({
+        type: 'stream',
+        raw_sse: [
+          ': keep-alive',
+          'event: message',
+          'id: 1',
+          'data: {"choices":[{"delta":',
+          'data: {"content":"Hi"}}]}',
+          '',
+          'data:{"choices":[{"delta":{"content":" there"}}]}',
+          '',
+          'data: 42',
+          '',
+          'data: [DONE]',
+          '',
+          '',
+        ].join('\r\n'),
+      }),
+    ).toEqual([{ role: 'assistant', content: 'Hi there' }]);
+  });
+
+  it('expands Gemini function declarations into named tools (#3051)', () => {
+    expect(
+      extractRequestTools({
+        tools: [
+          {
+            functionDeclarations: [
+              {
+                name: 'lookup',
+                description: 'Find a record',
+                parameters: { type: 'object', properties: { q: { type: 'string' } } },
+              },
+              { name: 'save', parametersJsonSchema: { type: 'object' } },
+              {},
+              null,
+            ],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'lookup',
+          description: 'Find a record',
+          parameters: { type: 'object', properties: { q: { type: 'string' } } },
+        },
+      },
+      {
+        type: 'function',
+        function: { name: 'save', description: undefined, parameters: { type: 'object' } },
+      },
+      {
+        type: 'function',
+        function: { name: undefined, description: undefined, parameters: undefined },
+      },
+    ]);
+  });
+
+  it('reads tools from a Gemini Code Assist request envelope', () => {
+    expect(
+      extractRequestTools({
+        model: 'gemini-flash-latest',
+        request: { tools: [{ functionDeclarations: [{ name: 'lookup' }] }] },
+      }),
+    ).toEqual([
+      {
+        type: 'function',
+        function: { name: 'lookup', description: undefined, parameters: undefined },
+      },
+    ]);
   });
 });

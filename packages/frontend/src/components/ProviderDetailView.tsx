@@ -116,8 +116,13 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
     ),
   );
 
+  // Closed providers keep existing connections manageable but take no new ones.
+  const subscriptionClosed = () => isSubMode() && !!provDef.subscriptionClosedNote;
+  const showConnectFlow = () => !subscriptionClosed() || connected();
+
   const showAddKeyButton = () =>
     connected() &&
+    !subscriptionClosed() &&
     supportsMultiKey() &&
     activeKeys().length < MAX_KEYS_PER_PROVIDER &&
     !addKeyOpen();
@@ -273,6 +278,12 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
         </div>
       </div>
 
+      <Show when={subscriptionClosed()}>
+        <p class="provider-detail__hint" role="note">
+          {provDef.subscriptionClosedNote}
+        </p>
+      </Show>
+
       <Show when={isSubMode() && provDef.subscriptionRequirementNote}>
         <p style="font-size: 14px; color: hsl(var(--muted-foreground)); margin: 0 0 12px; line-height: 1.5;">
           {provDef.subscriptionRequirementNote}
@@ -314,7 +325,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Subscription sign-in URL instruction (token mode with external sign-in) */}
-      <Show when={isSubMode() && provDef.subscriptionSignInUrl}>
+      <Show when={showConnectFlow() && isSubMode() && provDef.subscriptionSignInUrl}>
         <p class="provider-detail__hint">
           {provDef.subscriptionSignInHint ??
             `Sign in to your ${provDef.name} account to get your API key, then paste it below.`}
@@ -346,7 +357,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Subscription terminal instruction */}
-      <Show when={isSubMode() && provDef.subscriptionCommand}>
+      <Show when={showConnectFlow() && isSubMode() && provDef.subscriptionCommand}>
         <p class="provider-detail__hint">
           {isCommandOnly()
             ? 'Run the command below to log in via your browser.'
@@ -374,7 +385,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Command-only subscription */}
-      <Show when={isCommandOnly()}>
+      <Show when={showConnectFlow() && isCommandOnly()}>
         <p class="provider-detail__hint" style="margin-top: 16px;">
           A browser window will open for you to log in. Once authenticated, the connection will be
           detected automatically.
@@ -398,7 +409,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* OAuth subscription */}
-      <Show when={isPopupOAuthFlow()}>
+      <Show when={showConnectFlow() && isPopupOAuthFlow()}>
         <OAuthDetailView
           provDef={provDef}
           provId={props.provId}
@@ -418,7 +429,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Paste-code OAuth subscription (Anthropic) */}
-      <Show when={isPopupPasteFlow()}>
+      <Show when={showConnectFlow() && isPopupPasteFlow()}>
         <AnthropicOAuthDetailView
           provDef={provDef}
           provId={props.provId}
@@ -437,7 +448,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       </Show>
 
       {/* Device-code subscription */}
-      <Show when={isDeviceCodeFlow()}>
+      <Show when={showConnectFlow() && isDeviceCodeFlow()}>
         <DeviceCodeDetailView
           provDef={provDef}
           provId={props.provId}
@@ -498,6 +509,7 @@ const ProviderDetailView: Component<ProviderDetailViewProps> = (props) => {
       {/* API key / subscription token form (non-Ollama, non-command-only, non-OAuth) */}
       <Show
         when={
+          showConnectFlow() &&
           !isOllama &&
           !isCommandOnly() &&
           !isPopupOAuthFlow() &&

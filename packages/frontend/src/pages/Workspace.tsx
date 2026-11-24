@@ -7,9 +7,9 @@ import AddAgentModal from '../components/AddAgentModal.jsx';
 import DuplicateAgentModal from '../components/DuplicateAgentModal.jsx';
 import { getAgents, deleteAgent } from '../services/api.js';
 import { toast } from '../services/toast-store.js';
-import { formatNumber } from '../services/formatters.js';
+import { formatCost, formatNumber, formatTime } from '../services/formatters.js';
 import Sparkline from '../components/Sparkline.jsx';
-import { agentPing, messagePing } from '../services/sse.js';
+import { agentPing, analyticsPing } from '../services/sse.js';
 import { platformIcon } from 'manifest-shared';
 
 interface Agent {
@@ -63,12 +63,32 @@ const DeleteIcon: Component = () => (
   </svg>
 );
 
+type HarnessView = 'grid' | 'table';
+const VIEW_STORAGE_KEY = 'manifest_harness_view';
+
+function readStoredView(): HarnessView {
+  try {
+    return localStorage.getItem(VIEW_STORAGE_KEY) === 'table' ? 'table' : 'grid';
+  } catch {
+    return 'grid';
+  }
+}
+
 const Workspace: Component = () => {
   const [data, { refetch }] = createResource(
-    () => ({ _agentPing: agentPing(), _messagePing: messagePing() }),
+    () => ({ _agentPing: agentPing(), _analyticsPing: analyticsPing() }),
     () => getAgents() as Promise<AgentsData>,
   );
   const [modalOpen, setModalOpen] = createSignal(false);
+  const [view, setView] = createSignal<HarnessView>(readStoredView());
+  const switchView = (next: HarnessView) => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, next);
+    } catch {
+      /* storage unavailable */
+    }
+  };
   // Deep-link support: visiting /harnesses?add=true auto-opens the connect modal so
   // onboarding surfaces can route a user straight into creating an agent. We
   // clear the param so a refresh or back-navigation doesn't re-trigger it.
@@ -83,6 +103,23 @@ const Workspace: Component = () => {
     }
   });
   const [duplicateSource, setDuplicateSource] = createSignal<string | null>(null);
+  // Shared by the grid card menu and the table row menu so both views stay in sync.
+  const harnessActionItems = (agentName: string) => [
+    {
+      label: 'Duplicate',
+      icon: <DuplicateIcon />,
+      onClick: () => setDuplicateSource(agentName),
+    },
+    {
+      label: 'Delete',
+      danger: true,
+      icon: <DeleteIcon />,
+      onClick: () => {
+        setDeleteTarget(agentName);
+        setDeleteConfirmName('');
+      },
+    },
+  ];
   const [deleteTarget, setDeleteTarget] = createSignal<string | null>(null);
   const [deleteConfirmName, setDeleteConfirmName] = createSignal('');
   const [deleting, setDeleting] = createSignal(false);
@@ -120,45 +157,136 @@ const Workspace: Component = () => {
           <h1>My Harnesses</h1>
           <span class="breadcrumb">View and manage all your connected harnesses</span>
         </div>
-        <button class="btn btn--primary btn--sm" onClick={() => setModalOpen(true)}>
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          Connect Harness
-        </button>
+        <div class="header-controls">
+          <div class="panel__tabs" role="group" aria-label="Harness list layout">
+            <button
+              type="button"
+              class="panel__tab"
+              classList={{ 'panel__tab--active': view() === 'grid' }}
+              aria-pressed={view() === 'grid'}
+              aria-label="Grid view"
+              title="Grid view"
+              onClick={() => switchView('grid')}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="panel__tab"
+              classList={{ 'panel__tab--active': view() === 'table' }}
+              aria-pressed={view() === 'table'}
+              aria-label="Table view"
+              title="Table view"
+              onClick={() => switchView('table')}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="currentColor"
+                aria-hidden="true"
+              >
+                <path d="M4 5h16v3H4zm0 5.5h16v3H4zM4 16h16v3H4z" />
+              </svg>
+            </button>
+          </div>
+          <button class="btn btn--primary btn--sm" onClick={() => setModalOpen(true)}>
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            Connect Harness
+          </button>
+        </div>
       </div>
 
       <Show
         when={!data.loading}
         fallback={
-          <div class="agents-grid">
-            <For each={[1, 2, 3, 4, 5, 6]}>
-              {() => (
-                <div class="agent-card agent-card--skeleton">
-                  <div class="skeleton skeleton--text" style="width: 60%; height: 20px;" />
-                  <div style="display: flex; gap: 16px; margin-top: 12px;">
-                    <div class="skeleton skeleton--text" style="width: 30%; height: 14px;" />
-                    <div class="skeleton skeleton--text" style="width: 30%; height: 14px;" />
+          <Show
+            when={view() === 'grid'}
+            fallback={
+              <div class="panel" style="padding: 0;">
+                <table class="data-table" style="width: 100%;">
+                  <thead>
+                    <tr>
+                      <th>Harness</th>
+                      <th>Requests</th>
+                      <th>Tokens</th>
+                      <th>Cost</th>
+                      <th>Last active</th>
+                      <th aria-label="Actions" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <For each={[1, 2, 3, 4, 5]}>
+                      {() => (
+                        <tr>
+                          <td>
+                            <div class="skeleton skeleton--text" style="width: 40%;" />
+                          </td>
+                          <td>
+                            <div class="skeleton skeleton--text" style="width: 60%;" />
+                          </td>
+                          <td>
+                            <div class="skeleton skeleton--text" style="width: 60%;" />
+                          </td>
+                          <td>
+                            <div class="skeleton skeleton--text" style="width: 50%;" />
+                          </td>
+                          <td>
+                            <div class="skeleton skeleton--text" style="width: 70%;" />
+                          </td>
+                          <td class="workspace-table__actions">
+                            <div
+                              class="skeleton"
+                              style="width: 20px; height: 20px; margin-left: auto;"
+                            />
+                          </td>
+                        </tr>
+                      )}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
+            }
+          >
+            <div class="agents-grid">
+              <For each={[1, 2, 3, 4, 5, 6]}>
+                {() => (
+                  <div class="agent-card agent-card--skeleton">
+                    <div class="skeleton skeleton--text" style="width: 60%; height: 20px;" />
+                    <div style="display: flex; gap: 16px; margin-top: 12px;">
+                      <div class="skeleton skeleton--text" style="width: 30%; height: 14px;" />
+                      <div class="skeleton skeleton--text" style="width: 30%; height: 14px;" />
+                    </div>
+                    <div
+                      class="skeleton skeleton--rect"
+                      style="width: 100%; height: 50px; margin-top: 12px;"
+                    />
                   </div>
-                  <div
-                    class="skeleton skeleton--rect"
-                    style="width: 100%; height: 50px; margin-top: 12px;"
-                  />
-                </div>
-              )}
-            </For>
-          </div>
+                )}
+              </For>
+            </div>
+          </Show>
         }
       >
         <Show when={!data.error} fallback={<ErrorState error={data.error} onRetry={refetch} />}>
@@ -180,68 +308,112 @@ const Workspace: Component = () => {
               </div>
             }
           >
-            <div class="agents-grid">
-              <For each={data()!.agents}>
-                {(agent) => (
-                  <div class="agent-card-wrap">
-                    <A
-                      href={`/harnesses/${encodeURIComponent(agent.agent_name)}`}
-                      class="agent-card"
-                    >
-                      <div class="agent-card__top">
-                        <Show when={platformIcon(agent.agent_platform, agent.agent_category)}>
-                          <img
-                            src={platformIcon(agent.agent_platform, agent.agent_category)}
-                            alt=""
-                            width="18"
-                            height="18"
-                            class="agent-card__platform-icon"
-                          />
-                        </Show>
-                        <span class="agent-card__name">
-                          {agent.display_name ?? agent.agent_name}
-                        </span>
-                      </div>
-                      <div class="agent-card__stats">
-                        <div class="agent-card__stat">
-                          <span class="agent-card__stat-label">Tokens</span>
-                          <span class="agent-card__stat-value">
-                            {formatNumber(agent.total_tokens)}
+            <Show
+              when={view() === 'grid'}
+              fallback={
+                <div class="panel" style="padding: 0; overflow-x: auto;">
+                  <table class="data-table" style="width: 100%;">
+                    <thead>
+                      <tr>
+                        <th>Harness</th>
+                        <th>Requests</th>
+                        <th>Tokens</th>
+                        <th>Cost</th>
+                        <th>Last active</th>
+                        <th aria-label="Actions" />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <For each={data()!.agents}>
+                        {(agent) => (
+                          <tr>
+                            <td>
+                              <A
+                                href={`/harnesses/${encodeURIComponent(agent.agent_name)}`}
+                                class="workspace-table__name"
+                              >
+                                <Show
+                                  when={platformIcon(agent.agent_platform, agent.agent_category)}
+                                >
+                                  <img
+                                    src={platformIcon(agent.agent_platform, agent.agent_category)}
+                                    alt=""
+                                    width="16"
+                                    height="16"
+                                    class="platform-icon workspace-table__icon"
+                                  />
+                                </Show>
+                                {agent.display_name ?? agent.agent_name}
+                              </A>
+                            </td>
+                            <td>{formatNumber(agent.message_count)}</td>
+                            <td>{formatNumber(agent.total_tokens)}</td>
+                            <td>{formatCost(agent.total_cost) ?? '—'}</td>
+                            <td>{agent.last_active ? formatTime(agent.last_active) : '—'}</td>
+                            <td class="workspace-table__actions">
+                              <ActionMenu
+                                ariaLabel={`Actions for ${agent.agent_name}`}
+                                items={harnessActionItems(agent.agent_name)}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </For>
+                    </tbody>
+                  </table>
+                </div>
+              }
+            >
+              <div class="agents-grid">
+                <For each={data()!.agents}>
+                  {(agent) => (
+                    <div class="agent-card-wrap">
+                      <A
+                        href={`/harnesses/${encodeURIComponent(agent.agent_name)}`}
+                        class="agent-card"
+                      >
+                        <div class="agent-card__top">
+                          <Show when={platformIcon(agent.agent_platform, agent.agent_category)}>
+                            <img
+                              src={platformIcon(agent.agent_platform, agent.agent_category)}
+                              alt=""
+                              width="18"
+                              height="18"
+                              class="platform-icon agent-card__platform-icon"
+                            />
+                          </Show>
+                          <span class="agent-card__name">
+                            {agent.display_name ?? agent.agent_name}
                           </span>
                         </div>
-                        <div class="agent-card__stat">
-                          <span class="agent-card__stat-label">Requests</span>
-                          <span class="agent-card__stat-value">{agent.message_count}</span>
+                        <div class="agent-card__stats">
+                          <div class="agent-card__stat">
+                            <span class="agent-card__stat-label">Tokens</span>
+                            <span class="agent-card__stat-value">
+                              {formatNumber(agent.total_tokens)}
+                            </span>
+                          </div>
+                          <div class="agent-card__stat">
+                            <span class="agent-card__stat-label">Requests</span>
+                            <span class="agent-card__stat-value">
+                              {formatNumber(agent.message_count)}
+                            </span>
+                          </div>
                         </div>
-                      </div>
-                      <div class="agent-card__chart">
-                        <Sparkline data={agent.sparkline} width={280} height={50} />
-                      </div>
-                    </A>
-                    <ActionMenu
-                      class="agent-card__menu"
-                      ariaLabel={`Actions for ${agent.agent_name}`}
-                      items={[
-                        {
-                          label: 'Duplicate',
-                          icon: <DuplicateIcon />,
-                          onClick: () => setDuplicateSource(agent.agent_name),
-                        },
-                        {
-                          label: 'Delete',
-                          danger: true,
-                          icon: <DeleteIcon />,
-                          onClick: () => {
-                            setDeleteTarget(agent.agent_name);
-                            setDeleteConfirmName('');
-                          },
-                        },
-                      ]}
-                    />
-                  </div>
-                )}
-              </For>
-            </div>
+                        <div class="agent-card__chart">
+                          <Sparkline data={agent.sparkline} width={280} height={50} />
+                        </div>
+                      </A>
+                      <ActionMenu
+                        class="agent-card__menu"
+                        ariaLabel={`Actions for ${agent.agent_name}`}
+                        items={harnessActionItems(agent.agent_name)}
+                      />
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
           </Show>
         </Show>
       </Show>

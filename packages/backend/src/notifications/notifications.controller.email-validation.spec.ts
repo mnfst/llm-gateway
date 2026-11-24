@@ -7,7 +7,6 @@ import { NotificationRulesService } from './services/notification-rules.service'
 import { NotificationLogService } from './services/notification-log.service';
 import { EmailProviderConfigService } from './services/email-provider-config.service';
 import { NotificationCronService } from './services/notification-cron.service';
-import { LimitCheckService } from './services/limit-check.service';
 import { TenantCacheService } from '../common/services/tenant-cache.service';
 
 const ctx = { tenantId: 'tenant-1', userId: 'user-1' };
@@ -45,7 +44,6 @@ describe('NotificationsController setNotificationEmail validation', () => {
         { provide: NotificationLogService, useValue: { getLogsForAgent: jest.fn() } },
         { provide: EmailProviderConfigService, useValue: mockEmailProviderConfigService },
         { provide: NotificationCronService, useValue: { checkThresholds: jest.fn() } },
-        { provide: LimitCheckService, useValue: { invalidateCache: jest.fn() } },
       ],
     }).compile();
 

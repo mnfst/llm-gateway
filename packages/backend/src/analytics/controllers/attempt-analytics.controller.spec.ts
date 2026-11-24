@@ -1,3 +1,5 @@
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
+import { mockScopeResolver, selectedAgent } from '../__tests__/scope.fixture';
 import { CacheModule } from '@nestjs/cache-manager';
 import { Test, TestingModule } from '@nestjs/testing';
 import { AttemptAnalyticsController } from './attempt-analytics.controller';
@@ -21,7 +23,10 @@ describe('AttemptAnalyticsController', () => {
     const module: TestingModule = await Test.createTestingModule({
       imports: [CacheModule.register()],
       controllers: [AttemptAnalyticsController],
-      providers: [{ provide: AttemptStatsService, useValue: attemptStats }],
+      providers: [
+        { provide: AnalyticsScopeService, useValue: mockScopeResolver() },
+        { provide: AttemptStatsService, useValue: attemptStats },
+      ],
     }).compile();
     controller = module.get(AttemptAnalyticsController);
   });
@@ -33,7 +38,7 @@ describe('AttemptAnalyticsController', () => {
     expect(attemptStats.getStats).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
       range: '30d',
-      agentName: 'bot-1',
+      agentScope: selectedAgent(ctx.tenantId, 'bot-1'),
     });
   });
 
@@ -47,7 +52,7 @@ describe('AttemptAnalyticsController', () => {
     expect(attemptStats.getTimeseries).toHaveBeenCalledWith({
       tenantId: 'tenant-1',
       range: undefined,
-      agentName: undefined,
+      agentScope: undefined,
     });
   });
 });

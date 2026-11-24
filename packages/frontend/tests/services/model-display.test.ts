@@ -116,3 +116,48 @@ describe("model-display", () => {
     expect(getModelDisplayName("gpt-4o")).toBe("label:gpt-4o");
   });
 });
+
+describe("model-display — gateway ids", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it("resolves a gateway id through the bare model in the pricing catalogue", async () => {
+    mockGetModelPrices.mockResolvedValue({
+      models: [
+        {
+          model_name: "deepseek-flash",
+          provider: "DeepSeek",
+          display_name: "DeepSeek V4.1 Flash",
+        },
+      ],
+    });
+
+    const { preloadModelDisplayNames, getModelDisplayName } = await import(
+      "../../src/services/model-display.js"
+    );
+
+    preloadModelDisplayNames();
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(getModelDisplayName("opencode-go/deepseek-flash")).toBe(
+      "DeepSeek V4.1 Flash",
+    );
+  });
+
+  it("falls through when neither the gateway id nor the bare model is known", async () => {
+    mockGetModelPrices.mockResolvedValue({ models: [] });
+
+    const { preloadModelDisplayNames, getModelDisplayName } = await import(
+      "../../src/services/model-display.js"
+    );
+
+    preloadModelDisplayNames();
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(getModelDisplayName("opencode-go/unknown-model")).toBe(
+      "opencode-go/unknown-model",
+    );
+  });
+});

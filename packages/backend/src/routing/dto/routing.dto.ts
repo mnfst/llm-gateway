@@ -11,6 +11,7 @@ import {
   ArrayMinSize,
   ValidateNested,
   IsBoolean,
+  ValidateBy,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 
@@ -20,6 +21,9 @@ import { PROVIDER_BY_ID_OR_ALIAS } from '../../common/constants/providers';
 const KNOWN_PROVIDER_IDS: readonly string[] = Array.from(PROVIDER_BY_ID_OR_ALIAS.keys());
 
 export const MAX_PROVIDER_KEY_LABEL_LENGTH = 50;
+
+/** A custom provider's connection key: `custom:<custom_providers.id>`. */
+const CUSTOM_PROVIDER_KEY = /^custom:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export class ModelRouteDto {
   @IsString()
@@ -63,8 +67,15 @@ export class ConnectProviderDto {
   @IsString()
   @IsNotEmpty()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim().toLowerCase() : value))
-  @IsIn(KNOWN_PROVIDER_IDS, {
-    message: `provider must be one of: ${KNOWN_PROVIDER_IDS.join(', ')}`,
+  @ValidateBy({
+    name: 'isConnectableProvider',
+    validator: {
+      validate: (value: unknown) =>
+        typeof value === 'string' &&
+        (KNOWN_PROVIDER_IDS.includes(value) || CUSTOM_PROVIDER_KEY.test(value)),
+      defaultMessage: () =>
+        `provider must be one of: ${KNOWN_PROVIDER_IDS.join(', ')}, or custom:<id>`,
+    },
   })
   provider!: string;
 
@@ -113,6 +124,17 @@ export class AgentProviderKeyParamDto {
   @Matches(/^[a-zA-Z0-9_-]+$/, { message: 'Invalid agent name' })
   agentName!: string;
 
+  @IsString()
+  @IsNotEmpty()
+  provider!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(MAX_PROVIDER_KEY_LABEL_LENGTH)
+  label!: string;
+}
+
+export class ProviderKeyParamDto {
   @IsString()
   @IsNotEmpty()
   provider!: string;

@@ -32,6 +32,7 @@ describe('CustomProviderController', () => {
       }),
       remove: jest.fn().mockResolvedValue(undefined),
       probeModels: jest.fn().mockResolvedValue([{ model_name: 'm1' }, { model_name: 'm2' }]),
+      loadStoredApiKey: jest.fn().mockResolvedValue(undefined),
     };
     mockProviderService = {
       getProviders: jest.fn().mockResolvedValue([]),
@@ -77,6 +78,7 @@ describe('CustomProviderController', () => {
         {
           id: 'cp-1',
           name: 'Groq',
+          alias: 'groq',
           base_url: 'https://api.groq.com/v1',
           models: [{ model_name: 'llama' }],
           created_at: '2026-03-04',
@@ -92,6 +94,7 @@ describe('CustomProviderController', () => {
       expect(result[0]).toEqual({
         id: 'cp-1',
         name: 'Groq',
+        alias: 'groq',
         base_url: 'https://api.groq.com/v1',
         has_api_key: true,
         models: [{ model_name: 'llama' }],
@@ -284,6 +287,22 @@ describe('CustomProviderController', () => {
       expect(result).toEqual({ models: [{ model_name: 'm1' }, { model_name: 'm2' }] });
     });
 
+    it('prefers a typed key over the stored one even when provider_id is sent', async () => {
+      await controller.probe(mockCtx, 'test-agent', {
+        base_url: 'http://host.docker.internal:8000/v1',
+        apiKey: 'sk-typed',
+        provider_id: 'cp-1',
+      } as never);
+
+      expect(mockCustomProviderService.loadStoredApiKey).not.toHaveBeenCalled();
+      expect(mockCustomProviderService.probeModels).toHaveBeenCalledWith(
+        'http://host.docker.internal:8000/v1',
+        'sk-typed',
+        undefined,
+        undefined,
+      );
+    });
+
     it('forwards api_kind to the service when provided in the body', async () => {
       await controller.probe(mockCtx, 'test-agent', {
         base_url: 'https://api.anthropic.com',
@@ -312,6 +331,62 @@ describe('CustomProviderController', () => {
       );
     });
 
+    it('decrypts the stored key under the resolved tenant when provider_id is sent without apiKey', async () => {
+      // Edit-mode: the form has no plaintext key, so it forwards provider_id
+      // and the controller looks up the stored key scoped to the resolved
+      // tenant_id. The submitted base_url + api_kind go along so the service
+      // can refuse to release the key for any other endpoint.
+      mockCustomProviderService.loadStoredApiKey.mockResolvedValue('sk-stored');
+      await controller.probe(mockCtx, 'test-agent', {
+        base_url: 'http://host.docker.internal:8000/v1',
+        api_kind: 'anthropic',
+        provider_id: 'cp-edit-id',
+      } as never);
+      expect(mockCustomProviderService.loadStoredApiKey).toHaveBeenCalledWith(
+        'tenant-1',
+        'cp-edit-id',
+        'http://host.docker.internal:8000/v1',
+        'anthropic',
+      );
+      expect(mockCustomProviderService.probeModels).toHaveBeenCalledWith(
+        'http://host.docker.internal:8000/v1',
+        'sk-stored',
+        'anthropic',
+        undefined,
+      );
+    });
+
+    it('still probes (unauth) when provider_id is sent but no stored key exists', async () => {
+      // Local servers (Ollama, LM Studio) often have no key — the fallback
+      // must not force auth when there's nothing to decrypt.
+      mockCustomProviderService.loadStoredApiKey.mockResolvedValue(undefined);
+      await controller.probe(mockCtx, 'test-agent', {
+        base_url: 'http://localhost:1234/v1',
+        provider_id: 'cp-local',
+      } as never);
+      expect(mockCustomProviderService.probeModels).toHaveBeenCalledWith(
+        'http://localhost:1234/v1',
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
+    it('skips loadStoredApiKey entirely when neither apiKey nor provider_id is sent', async () => {
+      // Create-flow with a typo-and-clear: no key, no provider_id. The
+      // controller must not call loadStoredApiKey for this path.
+      await controller.probe(mockCtx, 'test-agent', {
+        base_url: 'http://localhost:1234/v1',
+      } as never);
+      expect(mockCustomProviderService.loadStoredApiKey).not.toHaveBeenCalled();
+      expect(mockCustomProviderService.probeModels).toHaveBeenCalledWith(
+        'http://localhost:1234/v1',
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
+
     it('propagates NotFoundException from resolveAgent (unauthorized agent)', async () => {
       mockResolveAgent.resolve.mockRejectedValue(new NotFoundException('Agent not found'));
       await expect(
@@ -320,6 +395,7 @@ describe('CustomProviderController', () => {
         } as never),
       ).rejects.toThrow(NotFoundException);
       expect(mockCustomProviderService.probeModels).not.toHaveBeenCalled();
+      expect(mockCustomProviderService.loadStoredApiKey).not.toHaveBeenCalled();
     });
   });
 });

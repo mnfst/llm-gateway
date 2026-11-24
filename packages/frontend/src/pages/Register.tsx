@@ -14,11 +14,12 @@ import PlanPicker, { type PlanId } from '../components/PlanPicker.jsx';
 import { authClient } from '../services/auth-client.js';
 import { appendSearch } from '../services/auth-redirects.js';
 import { getLastAuthMethod, setLastAuthMethod } from '../services/last-auth-method.js';
-import { checkSocialProviders } from '../services/setup-status.js';
+import { checkIsSelfHosted, checkSocialProviders } from '../services/setup-status.js';
 import { getBillingStatus } from '../services/api/billing.js';
 import { markPlanChosen } from '../services/plan-selection.js';
 import { formatBillingPrice } from '../services/billing-display.js';
 import { toast } from '../services/toast-store.js';
+import { markDiscoveryPending } from '../services/discovery.js';
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -32,6 +33,8 @@ const Register: Component = () => {
   const [alreadyExists, setAlreadyExists] = createSignal(false);
   const [resendCooldown, setResendCooldown] = createSignal(0);
   const [socialProviders, setSocialProviders] = createSignal<string[]>([]);
+  // Self-hosted signups pass through the one-time discovery step first.
+  const [postSignupUrl, setPostSignupUrl] = createSignal('/welcome');
   const [lastAuthMethod] = createSignal(getLastAuthMethod());
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -45,9 +48,14 @@ const Register: Component = () => {
   const emailId = createUniqueId();
   const passwordId = createUniqueId();
   const errorId = createUniqueId();
+  const socialSignupUrl = () =>
+    postSignupUrl().startsWith('/discovery') ? `${postSignupUrl()}&signup=1` : undefined;
 
   onMount(async () => {
     setSocialProviders(await checkSocialProviders());
+    if (await checkIsSelfHosted()) {
+      setPostSignupUrl('/discovery?next=%2Fwelcome');
+    }
   });
 
   createEffect(() => {
@@ -94,7 +102,7 @@ const Register: Component = () => {
       name: name(),
       email: email(),
       password: password(),
-      callbackURL: '/upgrade',
+      callbackURL: postSignupUrl(),
     });
 
     setLoading(false);
@@ -109,18 +117,14 @@ const Register: Component = () => {
     setAlreadyExists(false);
     setLastAuthMethod('email');
 
+    // Self-hosted: remember the discovery step is pending so the guards keep
+    // routing this user back to it until it is completed or skipped.
+    if (postSignupUrl().startsWith('/discovery')) {
+      markDiscoveryPending(data?.user?.id ?? '', '/welcome');
+    }
+
     if (data?.token) {
-      try {
-        const status = await getBillingStatus();
-        if (status?.enabled) {
-          setProPrice(formatBillingPrice(status.priceMonthly));
-          window.location.href = '/register?step=plan';
-          return;
-        }
-      } catch {
-        /* billing unavailable — skip plan step */
-      }
-      window.location.href = '/';
+      window.location.href = postSignupUrl();
       return;
     }
 
@@ -159,7 +163,7 @@ const Register: Component = () => {
 
     const { error: resendError } = await authClient.sendVerificationEmail({
       email: email(),
-      callbackURL: '/upgrade',
+      callbackURL: postSignupUrl(),
     });
 
     if (resendError) {
@@ -225,7 +229,11 @@ const Register: Component = () => {
                 <p class="auth-header__subtitle">Monitor your AI harnesses' costs and usage</p>
               </div>
 
-              <SocialButtons enabledProviders={socialProviders()} lastUsed={lastAuthMethod()} />
+              <SocialButtons
+                enabledProviders={socialProviders()}
+                lastUsed={lastAuthMethod()}
+                callbackURL={socialSignupUrl()}
+              />
 
               <Show when={socialProviders().length > 0}>
                 <div class="auth-divider">
@@ -335,8 +343,8 @@ const Register: Component = () => {
             </h1>
             <p class="auth-header__subtitle">
               {searchParams.context === 'login'
-                ? 'Manifest now offers Free and Pro plans. Select the one that fits your needs.'
-                : 'Monitor your AI harnesses\' costs and usage'}
+                ? 'Manifest Cloud is $19/month. The self-hosted gateway is free.'
+                : "Monitor your AI harnesses' costs and usage"}
             </p>
           </div>
 

@@ -160,6 +160,23 @@ describe('ProviderService — coverage completion', () => {
       expect(txRepo.save).toHaveBeenCalled();
       expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-1');
     });
+    it('moves every active connection of a multi-key custom provider', async () => {
+      const txRepo = makeRepo();
+      const rows = [
+        provRow({ id: 'a', provider: 'custom:cp1', label: 'A' }),
+        provRow({ id: 'b', provider: 'custom:cp1', label: 'B', priority: 1 }),
+        provRow({ id: 'off', provider: 'custom:cp1', label: 'Off', is_active: false }),
+      ];
+      txRepo.find.mockResolvedValueOnce(rows);
+      providerRepo.manager.transaction.mockImplementation(
+        async (cb: (m: { getRepository: () => unknown }) => unknown) =>
+          cb({ getRepository: () => txRepo }),
+      );
+      await svc.retagAuthType(null, 'tenant-1', 'custom:cp1', 'local');
+      expect(txRepo.save).toHaveBeenCalledTimes(2);
+      expect(rows.map((r) => r.auth_type)).toEqual(['local', 'local', 'api_key']);
+      expect(txRepo.remove).not.toHaveBeenCalled();
+    });
     it('is a no-op when there is no row to retag', async () => {
       const txRepo = makeRepo();
       txRepo.find.mockResolvedValueOnce([provRow({ auth_type: 'api_key' })]);

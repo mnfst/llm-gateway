@@ -1,3 +1,4 @@
+import { stripVendorPrefix } from '../common/constants/openai-models';
 import { PROVIDER_BY_ID_OR_ALIAS } from '../common/constants/providers';
 import { normalizeProviderBaseUrl } from './provider-base-url';
 
@@ -43,6 +44,29 @@ export function isBedrockRegion(value: string | null | undefined): value is stri
 export function getBedrockMantleBaseUrl(region?: string | null): string {
   const resolved = isBedrockRegion(region) ? region : DEFAULT_BEDROCK_REGION;
   return `https://bedrock-mantle.${resolved}.api.aws`;
+}
+
+// A cross-Region inference (CRIS) profile ID is a base model ID prefixed with a
+// geographic scope, such as `us.openai.gpt-6-sol`. Bedrock also has `jp.`, `au.`
+// and `us-gov.` scopes; they are left out until a catalogued model is offered
+// under one of them.
+const BEDROCK_CRIS_PROFILE_RE = /^(?:global|us|eu|apac)\.(.+)$/;
+
+/** Base model ID of a CRIS profile (`us.openai.gpt-6-sol` → `openai.gpt-6-sol`), else null. */
+export function getBedrockInferenceProfileBaseModelId(model: string): string | null {
+  return BEDROCK_CRIS_PROFILE_RE.exec(stripVendorPrefix(model))?.[1] ?? null;
+}
+
+/** Bedrock Runtime host, which serves CRIS profiles through its OpenAI-compatible API. */
+export function getBedrockRuntimeBaseUrl(region?: string | null): string {
+  const resolved = isBedrockRegion(region) ? region : DEFAULT_BEDROCK_REGION;
+  return `https://bedrock-runtime.${resolved}.amazonaws.com`;
+}
+
+/** Bedrock control plane (`ListInferenceProfiles`), which accepts the same API key. */
+export function getBedrockControlPlaneBaseUrl(region?: string | null): string {
+  const resolved = isBedrockRegion(region) ? region : DEFAULT_BEDROCK_REGION;
+  return `https://bedrock.${resolved}.amazonaws.com`;
 }
 
 export function normalizeBedrockMantleBaseUrl(baseUrl: string): string | null {

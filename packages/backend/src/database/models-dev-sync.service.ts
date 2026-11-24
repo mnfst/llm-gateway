@@ -9,14 +9,25 @@ import {
 import { GOOGLE_VARIANT_RE } from '../model-prices/model-name-normalizer';
 
 /**
- * Mapping from our internal provider IDs to models.dev provider directory names.
- * models.dev uses its own naming convention for provider directories.
+ * Providers whose models.dev catalog is authoritative for **pricing as well as
+ * capabilities**. models.dev uses its own naming convention for provider
+ * directories, so this maps our internal ID to theirs.
+ *
+ * An entry here does more than name a directory. It also decides that
+ * models.dev may price the provider (`loadModelsDevEntries` overlays these
+ * rates onto the shared pricing cache, keyed by bare model ID), that
+ * `buildModelsDevFallback` may synthesize the provider's whole catalog when its
+ * API is unreachable, and that a lookup miss is authoritative
+ * (`isProviderSupported`). Add a provider here only when its models.dev rates
+ * are the rates its connections actually pay. For a provider that only needs
+ * modalities and capability flags, use CAPABILITY_ONLY_PROVIDER_ID_MAP.
  */
 const PROVIDER_ID_MAP: Readonly<Record<string, string>> = {
   anthropic: 'anthropic',
   cerebras: 'cerebras',
   openai: 'openai',
   gemini: 'google',
+  vertex: 'google-vertex',
   deepseek: 'deepseek',
   fireworks: 'fireworks-ai',
   mistral: 'mistral',
@@ -31,6 +42,30 @@ const PROVIDER_ID_MAP: Readonly<Record<string, string>> = {
   groq: 'groq',
   'opencode-go': 'opencode-go',
   'opencode-zen': 'opencode',
+  'ollama-cloud': 'ollama-cloud',
+};
+
+/**
+ * Providers whose models.dev catalog is authoritative for **capabilities only**.
+ *
+ * These publish no modality data on their own `/models` endpoint, so models.dev
+ * is the only source of their modalities and capability flags. They are kept
+ * out of PROVIDER_ID_MAP because their models.dev prices must not reach the
+ * shared pricing cache: they list resold vendor models under the vendor's own
+ * ID (`kilo/openai/gpt-4o-mini`, `pioneer/gpt-4o`), so overlaying them would
+ * overwrite the real vendor rate for every client of that model ID. Their
+ * connections are priced from their own API instead.
+ */
+const CAPABILITY_ONLY_PROVIDER_ID_MAP: Readonly<Record<string, string>> = {
+  kilo: 'kilo',
+  pioneer: 'pioneer',
+  'cline-pass': 'cline-pass',
+  xiaomi: 'xiaomi',
+  // OpenRouter's own /models feed already prices every connection, down to the
+  // routing variants (`:free`, `:nitro`, `:batch`) models.dev does not carry,
+  // and PricingSyncService keeps it fresh. models.dev is read here only for the
+  // modalities and tool-call flags that feed does not publish (#2737).
+  openrouter: 'openrouter',
 };
 
 const SUPPORTED_PROVIDERS = new Set(Object.keys(PROVIDER_ID_MAP));
@@ -41,6 +76,26 @@ function resolveProviderId(providerId: string): string {
   if (SUPPORTED_PROVIDERS.has(lower)) return lower;
   const entry = PROVIDER_BY_ID_OR_ALIAS.get(lower);
   return entry?.id ?? lower;
+}
+
+/**
+ * Time-of-day pricing band: the tier's rates replace the model's base rates
+ * inside `windows` (UTC "HH:MM-HH:MM", start inclusive / end exclusive, an end
+ * before its start wraps past midnight). Mirrors the models.dev
+ * `cost.tiers[].tier.type = "time"` schema (anomalyco/models.dev#4892).
+ */
+export interface ModelsDevTimeTier {
+  windows: readonly string[];
+  /**
+   * ISO weekdays (1 = Monday … 7 = Sunday) the windows apply on. Null means
+   * every day — a tier with no schedule is unrestricted, as it was before this
+   * field existed.
+   */
+  days: readonly number[] | null;
+  inputPricePerToken: number | null;
+  outputPricePerToken: number | null;
+  cacheReadPricePerToken: number | null;
+  cacheWritePricePerToken: number | null;
 }
 
 export interface ModelsDevModelEntry {
@@ -56,9 +111,18 @@ export interface ModelsDevModelEntry {
   outputPricePerToken: number | null;
   cacheReadPricePerToken?: number | null;
   cacheWritePricePerToken?: number | null;
+  timeTiers?: readonly ModelsDevTimeTier[] | null;
   capabilities: readonly ModelCapability[];
   inputModalities: readonly ModelModality[];
   outputModalities: readonly ModelModality[];
+}
+
+interface RawModelsDevCostTier {
+  tier?: { type?: string; size?: number; windows?: string[]; days?: unknown };
+  input?: number;
+  output?: number;
+  cache_read?: number;
+  cache_write?: number;
 }
 
 interface RawModelsDevModel {
@@ -68,7 +132,13 @@ interface RawModelsDevModel {
   reasoning?: boolean;
   tool_call?: boolean;
   structured_output?: boolean;
-  cost?: { input?: number; output?: number; cache_read?: number; cache_write?: number };
+  cost?: {
+    input?: number;
+    output?: number;
+    cache_read?: number;
+    cache_write?: number;
+    tiers?: RawModelsDevCostTier[];
+  };
   limit?: { context?: number; output?: number };
   modalities?: { input?: string[]; output?: string[] };
 }
@@ -83,6 +153,81 @@ type RawModelsDevResponse = Record<string, RawModelsDevProvider>;
 
 const MODELS_DEV_API = 'https://models.dev/api.json';
 const FETCH_TIMEOUT_MS = 10000;
+
+/** UTC "HH:MM-HH:MM" range, as validated by the models.dev schema. */
+const TIME_WINDOW_RE = /^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * DeepSeek bills peak/off-peak: peak hours are 01:00-04:00 and 06:00-10:00 UTC
+ * **Monday through Friday**, and every other hour — including all 48 weekend
+ * hours — is off-peak at half the peak rate. models.dev cannot express
+ * time-of-day pricing yet (anomalyco/models.dev#4892 adds
+ * `cost.tiers[].tier.type = "time"`), so until the catalog carries a time tier
+ * this seed replaces whatever flat rate the sync returns with the real
+ * off-peak base plus a peak-window tier.
+ *
+ * DELETE once models.dev serves time tiers for DeepSeek — the seed only
+ * applies when `parseTimeTiers` finds nothing, so it retires itself, but the
+ * dead constant should not outlive that. Prices are USD per 1M tokens from
+ * https://api-docs.deepseek.com/quick_start/pricing/ (accessed 2026-09-10).
+ */
+const DEEPSEEK_PEAK_WINDOWS: readonly string[] = ['01:00-04:00', '06:00-10:00'];
+/** Monday–Friday: DeepSeek's peak schedule does not run on weekends. */
+const DEEPSEEK_PEAK_DAYS: readonly number[] = [1, 2, 3, 4, 5];
+
+type DeepSeekRateCard = {
+  input: number;
+  output: number;
+  cacheRead: number;
+  peak: { input: number; output: number; cacheRead: number };
+};
+
+/** V4.1 Flash, in effect from 2026-09-10 04:00 UTC. */
+const DEEPSEEK_FLASH_RATES: DeepSeekRateCard = {
+  input: 0.15,
+  output: 0.6,
+  cacheRead: 0.003,
+  peak: { input: 0.3, output: 1.2, cacheRead: 0.006 },
+};
+
+/** V4 Pro, unchanged until it starts routing to Flash. */
+const DEEPSEEK_PRO_RATES: DeepSeekRateCard = {
+  input: 0.66,
+  output: 1.98,
+  cacheRead: 0.022,
+  peak: { input: 1.32, output: 3.96, cacheRead: 0.044 },
+};
+
+/**
+ * 12:00 Beijing on 2026-09-14 = 04:00 UTC. From then, `deepseek-v4-pro` is
+ * served by V4.1 Flash and billed on the Flash card.
+ */
+const DEEPSEEK_PRO_FLASH_CUTOVER_MS = Date.parse('2026-09-14T04:00:00Z');
+
+/** GA id plus the retired aliases DeepSeek still accepts at Flash prices. */
+const DEEPSEEK_FLASH_MODEL_IDS: ReadonlySet<string> = new Set([
+  'deepseek-flash',
+  'deepseek-v4-flash',
+  'deepseek-v4-flash-vision-exp',
+]);
+
+/** Stub used when the catalog has not listed `deepseek-flash` yet. */
+const DEEPSEEK_FLASH_CATALOG_STUB: RawModelsDevModel = {
+  id: 'deepseek-flash',
+  name: 'DeepSeek V4.1 Flash',
+  reasoning: true,
+  tool_call: true,
+  modalities: { input: ['text', 'image'], output: ['text'] },
+};
+
+function deepseekSeedRates(modelId: string, atMs = Date.now()): DeepSeekRateCard | undefined {
+  if (DEEPSEEK_FLASH_MODEL_IDS.has(modelId)) return DEEPSEEK_FLASH_RATES;
+  if (modelId === 'deepseek-v4-pro') {
+    return atMs >= DEEPSEEK_PRO_FLASH_CUTOVER_MS ? DEEPSEEK_FLASH_RATES : DEEPSEEK_PRO_RATES;
+  }
+  return undefined;
+}
+
 /** Matches trailing version suffixes like -001, -002 (Google API convention). */
 const VERSION_SUFFIX_RE = /-\d{3}$/;
 /** Matches trailing date suffixes like -20250514, -2025-04-14. */
@@ -108,12 +253,28 @@ const MODEL_ID_PREFIX_ALIASES: ReadonlyMap<string, string> = new Map([
 ]);
 /** Matches instruction-tuned suffixes that models.dev sometimes omits on Bedrock keys. */
 const INSTRUCT_SUFFIX_RE = /-instruct$/;
+/**
+ * Matches an OpenRouter routing variant (`:free`, `:nitro`, `:batch`, ...).
+ * The variant selects how a request is routed, not which model answers, so the
+ * base entry carries its capabilities. Only applied to OpenRouter: elsewhere a
+ * colon is part of the model ID itself (Ollama tags, Bedrock `-v1:0`).
+ */
+const OPENROUTER_VARIANT_SUFFIX_RE = /:[a-z0-9-]+$/;
+/**
+ * Matches Ollama release tags that models.dev omits from its base model key
+ * (e.g. `deepseek-v4-pro:preview` → `deepseek-v4-pro`). Deliberately narrow:
+ * parameter-size tags (`:120b`, `:397b`) and Bedrock-style `-v1:0` versions
+ * must not match, since those are part of the canonical model ID.
+ */
+const OLLAMA_TAG_SUFFIX_RE = /:(?:preview|\d{4})$/;
 
 @Injectable()
 export class ModelsDevSyncService implements OnModuleInit {
   private readonly logger = new Logger(ModelsDevSyncService.name);
   /** Map: our provider ID → Map<model ID (native), entry> */
   private cache = new Map<string, Map<string, ModelsDevModelEntry>>();
+  /** Map: our provider ID → Map<model ID, entry>, for capability-only providers. */
+  private capabilityCache = new Map<string, Map<string, ModelsDevModelEntry>>();
   /** Map: models.dev provider ID → Map<model ID, entry>. Includes providers Manifest does not natively know. */
   private customProviderCache = new Map<string, Map<string, ModelsDevModelEntry>>();
   /** Map: provider id/display-name aliases → models.dev provider ID. */
@@ -174,13 +335,39 @@ export class ModelsDevSyncService implements OnModuleInit {
         modelMap.set(modelId, entry);
         totalModels++;
       }
+      if (ourId === 'deepseek' && !modelMap.has('deepseek-flash')) {
+        modelMap.set(
+          'deepseek-flash',
+          this.parseModel(ourId, 'deepseek-flash', DEEPSEEK_FLASH_CATALOG_STUB),
+        );
+        totalModels++;
+      }
 
       if (modelMap.size > 0) {
         newCache.set(ourId, modelMap);
       }
     }
 
+    // Capability-only providers stay out of `cache`, so no pricing or fallback
+    // consumer can reach them. `totalModels` counts priced coverage only.
+    const newCapabilityCache = new Map<string, Map<string, ModelsDevModelEntry>>();
+    for (const [ourId, modelsDevId] of Object.entries(CAPABILITY_ONLY_PROVIDER_ID_MAP)) {
+      const provider = raw[modelsDevId];
+      if (!provider?.models) continue;
+
+      const modelMap = new Map<string, ModelsDevModelEntry>();
+      for (const [modelId, model] of Object.entries(provider.models)) {
+        if (!this.isChatCompatible(model)) continue;
+        modelMap.set(modelId, this.parseModel(ourId, modelId, model));
+      }
+
+      if (modelMap.size > 0) {
+        newCapabilityCache.set(ourId, modelMap);
+      }
+    }
+
     this.cache = newCache;
+    this.capabilityCache = newCapabilityCache;
     this.customProviderCache = newCustomProviderCache;
     this.customProviderIndex = newCustomProviderIndex;
     this.lastFetchedAt = new Date();
@@ -218,6 +405,24 @@ export class ModelsDevSyncService implements OnModuleInit {
     const providerModels = this.customProviderCache.get(providerKey);
     if (!providerModels) return null;
     return this.lookupModelInProvider(providerModels, modelId);
+  }
+
+  /**
+   * Look up a model for its modalities and capability flags: the priced catalog
+   * first, then CAPABILITY_ONLY_PROVIDER_ID_MAP.
+   *
+   * **Never read pricing from the result.** A capability-only entry carries a
+   * reseller's rate for a vendor's model ID, which is not what the connection
+   * pays. Callers that need a price must use `lookupModel`.
+   */
+  lookupModelCapabilities(providerId: string, modelId: string): ModelsDevModelEntry | null {
+    const native = this.lookupModel(providerId, modelId);
+    if (native) return native;
+
+    const resolvedProviderId = resolveProviderId(providerId);
+    const providerModels = this.capabilityCache.get(resolvedProviderId);
+    if (!providerModels) return null;
+    return this.lookupModelInProvider(providerModels, modelId, resolvedProviderId);
   }
 
   /**
@@ -328,6 +533,25 @@ export class ModelsDevSyncService implements OnModuleInit {
     if (noReasoning !== modelId) {
       const found = providerModels.get(noReasoning);
       if (found) return found;
+    }
+
+    if (providerId === 'ollama-cloud') {
+      // 7a. Strip Ollama release tags absent from the models.dev key
+      //     (e.g. deepseek-v4-pro:preview → deepseek-v4-pro).
+      const noTag = modelId.replace(OLLAMA_TAG_SUFFIX_RE, '');
+      if (noTag !== modelId) {
+        const found = providerModels.get(noTag);
+        if (found) return found;
+      }
+    }
+
+    if (providerId === 'openrouter') {
+      // 7a. Strip the routing variant (qwen/qwen3-coder:batch → qwen/qwen3-coder)
+      const noVariant = modelId.replace(OPENROUTER_VARIANT_SUFFIX_RE, '');
+      if (noVariant !== modelId) {
+        const found = providerModels.get(noVariant);
+        if (found) return found;
+      }
     }
 
     if (providerId === 'bedrock') {
@@ -453,15 +677,94 @@ export class ModelsDevSyncService implements OnModuleInit {
     if (!index.has(normalized)) index.set(normalized, modelsDevId);
   }
 
+  /**
+   * ISO weekdays a time tier is restricted to, or null for "every day".
+   *
+   * A malformed list is dropped **whole**, never filtered entry by entry:
+   * salvaging `[1,2,3,4,5,'6']` down to `[1..5]` would read as a clean weekday
+   * rule and quietly discount a day the provider charges peak for. Dropping it
+   * falls back to the unrestricted tier, which is what the catalog meant
+   * before the field existed and never bills below the published rate.
+   */
+  private parseTierDays(days: unknown): readonly number[] | null {
+    if (!Array.isArray(days) || days.length === 0) return null;
+    const valid = days.every(
+      (day) => typeof day === 'number' && Number.isInteger(day) && day >= 1 && day <= 7,
+    );
+    return valid ? (days as number[]) : null;
+  }
+
+  /**
+   * Extract time-of-day pricing tiers from a raw models.dev cost block.
+   * Context-size tiers (`tier.type = "context"`) are ignored — Manifest does
+   * not price by context band. Returns null when no valid time tier exists.
+   */
+  private parseTimeTiers(raw: RawModelsDevModel): ModelsDevTimeTier[] | null {
+    const tiers = raw.cost?.tiers;
+    if (!Array.isArray(tiers)) return null;
+
+    const parsed: ModelsDevTimeTier[] = [];
+    for (const tier of tiers) {
+      if (tier?.tier?.type !== 'time') continue;
+      // Zero-length windows (e.g. "06:00-06:00") are rejected: only an end
+      // before the start wraps midnight, so equal endpoints would read as a
+      // full-day band and override the base rate around the clock.
+      const windows = (tier.tier.windows ?? []).filter(
+        (window) =>
+          typeof window === 'string' &&
+          TIME_WINDOW_RE.test(window) &&
+          window.slice(0, 5) !== window.slice(6),
+      );
+      if (windows.length === 0) continue;
+      parsed.push({
+        windows,
+        days: this.parseTierDays(tier.tier.days),
+        inputPricePerToken: tier.input != null ? tier.input / 1_000_000 : null,
+        outputPricePerToken: tier.output != null ? tier.output / 1_000_000 : null,
+        cacheReadPricePerToken: tier.cache_read != null ? tier.cache_read / 1_000_000 : null,
+        cacheWritePricePerToken: tier.cache_write != null ? tier.cache_write / 1_000_000 : null,
+      });
+    }
+    return parsed.length > 0 ? parsed : null;
+  }
+
   private parseModel(
     providerId: string,
     modelId: string,
     raw: RawModelsDevModel,
   ): ModelsDevModelEntry {
-    const inputPerMillion = raw.cost?.input ?? null;
-    const outputPerMillion = raw.cost?.output ?? null;
-    const cacheReadPerMillion = raw.cost?.cache_read ?? null;
-    const cacheWritePerMillion = raw.cost?.cache_write ?? null;
+    let inputPerMillion = raw.cost?.input ?? null;
+    let outputPerMillion = raw.cost?.output ?? null;
+    let cacheReadPerMillion = raw.cost?.cache_read ?? null;
+    let cacheWritePerMillion = raw.cost?.cache_write ?? null;
+    let timeTiers = this.parseTimeTiers(raw);
+
+    // Peak/off-peak seed for DeepSeek's own API until models.dev can carry
+    // the schedule itself (see deepseekSeedRates). Catalog data wins the
+    // moment it exists.
+    if (providerId === 'deepseek' && !timeTiers) {
+      const seed = deepseekSeedRates(modelId);
+      if (seed) {
+        inputPerMillion = seed.input;
+        outputPerMillion = seed.output;
+        cacheReadPerMillion = seed.cacheRead;
+        // DeepSeek bills cache writes at the plain input rate (no premium), so
+        // clear any stale catalog value; the cost calculator falls back to the
+        // effective input price when cache-write pricing is null.
+        cacheWritePerMillion = null;
+        timeTiers = [
+          {
+            windows: DEEPSEEK_PEAK_WINDOWS,
+            days: DEEPSEEK_PEAK_DAYS,
+            inputPricePerToken: seed.peak.input / 1_000_000,
+            outputPricePerToken: seed.peak.output / 1_000_000,
+            cacheReadPricePerToken: seed.peak.cacheRead / 1_000_000,
+            cacheWritePricePerToken: null,
+          },
+        ];
+      }
+    }
+
     const modalities = modelModalitiesFromModelsDev(raw.modalities);
 
     return {
@@ -481,6 +784,7 @@ export class ModelsDevSyncService implements OnModuleInit {
       cacheReadPricePerToken: cacheReadPerMillion !== null ? cacheReadPerMillion / 1_000_000 : null,
       cacheWritePricePerToken:
         cacheWritePerMillion !== null ? cacheWritePerMillion / 1_000_000 : null,
+      timeTiers,
     };
   }
 

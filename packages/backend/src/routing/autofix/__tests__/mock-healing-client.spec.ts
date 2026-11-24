@@ -17,6 +17,8 @@ function makeRequest(error: PhoenixProviderError, request: Record<string, unknow
   };
 }
 
+const context = { harness: 'claude-code' } as const;
+
 describe('MOCK_RENAME_CATALOG', () => {
   it('is exported and maps max_tokens to max_output_tokens', () => {
     expect(MOCK_RENAME_CATALOG).toBeDefined();
@@ -38,7 +40,7 @@ describe('MockHealingClient', () => {
         { max_tokens: 100, model: 'x' },
       );
 
-      const res = await client.heal(input);
+      const res = await client.heal(input, context);
 
       // A freshly served patch is `unverified` (Phoenix only answers `patched`
       // for an already-verified issue); the loop still applies it.
@@ -61,7 +63,7 @@ describe('MockHealingClient', () => {
         { temperature: 0.5, model: 'x' },
       );
 
-      const res = await client.heal(input);
+      const res = await client.heal(input, context);
 
       expect(res.status).toBe('no_patch');
       expect(typeof res.issueId).toBe('string');
@@ -75,7 +77,7 @@ describe('MockHealingClient', () => {
         { model: 'x' }, // max_tokens missing → `param in input.request` is false
       );
 
-      const res = await client.heal(input);
+      const res = await client.heal(input, context);
 
       expect(res.status).toBe('no_patch');
     });
@@ -86,7 +88,7 @@ describe('MockHealingClient', () => {
         { max_tokens: 100, model: 'x' },
       );
 
-      const res = await client.heal(input);
+      const res = await client.heal(input, context);
 
       expect(res.status).toBe('no_patch');
     });
@@ -97,7 +99,7 @@ describe('MockHealingClient', () => {
         { max_tokens: 100, model: 'x' },
       );
 
-      const res = await client.heal(input);
+      const res = await client.heal(input, context);
 
       // param is null → `param ? MOCK_RENAME_CATALOG[param] : undefined` yields
       // undefined, so the patched branch is skipped.
@@ -112,7 +114,7 @@ describe('MockHealingClient', () => {
         { model: 'x' },
       );
 
-      const res = await client.heal(input);
+      const res = await client.heal(input, context);
 
       expect(res.status).toBe('no_patch');
       expect(res.healedBody).toBeUndefined();
@@ -121,7 +123,7 @@ describe('MockHealingClient', () => {
 
   describe('reportOutcome', () => {
     it('reports succeeded (issue stays unverified) for a 2xx retry status', async () => {
-      const res = await client.reportOutcome('heal-123', { retryStatusCode: 200 });
+      const res = await client.reportOutcome('heal-123', { retryStatusCode: 200 }, context);
 
       expect(res).toEqual({
         healAttemptId: 'heal-123',
@@ -131,10 +133,14 @@ describe('MockHealingClient', () => {
     });
 
     it('reports failed (issue stays unverified) for a >=400 retry status', async () => {
-      const res = await client.reportOutcome('heal-456', {
-        retryStatusCode: 400,
-        error: { message: 'still bad' },
-      });
+      const res = await client.reportOutcome(
+        'heal-456',
+        {
+          retryStatusCode: 400,
+          error: { message: 'still bad' },
+        },
+        context,
+      );
 
       expect(res).toEqual({
         healAttemptId: 'heal-456',
@@ -149,7 +155,7 @@ describe('MockHealingClient', () => {
       const client = new MockHealingClient();
       const batch = [makeRequest({ message: 'bad' }, { model: 'gpt-5.1' })];
 
-      await expect(client.observe(batch)).resolves.toBeUndefined();
+      await expect(client.observe(batch, context)).resolves.toBeUndefined();
     });
   });
 });

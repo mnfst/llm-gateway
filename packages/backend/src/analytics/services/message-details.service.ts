@@ -311,7 +311,7 @@ export class MessageDetailsService {
     }
   }
 
-  /** Resolve the paired Auto-fix row (failed original ↔ successful retry). */
+  /** Resolve the paired Autofix row (failed original ↔ successful retry). */
   private async findAutofixSibling(
     id: string,
     groupId: string,

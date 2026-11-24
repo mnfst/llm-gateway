@@ -10,16 +10,18 @@ import { createTestApp, TEST_API_KEY, TEST_TENANT_ID, TEST_AGENT_ID } from './he
 
 const OK_COUNT = 5;
 const ERROR_STATUSES = ['error', 'fallback_error', 'rate_limited'] as const;
+// One row per surface, plus a pre-feature row that predates the column.
+const ERROR_API_MODES = ['responses', 'messages', null] as const;
 const REQUEST_COUNT = OK_COUNT + ERROR_STATUSES.length;
 
 let app: INestApplication;
 
-async function insertMessage(ds: DataSource, status: string) {
+async function insertMessage(ds: DataSource, status: string, apiMode: string | null = null) {
   const now = new Date().toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
   const requestId = uuid();
   await ds.query(
-    `INSERT INTO requests (id, tenant_id, agent_id, timestamp, status, requested_model, agent_name, user_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    `INSERT INTO requests (id, tenant_id, agent_id, timestamp, status, requested_model, agent_name, user_id, api_mode)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
     [
       requestId,
       TEST_TENANT_ID,
@@ -29,6 +31,7 @@ async function insertMessage(ds: DataSource, status: string) {
       'gpt-4o',
       'test-agent',
       'test-user-001',
+      apiMode,
     ],
   );
   await ds.query(
@@ -58,9 +61,10 @@ beforeAll(async () => {
   app = await createTestApp();
   const ds = app.get(DataSource);
   // Five successful requests…
-  for (let i = 0; i < OK_COUNT; i++) await insertMessage(ds, 'ok');
+  for (let i = 0; i < OK_COUNT; i++) await insertMessage(ds, 'ok', 'chat_completions');
   // …plus one of every error status, each still a caller request.
-  for (const status of ERROR_STATUSES) await insertMessage(ds, status);
+  for (const [i, status] of ERROR_STATUSES.entries())
+    await insertMessage(ds, status, ERROR_API_MODES[i]);
 });
 
 afterAll(async () => {
@@ -100,5 +104,27 @@ describe('message-count consistency (F1)', () => {
       .set('x-api-key', TEST_API_KEY)
       .expect(200);
     expect(res.body.total_count).toBe(REQUEST_COUNT);
+  });
+
+  it('Messages log rows carry the API surface each request came in on', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/api/v1/messages?range=24h&agent_name=test-agent&limit=50')
+      .set('x-api-key', TEST_API_KEY)
+      .expect(200);
+
+    const items = res.body.items as Array<{ api_mode: string | null }>;
+    expect(items).toHaveLength(REQUEST_COUNT);
+    const counts = items.reduce<Record<string, number>>((acc, item) => {
+      const key = item.api_mode ?? 'null';
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
+    expect(counts).toEqual({
+      chat_completions: OK_COUNT,
+      responses: 1,
+      messages: 1,
+      // Rows written before the column existed stay NULL rather than guessing.
+      null: 1,
+    });
   });
 });

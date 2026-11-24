@@ -4,6 +4,7 @@ import Ajv2020 from 'ajv/dist/2020';
 import type { ValidateFunction } from 'ajv';
 import addFormats from 'ajv-formats';
 import { load } from 'js-yaml';
+import { AGENT_PLATFORMS } from 'manifest-shared';
 import { HEAL_STATUSES, ISSUE_STATUSES, OUTCOME_STATUSES } from '../phoenix.types';
 
 /**
@@ -22,7 +23,13 @@ interface SchemaObject {
   properties?: Record<string, { enum?: string[] }>;
 }
 interface OpenApiDoc {
-  components: { schemas: Record<string, SchemaObject> };
+  security: Array<Record<string, unknown[]>>;
+  paths: Record<string, Record<string, { security?: Array<Record<string, unknown[]>> }>>;
+  components: {
+    schemas: Record<string, SchemaObject>;
+    parameters: Record<string, { schema?: { enum?: string[] } }>;
+    securitySchemes: Record<string, unknown>;
+  };
 }
 
 const doc = load(readFileSync(SPEC_PATH, 'utf8')) as OpenApiDoc;
@@ -99,6 +106,42 @@ describe('Phoenix wire contract (vendored OpenAPI)', () => {
 
     it('rejects an auth type outside the enum', () => {
       expect(validate({ ...valid, authType: 'oauth' })).toBe(false);
+    });
+  });
+
+  describe('instance identification', () => {
+    it('exposes no registration handshake', () => {
+      // The id is announced, never issued: there is nothing to register for.
+      expect(doc.paths['/api/instances/register']).toBeUndefined();
+    });
+
+    it('accepts a static key or a bare instance id on the gateway operations', () => {
+      expect(doc.security).toEqual([{ ApiKeyAuth: [] }]);
+      for (const operation of [
+        doc.paths['/api/heal'].post,
+        doc.paths['/api/heal/observe'].post,
+        doc.paths['/api/heal-attempts/{id}'].patch,
+      ]) {
+        expect(operation.security).toEqual([{ ApiKeyAuth: [] }, { ManifestInstanceAuth: [] }]);
+      }
+      expect(doc.components.securitySchemes).toHaveProperty('ApiKeyAuth');
+      expect(doc.components.securitySchemes).toHaveProperty('ManifestInstanceAuth');
+    });
+
+    it('carries no bearer-secret scheme', () => {
+      // Identifier, not credential — a secret scheme reappearing here means
+      // Phoenix went back to issuing credentials and Manifest must follow.
+      expect(doc.components.securitySchemes).not.toHaveProperty('InstanceBearerAuth');
+      const scheme = doc.components.securitySchemes.ManifestInstanceAuth as {
+        in: string;
+        name: string;
+      };
+      expect(scheme.in).toBe('header');
+      expect(scheme.name).toBe('X-Manifest-Instance');
+    });
+
+    it('keeps the harness header allowlist in lockstep with AGENT_PLATFORMS', () => {
+      expect(doc.components.parameters.ManifestHarness.schema?.enum).toEqual([...AGENT_PLATFORMS]);
     });
   });
 

@@ -179,6 +179,17 @@ describe('PROVIDER_REGISTRY', () => {
     expect(pioneer!.keyPrefix).toBe('pio_sk_');
     expect(pioneer!.keyPlaceholder).toBe('pio_sk_...');
   });
+
+  it('meta is registered as an API-key provider with an OpenRouter fallback prefix', () => {
+    const meta = PROVIDER_REGISTRY.find((p) => p.id === 'meta');
+    expect(meta).toBeDefined();
+    expect(meta!.displayName).toBe('Meta');
+    expect(meta!.openRouterPrefixes).toEqual(['meta']);
+    expect(meta!.requiresApiKey).toBe(true);
+    expect(meta!.localOnly).toBe(false);
+    expect(meta!.keyPrefix).toBe('LLM_');
+    expect(meta!.keyPlaceholder).toBe('LLM_...');
+  });
 });
 
 describe('PROVIDER_BY_ID', () => {

@@ -53,7 +53,12 @@ The credential sends requests with:
 
 ```text
 Authorization: Bearer <your Manifest API key>
+User-Agent: n8n-nodes-manifest
+X-Title: n8n
+HTTP-Referer: https://n8n.io
 ```
+
+Manifest uses those headers to attribute usage to this node on request details.
 
 ## Install
 

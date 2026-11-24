@@ -1,5 +1,9 @@
+import { CACHE_TTL_METADATA } from '@nestjs/cache-manager';
+import { INTERCEPTORS_METADATA } from '@nestjs/common/constants';
 import { ProviderUsageController } from './provider-usage.controller';
 import type { TenantContext } from '../../common/decorators/tenant-context.decorator';
+import { UserCacheInterceptor } from '../../common/interceptors/user-cache.interceptor';
+import { DASHBOARD_CACHE_TTL_MS } from '../../common/constants/cache.constants';
 import type { ProviderUsageSummary } from '../services/provider-usage.service';
 
 describe('ProviderUsageController', () => {
@@ -12,6 +16,15 @@ describe('ProviderUsageController', () => {
   afterAll(() => {
     if (previousMode === undefined) delete process.env['MANIFEST_MODE'];
     else process.env['MANIFEST_MODE'] = previousMode;
+  });
+
+  it('caches the expensive 30-day aggregation per tenant', () => {
+    expect(Reflect.getMetadata(CACHE_TTL_METADATA, ProviderUsageController)).toBe(
+      DASHBOARD_CACHE_TTL_MS,
+    );
+    expect(Reflect.getMetadata(INTERCEPTORS_METADATA, ProviderUsageController)).toContain(
+      UserCacheInterceptor,
+    );
   });
 
   it('delegates to ProviderUsageService and wraps the result in { providers }', async () => {

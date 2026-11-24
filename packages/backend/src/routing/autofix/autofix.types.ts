@@ -4,10 +4,9 @@ import type {
   PhoenixOperation,
   PhoenixProviderError,
 } from './phoenix.types';
-import type { RecordableManifestCode } from '../../common/errors/manifest-error';
 
 /**
- * How an Auto-fix attempt ended:
+ * How an Autofix attempt ended:
  * - `healed`     — a patched request eventually succeeded.
  * - `unfixable`  — Phoenix had no patch (`no_patch`) or returned an empty one.
  * - `resolving`  — Phoenix is still authoring a patch (novel error); nothing to
@@ -43,9 +42,9 @@ export interface AutofixChainEntry {
 }
 
 /**
- * The full Auto-fix story. An `autofix` chain entry exists if and only if a
+ * The full Autofix story. An `autofix` chain entry exists if and only if a
  * patched request was actually sent to the provider. The recorder uses that
- * invariant—not Phoenix consultation alone—to decide whether Auto-fix was
+ * invariant—not Phoenix consultation alone—to decide whether Autofix was
  * applied. When a retry exists, the failed original and retry are recorded as
  * linked `agent_messages` rows sharing `groupId`.
  */
@@ -55,20 +54,6 @@ export interface AutofixRecord {
   outcome: AutofixOutcome;
   original_http_status: number;
   chain: AutofixChainEntry[];
-  /**
-   * Present when the healed failure was Manifest-blocked rather than a provider
-   * response (e.g. an M302 unknown model — no provider was contacted for the
-   * original). The recorder uses the no-provider attempt marker to avoid
-   * inventing an original Provider Attempt; the Request retains the caller's
-   * model and the actual retry is the sole Attempt.
-   */
-  manifestOrigin?: {
-    code: RecordableManifestCode;
-    /** The rendered `[🦚 Manifest M###] …` text the caller would have seen. */
-    message: string;
-    /** The model the caller requested (kept as the row's `model` column). */
-    model: string;
-  };
 }
 
 /** The patched provider attempt, when Manifest actually sent one. */

@@ -191,8 +191,91 @@ describe('Responses adapter', () => {
         },
         { role: 'tool', tool_call_id: 'call_1', content: '{"ok":true}' },
       ]);
-      expect(result.tools).toEqual([{ type: 'web_search_preview' }]);
+      expect(result.tools).toEqual([]);
       expect(result.tool_choice).toBe('auto');
+    });
+
+    it('folds role:"developer" instruction messages into "system"', () => {
+      const result = toChatCompletionsRequest({
+        input: [
+          { role: 'developer', content: [{ type: 'input_text', text: 'You are concise.' }] },
+          { role: 'user', content: [{ type: 'input_text', text: 'Hi' }] },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        { role: 'system', content: 'You are concise.' },
+        { role: 'user', content: 'Hi' },
+      ]);
+    });
+
+    it('drops hosted tools and keeps only function tools', () => {
+      const result = toChatCompletionsRequest({
+        input: 'go',
+        tools: [
+          { type: 'web_search' },
+          { type: 'file_search' },
+          { type: 'computer_use_preview' },
+          { type: 'function', name: 'lookup', parameters: { type: 'object' } },
+        ],
+      });
+
+      expect(result.tools).toEqual([
+        { type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } },
+      ]);
+    });
+
+    it('drops non-message input items that have no chat-completions equivalent', () => {
+      const result = toChatCompletionsRequest({
+        instructions: 'You are a helpful assistant.',
+        input: [
+          { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'total?' }] },
+          {
+            type: 'reasoning',
+            id: 'rs_1',
+            encrypted_content: 'gAAAAA',
+            summary: [{ type: 'summary_text', text: 'thinking about the totals' }],
+          },
+          { type: 'item_reference', id: 'msg_1' },
+          { type: 'web_search_call', id: 'ws_1', status: 'completed' },
+          { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'ok' }] },
+        ],
+      });
+
+      expect(result.messages).toEqual([
+        { role: 'system', content: 'You are a helpful assistant.' },
+        { role: 'user', content: 'total?' },
+        { role: 'assistant', content: [{ type: 'text', text: 'ok' }] },
+      ]);
+    });
+
+    it('never emits a message without content for reasoning items', () => {
+      const result = toChatCompletionsRequest({
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+          { type: 'reasoning', id: 'rs_1', encrypted_content: 'gAAAAA' },
+        ],
+      });
+      const messages = result.messages as Record<string, unknown>[];
+
+      expect(messages).toHaveLength(1);
+      for (const message of messages) {
+        expect(Object.prototype.hasOwnProperty.call(message, 'content')).toBe(true);
+        expect(message.content).not.toBeUndefined();
+      }
+      expect(JSON.stringify(messages)).not.toContain('{"role":"user"}');
+    });
+
+    it('drops message items that carry no content at all', () => {
+      const result = toChatCompletionsRequest({
+        input: [
+          { type: 'message', role: 'user' },
+          { role: 'assistant' },
+          { role: 'user', content: [{ type: 'input_text', text: 'still here' }] },
+        ],
+      });
+
+      expect(result.messages).toEqual([{ role: 'user', content: 'still here' }]);
     });
 
     it('uses safe defaults for malformed input items', () => {
@@ -229,6 +312,51 @@ describe('Responses adapter', () => {
       stream: true,
       store: true,
     });
+  });
+
+  it('translates saved Chat Completions params merged into a native Responses body', () => {
+    const body = {
+      input: 'hi',
+      reasoning_effort: 'high',
+      max_completion_tokens: 512,
+    };
+    expect(
+      toNativeResponsesRequest(body, 'gpt-5', {
+        mapReasoningSummary: true,
+        mapMaxOutputTokens: true,
+      }),
+    ).toEqual({
+      input: 'hi',
+      model: 'gpt-5',
+      stream: false,
+      store: false,
+      reasoning: { effort: 'high', summary: 'auto' },
+      max_output_tokens: 512,
+    });
+    // No Chat Completions name may reach the Responses backend.
+    const plain = toNativeResponsesRequest(body, 'gpt-5');
+    expect(plain).not.toHaveProperty('reasoning_effort');
+    expect(plain).not.toHaveProperty('max_completion_tokens');
+    expect(plain).not.toHaveProperty('max_output_tokens');
+    expect(plain.reasoning).toEqual({ effort: 'high' });
+  });
+
+  it('prefers native fields when the caller supplied both names without saved overrides', () => {
+    const request = toNativeResponsesRequest(
+      {
+        input: 'hi',
+        reasoning: { effort: 'low' },
+        reasoning_effort: 'high',
+        max_output_tokens: 4096,
+        max_completion_tokens: 512,
+      },
+      'gpt-5',
+      { mapMaxOutputTokens: true },
+    );
+    expect(request.reasoning).toEqual({ effort: 'low' });
+    expect(request.max_output_tokens).toBe(4096);
+    expect(request).not.toHaveProperty('reasoning_effort');
+    expect(request).not.toHaveProperty('max_completion_tokens');
   });
 
   it('can add default instructions for native Responses backends that require them', () => {
@@ -396,6 +524,157 @@ describe('Responses adapter', () => {
     expect(result.top_p).toBe(0.5);
   });
 
+  describe('duplicate call_id normalization', () => {
+    const call = (callId: string, name: string, args: string) => ({
+      type: 'function_call',
+      call_id: callId,
+      name,
+      arguments: args,
+    });
+    const output = (callId: string, text: string) => ({
+      type: 'function_call_output',
+      call_id: callId,
+      output: text,
+    });
+
+    it('gives repeated call/output pairs unique ids without touching the payloads', () => {
+      const result = toNativeResponsesRequest(
+        {
+          input: [
+            { role: 'user', content: 'run it' },
+            call('terminal:0', 'terminal', '{"cmd":"ls"}'),
+            output('terminal:0', 'one'),
+            call('vision_analyze:0', 'vision_analyze', '{"id":1}'),
+            output('vision_analyze:0', 'first look'),
+            call('terminal:0', 'terminal', '{"cmd":"pwd"}'),
+            output('terminal:0', 'two'),
+            call('vision_analyze:0', 'vision_analyze', '{"id":2}'),
+            output('vision_analyze:0', 'second look'),
+            call('terminal:0', 'terminal', '{"cmd":"whoami"}'),
+            output('terminal:0', 'three'),
+          ],
+        },
+        'muse-spark-1.3-contributor',
+      );
+
+      expect(result.input).toEqual([
+        { role: 'user', content: [{ type: 'input_text', text: 'run it' }] },
+        call('terminal:0', 'terminal', '{"cmd":"ls"}'),
+        output('terminal:0', 'one'),
+        call('vision_analyze:0', 'vision_analyze', '{"id":1}'),
+        output('vision_analyze:0', 'first look'),
+        call('terminal:0-mnfst-2', 'terminal', '{"cmd":"pwd"}'),
+        output('terminal:0-mnfst-2', 'two'),
+        call('vision_analyze:0-mnfst-2', 'vision_analyze', '{"id":2}'),
+        output('vision_analyze:0-mnfst-2', 'second look'),
+        call('terminal:0-mnfst-3', 'terminal', '{"cmd":"whoami"}'),
+        output('terminal:0-mnfst-3', 'three'),
+      ]);
+    });
+
+    it('extends a replacement id that the history already uses', () => {
+      const result = toNativeResponsesRequest(
+        {
+          input: [
+            call('terminal:0', 'terminal', '{}'),
+            output('terminal:0', 'one'),
+            call('terminal:0-mnfst-2', 'terminal', '{}'),
+            output('terminal:0-mnfst-2', 'other tool'),
+            call('terminal:0', 'terminal', '{}'),
+            output('terminal:0', 'two'),
+          ],
+        },
+        'muse-spark-1.3-contributor',
+      );
+
+      expect(result.input).toEqual([
+        call('terminal:0', 'terminal', '{}'),
+        output('terminal:0', 'one'),
+        call('terminal:0-mnfst-2', 'terminal', '{}'),
+        output('terminal:0-mnfst-2', 'other tool'),
+        call('terminal:0-mnfst-2-x', 'terminal', '{}'),
+        output('terminal:0-mnfst-2-x', 'two'),
+      ]);
+    });
+
+    it('leaves unique, ambiguous, and id-less histories untouched', () => {
+      const unique = [
+        call('terminal:0', 'terminal', '{}'),
+        output('terminal:0', 'one'),
+        call('terminal:1', 'terminal', '{}'),
+        output('terminal:1', 'two'),
+      ];
+      expect(toNativeResponsesRequest({ input: unique }, 'gpt-5.4').input).toEqual(unique);
+
+      // Two calls in a row: which output belongs to which call is a guess.
+      const unpaired = [
+        call('terminal:0', 'terminal', '{}'),
+        call('terminal:0', 'terminal', '{}'),
+        output('terminal:0', 'one'),
+        output('terminal:0', 'two'),
+      ];
+      expect(toNativeResponsesRequest({ input: unpaired }, 'gpt-5.4').input).toEqual(unpaired);
+
+      // An output with no matching call leaves an odd number of entries.
+      const orphan = [
+        output('terminal:0', 'one'),
+        call('terminal:0', 'terminal', '{}'),
+        output('terminal:0', 'two'),
+      ];
+      expect(toNativeResponsesRequest({ input: orphan }, 'gpt-5.4').input).toEqual(orphan);
+
+      const idLess = ['plain', { type: 'reasoning', id: 'rs_1' }, { type: 'function_call' }];
+      expect(toNativeResponsesRequest({ input: idLess }, 'gpt-5.4').input).toEqual(idLess);
+    });
+
+    it('leaves ids alone when the provider holds the earlier turns', () => {
+      const input = [
+        call('terminal:0', 'terminal', '{}'),
+        output('terminal:0', 'one'),
+        call('terminal:0', 'terminal', '{}'),
+        output('terminal:0', 'two'),
+      ];
+
+      expect(
+        toNativeResponsesRequest({ input, previous_response_id: 'resp_123' }, 'gpt-5.4').input,
+      ).toEqual(input);
+      expect(
+        toNativeResponsesRequest({ input, previous_response_id: '' }, 'gpt-5.4').input,
+      ).toEqual([
+        call('terminal:0', 'terminal', '{}'),
+        output('terminal:0', 'one'),
+        call('terminal:0-mnfst-2', 'terminal', '{}'),
+        output('terminal:0-mnfst-2', 'two'),
+      ]);
+    });
+
+    it('normalizes ids on backends that require input lists', () => {
+      const result = toNativeResponsesRequest(
+        {
+          input: [
+            call('terminal:0', 'terminal', '{}'),
+            output('terminal:0', 'one'),
+            call('terminal:0', 'terminal', '{}'),
+            output('terminal:0', 'two'),
+          ],
+        },
+        'gpt-5.4',
+        { inputList: true },
+      );
+
+      expect((result.input as Record<string, unknown>[]).map((item) => item.call_id)).toEqual([
+        'terminal:0',
+        'terminal:0',
+        'terminal:0-mnfst-2',
+        'terminal:0-mnfst-2',
+      ]);
+    });
+
+    it('keeps a non-list input as it was sent', () => {
+      expect(toNativeResponsesRequest({ input: 'hi' }, 'gpt-5.4').input).toBe('hi');
+    });
+  });
+
   describe('fromChatCompletionResponse', () => {
     it('converts text, tool calls, and usage to a Response object', () => {
       const result = fromChatCompletionResponse(
@@ -423,6 +702,7 @@ describe('Responses adapter', () => {
             completion_tokens: 3,
             total_tokens: 13,
             cache_read_tokens: 4,
+            cache_creation_tokens: 2,
           },
         },
         'fallback-model',
@@ -446,11 +726,188 @@ describe('Responses adapter', () => {
       ]);
       expect(result.usage).toEqual({
         input_tokens: 10,
-        input_tokens_details: { cached_tokens: 4 },
+        input_tokens_details: { cached_tokens: 4, cache_write_tokens: 2 },
         output_tokens: 3,
         output_tokens_details: { reasoning_tokens: 0 },
         total_tokens: 13,
       });
+    });
+
+    it('maps OpenAI-compatible cache and reasoning usage details', () => {
+      const openai = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: {
+            prompt_tokens: 1000,
+            completion_tokens: 50,
+            total_tokens: 1050,
+            prompt_tokens_details: { cached_tokens: 800 },
+            completion_tokens_details: { reasoning_tokens: 30 },
+          },
+        },
+        'm',
+      );
+      const deepseek = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: { prompt_tokens: 100, completion_tokens: 5, prompt_cache_hit_tokens: 64 },
+        },
+        'm',
+      );
+
+      expect(openai.usage).toEqual({
+        input_tokens: 1000,
+        input_tokens_details: { cached_tokens: 800, cache_write_tokens: 0 },
+        output_tokens: 50,
+        output_tokens_details: { reasoning_tokens: 30 },
+        total_tokens: 1050,
+      });
+      expect(deepseek.usage).toMatchObject({
+        input_tokens_details: { cached_tokens: 64, cache_write_tokens: 0 },
+      });
+    });
+
+    it('reports cached input from a top-level cached_tokens key', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: { prompt_tokens: 100, completion_tokens: 5, cached_tokens: 40 },
+        },
+        'm',
+      );
+
+      expect(result.usage).toMatchObject({
+        input_tokens_details: { cached_tokens: 40, cache_write_tokens: 0 },
+      });
+    });
+
+    it.each([
+      ['top-level cache_creation_tokens', { cache_creation_tokens: 12 }],
+      ['top-level cache_creation_input_tokens', { cache_creation_input_tokens: 12 }],
+      [
+        'prompt_tokens_details.cache_write_tokens',
+        { prompt_tokens_details: { cache_write_tokens: 12 } },
+      ],
+      [
+        'prompt_tokens_details.cache_creation_input_tokens',
+        { prompt_tokens_details: { cache_creation_input_tokens: 12 } },
+      ],
+    ])('reports cache writes from %s', (_key, cacheUsage) => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [{ message: { content: 'hi' } }],
+          usage: { prompt_tokens: 100, completion_tokens: 5, ...cacheUsage },
+        },
+        'm',
+      );
+
+      expect(result.usage).toMatchObject({
+        input_tokens_details: { cached_tokens: 0, cache_write_tokens: 12 },
+      });
+    });
+
+    it('reports a token-limited reply as incomplete with max_output_tokens', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [
+            {
+              finish_reason: 'length',
+              message: {
+                content: '{"answer":',
+                tool_calls: [
+                  {
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{"id":' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        'm',
+      );
+
+      expect(result.status).toBe('incomplete');
+      expect(result.incomplete_details).toEqual({ reason: 'max_output_tokens' });
+      expect(result.completed_at).toBeNull();
+      expect(result.output).toEqual([
+        expect.objectContaining({ type: 'message', status: 'incomplete' }),
+        expect.objectContaining({ type: 'function_call', status: 'incomplete' }),
+      ]);
+    });
+
+    it('reports a filtered reply as incomplete with content_filter', () => {
+      const result = fromChatCompletionResponse(
+        { choices: [{ finish_reason: 'content_filter', message: { content: 'Partial' } }] },
+        'm',
+      );
+
+      expect(result.status).toBe('incomplete');
+      expect(result.incomplete_details).toEqual({ reason: 'content_filter' });
+    });
+
+    it.each(['stop', 'tool_calls', null, undefined])(
+      'keeps the reply completed for finish_reason %p',
+      (finishReason) => {
+        const result = fromChatCompletionResponse(
+          { choices: [{ finish_reason: finishReason, message: { content: 'Done' } }] },
+          'm',
+        );
+
+        expect(result.status).toBe('completed');
+        expect(result.incomplete_details).toBeNull();
+        expect(result.output).toEqual([expect.objectContaining({ status: 'completed' })]);
+      },
+    );
+
+    it('keeps an upstream refusal as a refusal content part', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [
+            {
+              message: { role: 'assistant', content: null, refusal: 'I cannot help with that.' },
+            },
+          ],
+        },
+        'm',
+      );
+
+      expect(result.status).toBe('completed');
+      expect(result.output).toEqual([
+        expect.objectContaining({
+          type: 'message',
+          role: 'assistant',
+          status: 'completed',
+          content: [{ type: 'refusal', refusal: 'I cannot help with that.' }],
+        }),
+      ]);
+    });
+
+    it('puts the refusal after the text when a reply carries both', () => {
+      const result = fromChatCompletionResponse(
+        { choices: [{ message: { content: 'Part one.', refusal: 'Stopping here.' } }] },
+        'm',
+      );
+
+      expect(result.output).toEqual([
+        expect.objectContaining({
+          content: [
+            { type: 'output_text', text: 'Part one.', annotations: [] },
+            { type: 'refusal', refusal: 'Stopping here.' },
+          ],
+        }),
+      ]);
+    });
+
+    it('ignores an empty or non-string refusal', () => {
+      for (const refusal of ['', null, 7]) {
+        const result = fromChatCompletionResponse(
+          { choices: [{ message: { content: null, refusal } }] },
+          'm',
+        );
+        expect(result.output).toEqual([]);
+      }
     });
 
     it('handles missing choices, non-string content, and missing usage', () => {
@@ -460,97 +917,12 @@ describe('Responses adapter', () => {
       expect(result.usage).toBeNull();
     });
 
-    it('keeps tool calls when the structured-output tool name does not match', () => {
-      const result = fromChatCompletionResponse(
-        {
-          choices: [
-            {
-              message: {
-                content: null,
-                tool_calls: [
-                  {
-                    id: 'call_1',
-                    type: 'function',
-                    function: { name: 'lookup', arguments: '{"id":1}' },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-        'claude-sonnet-4',
-        { structuredOutputToolName: 'patient_summary' },
-      );
-
-      expect(result.output).toEqual([
-        expect.objectContaining({
-          type: 'function_call',
-          call_id: 'call_1',
-          name: 'lookup',
-          arguments: '{"id":1}',
-        }),
-      ]);
-    });
-
-    it('uses safe defaults for malformed structured-output tool calls', () => {
-      const result = fromChatCompletionResponse(
-        {
-          choices: [
-            {
-              message: {
-                content: null,
-                tool_calls: [
-                  null,
-                  { id: 'bad_call', type: 'function' },
-                  {
-                    id: 'call_1',
-                    type: 'function',
-                    function: { name: 'patient_summary' },
-                  },
-                ],
-              },
-            },
-          ],
-        },
-        'claude-sonnet-4',
-        {
-          structuredOutputToolName: 'patient_summary',
-          textFormat: { type: 'text' },
-        },
-      );
-
-      expect(result.output).toEqual([
-        expect.objectContaining({
-          type: 'message',
-          role: 'assistant',
-          content: [{ type: 'output_text', text: '{}', annotations: [] }],
-        }),
-      ]);
-      expect(result.text).toEqual({ format: { type: 'text' } });
-    });
-
-    it('unwraps the configured structured-output tool call into response text', () => {
+    it('echoes the json_schema text format on the response', () => {
       const schema = { type: 'object', properties: { title: { type: 'string' } } };
       const result = fromChatCompletionResponse(
-        {
-          choices: [
-            {
-              message: {
-                content: null,
-                tool_calls: [
-                  {
-                    id: 'call_1',
-                    type: 'function',
-                    function: { name: 'patient_summary', arguments: '{"title":"ok"}' },
-                  },
-                ],
-              },
-            },
-          ],
-        },
+        { choices: [{ message: { content: '{"title":"ok"}' } }] },
         'claude-sonnet-4',
         {
-          structuredOutputToolName: 'patient_summary',
           textFormat: {
             type: 'json_schema',
             name: 'patient_summary',
@@ -564,7 +936,6 @@ describe('Responses adapter', () => {
       expect(result.output).toEqual([
         expect.objectContaining({
           type: 'message',
-          role: 'assistant',
           content: [{ type: 'output_text', text: '{"title":"ok"}', annotations: [] }],
         }),
       ]);
@@ -577,6 +948,37 @@ describe('Responses adapter', () => {
           strict: true,
         },
       });
+    });
+
+    it('falls back to text for non-structured formats and skips malformed tool calls', () => {
+      const result = fromChatCompletionResponse(
+        {
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  null,
+                  { id: 'bad_call', type: 'function' },
+                  { id: 'call_1', type: 'function', function: { name: 'lookup' } },
+                ],
+              },
+            },
+          ],
+        },
+        'claude-sonnet-4',
+        { textFormat: { type: 'text' } },
+      );
+
+      expect(result.output).toEqual([
+        expect.objectContaining({
+          type: 'function_call',
+          call_id: 'call_1',
+          name: 'lookup',
+          arguments: '{}',
+        }),
+      ]);
+      expect(result.text).toEqual({ format: { type: 'text' } });
     });
   });
 
@@ -614,6 +1016,71 @@ describe('Responses adapter', () => {
         expect.objectContaining({
           type: 'message',
           role: 'assistant',
+          content: [{ type: 'output_text', text: 'Hi', annotations: [] }],
+        }),
+      ]);
+    });
+
+    it('keeps the response.incomplete snapshot instead of reporting it as completed', () => {
+      const response = {
+        id: 'resp_1',
+        object: 'response',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        output: [],
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+      };
+      const result = collectResponsesSseResponse(
+        [
+          'event: response.output_text.delta\ndata: {"delta":"Cut"}',
+          `event: response.incomplete\ndata: ${JSON.stringify({ response })}`,
+          '',
+        ].join('\n\n'),
+      );
+
+      expect(result).toMatchObject({
+        id: 'resp_1',
+        status: 'incomplete',
+        incomplete_details: { reason: 'max_output_tokens' },
+        usage: { total_tokens: 3 },
+      });
+      expect(result.output).toEqual([
+        expect.objectContaining({
+          type: 'message',
+          status: 'incomplete',
+          content: [{ type: 'output_text', text: 'Cut', annotations: [] }],
+        }),
+      ]);
+    });
+
+    it('keeps the response.failed snapshot and its error', () => {
+      const response = {
+        id: 'resp_1',
+        object: 'response',
+        status: 'failed',
+        error: { code: 'server_error', message: 'upstream broke' },
+        output: [],
+        usage: null,
+      };
+      const result = collectResponsesSseResponse(
+        `event: response.failed\ndata: ${JSON.stringify({ response })}\n\n`,
+      );
+
+      expect(result).toEqual(response);
+    });
+
+    it('falls back to collected text when a terminal event carries no response object', () => {
+      const result = collectResponsesSseResponse(
+        [
+          'event: response.output_text.delta\ndata: {"delta":"Hi"}',
+          'event: response.incomplete\ndata: {}',
+          '',
+        ].join('\n\n'),
+      );
+
+      expect(result.status).toBe('completed');
+      expect(result.output).toEqual([
+        expect.objectContaining({
           content: [{ type: 'output_text', text: 'Hi', annotations: [] }],
         }),
       ]);
@@ -890,6 +1357,30 @@ describe('Responses adapter', () => {
       expect(delta.delta).toBe('Hello');
     });
 
+    it('keeps parallel tool calls apart when the provider omits tool call indexes', () => {
+      const t = createResponsesStreamTransformer('gemini-3.8-flash');
+      const out = [
+        '{"choices":[{"delta":{"tool_calls":[{"id":"call_a","type":"function","function":{"name":"lookup","arguments":"{\\"id\\":1}"}}]}}]}',
+        '{"choices":[{"delta":{"tool_calls":[{"id":"call_b","type":"function","function":{"name":"weather","arguments":"{\\"city\\":\\"Paris\\"}"}}]}}]}',
+        '{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}',
+      ]
+        .map((chunk) => t.transform(chunk) ?? '')
+        .join('');
+      const end = out + (t.finalize() ?? '');
+
+      const completed = firstEventData(end, 'response.completed')!;
+      expect(
+        completed.response.output.map((item: Record<string, unknown>) => [
+          item.call_id,
+          item.name,
+          item.arguments,
+        ]),
+      ).toEqual([
+        ['call_a', 'lookup', '{"id":1}'],
+        ['call_b', 'weather', '{"city":"Paris"}'],
+      ]);
+    });
+
     it('opens the item exactly once across multiple deltas', () => {
       const t = createResponsesStreamTransformer('gpt-4o');
       t.transform('{"choices":[{"delta":{"content":"Hel"}}]}');
@@ -949,52 +1440,6 @@ describe('Responses adapter', () => {
       // `finish_reason` chunk carried no text delta, so the tail before finalize
       // is empty.
       expect(tail).toBe('');
-    });
-
-    it('streams configured structured-output tool arguments as response text', () => {
-      const t = createResponsesStreamTransformer('claude-sonnet-4', {
-        structuredOutputToolName: 'patient_summary',
-        textFormat: { type: 'json_object' },
-      });
-      const first =
-        t.transform(
-          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"toolu_1","function":{"name":"patient_summary","arguments":"{\\"title\\""}}]}}]}\n\n',
-        ) ?? '';
-      const second =
-        t.transform(
-          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\\"ok\\"}"}}]}}]}\n\n',
-        ) ?? '';
-      const end = t.finalize() ?? '';
-
-      expect(firstEventData(first, 'response.output_text.delta')!.delta).toBe('{"title"');
-      expect(firstEventData(second, 'response.output_text.delta')!.delta).toBe(':"ok"}');
-      const completed = firstEventData(end, 'response.completed')!;
-      expect(completed.response.output).toEqual([
-        expect.objectContaining({
-          type: 'message',
-          content: [{ type: 'output_text', text: '{"title":"ok"}', annotations: [] }],
-        }),
-      ]);
-      expect(completed.response.text).toEqual({ format: { type: 'json_object' } });
-    });
-
-    it('ignores malformed structured-output stream tool-call entries', () => {
-      const t = createResponsesStreamTransformer('claude-sonnet-4', {
-        structuredOutputToolName: 'patient_summary',
-      });
-      const out =
-        t.transform(
-          'data: {"choices":[{"delta":{"tool_calls":[null,{"index":1},{"function":{"name":"patient_summary","arguments":"{}"}}]}}]}\n\n',
-        ) ?? '';
-
-      expect(firstEventData(out, 'response.output_text.delta')!.delta).toBe('{}');
-      const completed = firstEventData(t.finalize() ?? '', 'response.completed')!;
-      expect(completed.response.output).toEqual([
-        expect.objectContaining({
-          type: 'message',
-          content: [{ type: 'output_text', text: '{}', annotations: [] }],
-        }),
-      ]);
     });
 
     it('emits no item events and an empty output for usage-only streams', () => {
@@ -1057,6 +1502,136 @@ describe('Responses adapter', () => {
         expect(completed.response.completed_at).toBeGreaterThan(completed.response.created_at);
       } finally {
         nowSpy.mockRestore();
+      }
+    });
+
+    it('emits a refusal part with delta and done events', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      const first =
+        t.transform('{"choices":[{"delta":{"role":"assistant","refusal":"I cannot "}}]}') ?? '';
+      const second = t.transform('{"choices":[{"delta":{"refusal":"help."}}]}') ?? '';
+      t.transform('{"choices":[{"delta":{},"finish_reason":"stop"}]}');
+      const end = t.finalize() ?? '';
+
+      expect(eventTypes(first)).toEqual([
+        'response.created',
+        'response.in_progress',
+        'response.output_item.added',
+        'response.content_part.added',
+        'response.refusal.delta',
+      ]);
+      expect(firstEventData(first, 'response.content_part.added')!.part).toEqual({
+        type: 'refusal',
+        refusal: '',
+      });
+      expect(eventTypes(second)).toEqual(['response.refusal.delta']);
+
+      const itemId = firstEventData(first, 'response.output_item.added')!.item.id;
+      const delta = firstEventData(first, 'response.refusal.delta')!;
+      expect(delta).toMatchObject({ item_id: itemId, content_index: 0, delta: 'I cannot ' });
+
+      expect(eventTypes(end)).toEqual([
+        'response.refusal.done',
+        'response.content_part.done',
+        'response.output_item.done',
+        'response.completed',
+        '[DONE]',
+      ]);
+      expect(firstEventData(end, 'response.refusal.done')).toMatchObject({
+        item_id: itemId,
+        content_index: 0,
+        refusal: 'I cannot help.',
+      });
+      expect(firstEventData(end, 'response.content_part.done')!.part).toEqual({
+        type: 'refusal',
+        refusal: 'I cannot help.',
+      });
+
+      const completed = firstEventData(end, 'response.completed')!;
+      expect(completed.response.status).toBe('completed');
+      expect(completed.response.output).toEqual([
+        expect.objectContaining({
+          id: itemId,
+          type: 'message',
+          content: [{ type: 'refusal', refusal: 'I cannot help.' }],
+        }),
+      ]);
+    });
+
+    it('gives text and refusal parts their own content indexes', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      const text = t.transform('{"choices":[{"delta":{"content":"Part one."}}]}') ?? '';
+      const refusal = t.transform('{"choices":[{"delta":{"refusal":"No."}}]}') ?? '';
+      const end = t.finalize() ?? '';
+
+      expect(eventTypes(text)).toContain('response.output_text.delta');
+      expect(eventTypes(refusal)).toEqual([
+        'response.content_part.added',
+        'response.refusal.delta',
+      ]);
+      expect(firstEventData(refusal, 'response.content_part.added')!.content_index).toBe(1);
+      expect(firstEventData(refusal, 'response.refusal.delta')!.content_index).toBe(1);
+
+      const itemDone = firstEventData(end, 'response.output_item.done')!;
+      expect(itemDone.item.content).toEqual([
+        { type: 'output_text', text: 'Part one.', annotations: [] },
+        { type: 'refusal', refusal: 'No.' },
+      ]);
+      expect(firstEventData(end, 'response.completed')!.response.output[0].content).toEqual(
+        itemDone.item.content,
+      );
+    });
+
+    it('ends a token-limited stream with response.incomplete', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      t.transform('{"choices":[{"delta":{"content":"{\\"answer\\":"}}]}');
+      t.transform(
+        '{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"lookup","arguments":"{\\"id\\":"}}]}}]}',
+      );
+      t.transform('{"choices":[{"delta":{},"finish_reason":"length"}]}');
+      const end = t.finalize() ?? '';
+
+      const types = eventTypes(end);
+      expect(types).toContain('response.incomplete');
+      expect(types).not.toContain('response.completed');
+      expect(types[types.length - 1]).toBe('[DONE]');
+
+      const incomplete = firstEventData(end, 'response.incomplete')!;
+      expect(incomplete.response.status).toBe('incomplete');
+      expect(incomplete.response.incomplete_details).toEqual({ reason: 'max_output_tokens' });
+      expect(incomplete.response.completed_at).toBeNull();
+      expect(incomplete.response.output).toEqual([
+        expect.objectContaining({ type: 'message', status: 'incomplete' }),
+        expect.objectContaining({ type: 'function_call', status: 'incomplete' }),
+      ]);
+      for (const item of end
+        .split('\n')
+        .filter((line) => line.startsWith('data: {'))
+        .map((line) => JSON.parse(line.slice(6)))
+        .filter((event) => event.type === 'response.output_item.done')
+        .map((event) => event.item)) {
+        expect(item.status).toBe('incomplete');
+      }
+    });
+
+    it('ends a content-filtered stream with response.incomplete', () => {
+      const t = createResponsesStreamTransformer('gpt-4o');
+      t.transform('{"choices":[{"delta":{"content":"Partial"},"finish_reason":"content_filter"}]}');
+      const end = t.finalize() ?? '';
+
+      expect(firstEventData(end, 'response.incomplete')!.response.incomplete_details).toEqual({
+        reason: 'content_filter',
+      });
+    });
+
+    it('still completes a stream that ends with stop or tool_calls', () => {
+      for (const finishReason of ['stop', 'tool_calls']) {
+        const t = createResponsesStreamTransformer('gpt-4o');
+        t.transform(`{"choices":[{"delta":{"content":"Hi"},"finish_reason":"${finishReason}"}]}`);
+        const end = t.finalize() ?? '';
+
+        expect(eventTypes(end)).toContain('response.completed');
+        expect(eventTypes(end)).not.toContain('response.incomplete');
       }
     });
   });

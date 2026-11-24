@@ -50,14 +50,4 @@ export class Tenant {
 
   @Column(timestampType(), { default: timestampDefault() })
   updated_at!: string;
-
-  // When this tenant JOINED the Auto-fix early-access waitlist (opt-in). Unlocks
-  // access only in the `waitlist` rollout phase.
-  @Column('timestamp with time zone', { nullable: true })
-  autofix_waitlist_at!: string | null;
-
-  // When WE explicitly granted this tenant Auto-fix early access (hand-picked).
-  // Always unlocks access, in every rollout phase. NULL = not granted.
-  @Column('timestamp with time zone', { nullable: true })
-  autofix_access_granted_at!: string | null;
 }

@@ -78,20 +78,26 @@ const AnthropicOAuthDetailView: Component<Props> = (props) => {
   });
 
   const handleSignIn = async () => {
-    props.setBusy(true);
     setError(null);
+    // Open synchronously while the click still has user activation. Browsers
+    // can block a window opened after the OAuth start request completes.
+    const popup = window.open('about:blank', '_blank');
+    if (!popup) {
+      toast.error('Popup was blocked by your browser. Allow popups for this site, then try again.');
+      if (props.connected()) setAddingAccount(false);
+      return;
+    }
+    // The blank page is same-origin, so remove its access to the dashboard
+    // before navigating it to Anthropic.
+    popup.opener = null;
+
+    props.setBusy(true);
     try {
       const { url, state: authState } = await startAnthropicOAuth(props.agentName);
       setState(authState);
-      const opened = window.open(url, 'manifest-anthropic-oauth', 'noopener,noreferrer');
-      if (!opened) {
-        toast.error(
-          'Popup was blocked by your browser. Allow popups for this site, then try again.',
-        );
-        setState(null);
-        if (props.connected()) setAddingAccount(false);
-      }
+      if (!popup.closed) popup.location.replace(url);
     } catch {
+      popup.close();
       if (props.connected()) setAddingAccount(false);
       // error toast from fetchMutate
     } finally {

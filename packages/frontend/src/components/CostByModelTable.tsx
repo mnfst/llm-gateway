@@ -33,8 +33,8 @@ interface CostByModelTableProps {
   rows: CostByModelRow[];
   /** Doctor availability drives the Total attempts tooltip wording. */
   doctorAvailable?: boolean;
-  /** Per-model reliability (Total attempts · Success rate) — the
-      three columns render only when provided (autofix-eligible tenants). */
+  /** Per-model reliability (Total attempts · Success rate). The three columns
+      render only when reliability data is provided. */
   reliability?: ModelReliabilityRow[];
 }
 

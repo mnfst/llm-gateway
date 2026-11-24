@@ -17,3 +17,8 @@ output "database_url_secret" {
   description = "Secret Manager secret containing DATABASE_URL."
   value       = google_secret_manager_secret.managed["database_url"].id
 }
+
+output "recording_bucket" {
+  description = "Private Cloud Storage bucket mounted for request recordings."
+  value       = google_storage_bucket.recordings.name
+}

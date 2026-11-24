@@ -1,6 +1,7 @@
 import { Repository } from 'typeorm';
 import type { ModelRoute } from 'manifest-shared';
 import { ProxyFallbackService } from '../proxy-fallback.service';
+import { ReasoningContentCache } from '../reasoning-content-cache';
 import { ProviderKeyService } from '../../routing-core/provider-key.service';
 import { CustomProvider } from '../../../entities/custom-provider.entity';
 import { OpenaiOauthService } from '../../oauth/openai/openai-oauth.service';
@@ -14,6 +15,7 @@ import { CopilotTokenService } from '../copilot-token.service';
 import { ModelPricingCacheService } from '../../../model-prices/model-pricing-cache.service';
 import { AgentModelParamsService } from '../../routing-core/agent-model-params.service';
 import { ProviderParamSpecService } from '../../routing-core/provider-param-spec.service';
+import { AutofixService } from '../../autofix/autofix.service';
 
 /**
  * Locks the route-aware behavior of ProxyFallbackService.tryFallbacks:
@@ -156,10 +158,57 @@ describe('ProxyFallbackService.tryFallbacks — route-aware path', () => {
       pricingCache,
       modelParamsService,
       providerParamSpecs,
+      new ReasoningContentCache(),
+      {
+        isRepairable: jest.fn().mockReturnValue(false),
+        maybeHeal: jest.fn(),
+      } as unknown as AutofixService,
     );
   });
 
   const body = { messages: [{ role: 'user', content: 'Hello' }], stream: false };
+
+  it("carries the caller's anthropic-beta flags onto an Anthropic fallback hop", async () => {
+    // A fallback that lands on Anthropic needs the beta header just as much as
+    // the primary did; without it a beta-gated body 400s on the recovery hop.
+    providerClient.forward.mockResolvedValue({
+      response: new Response('{}', { status: 200 }),
+      isGoogle: false,
+      isAnthropic: true,
+      isChatGpt: false,
+    });
+    const routes: ModelRoute[] = [
+      { provider: 'anthropic', authType: 'subscription', model: 'claude-sonnet-4' },
+    ];
+
+    await service.tryFallbacks(
+      'agent-1',
+      'user-1',
+      ['claude-sonnet-4'],
+      body,
+      false,
+      'sess-1',
+      'gpt-4o',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      routes,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      'structured-outputs-2025-11-13',
+    );
+
+    expect(providerClient.forward.mock.calls[0][0].clientAnthropicBeta).toBe(
+      'structured-outputs-2025-11-13',
+    );
+  });
 
   it('uses route.provider and route.authType directly, skipping inference cascade', async () => {
     providerClient.forward.mockResolvedValue({

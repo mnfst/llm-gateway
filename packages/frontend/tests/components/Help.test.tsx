@@ -50,7 +50,7 @@ describe("Help", () => {
     const links = screen.getAllByRole("link");
     const bookLink = links.find((l) => l.textContent?.includes("Book"));
     expect(bookLink?.getAttribute("href")).toBe(
-      "https://calendly.com/sebastien-manifest/30min?month=2026-02",
+      "https://calendly.com/sebastien-manifest/15min",
     );
   });
 
@@ -89,7 +89,7 @@ describe("Help", () => {
   it("describes the call duration in the Schedule a Call section", () => {
     render(() => <Help />);
     expect(
-      screen.getByText(/Book a 30-min call with us to get help setting things up\./),
+      screen.getByText(/Book a 15-min call with us to get help setting things up\./),
     ).toBeDefined();
   });
 

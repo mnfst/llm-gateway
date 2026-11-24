@@ -1,14 +1,24 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsIn,
   IsNotEmpty,
   IsObject,
+  IsOptional,
   IsString,
+  Matches,
+  MaxLength,
   Validate,
   ValidatorConstraint,
   type ValidatorConstraintInterface,
 } from 'class-validator';
 
-import { AUTH_TYPES, type AuthType, type RequestParamDefaults } from 'manifest-shared';
+import {
+  AUTH_TYPES,
+  type AuthType,
+  type JsonValue,
+  type RequestParamDefaults,
+} from 'manifest-shared';
 
 export type ModelParamsBodyDto = RequestParamDefaults;
 
@@ -84,6 +94,44 @@ export class ModelParamSpecsQueryDto {
   @IsString()
   @IsNotEmpty()
   model!: string;
+}
+
+// Tier-addressed params (CLI + MCP): a route is named by tier + model instead
+// of the stored (scope, provider, authType, model) identity.
+export class TierModelParamsPathDto {
+  @IsString()
+  @IsNotEmpty()
+  @Matches(/^[a-zA-Z0-9_-]+$/, { message: 'Invalid agent name' })
+  agentName!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(100)
+  tier!: string;
+}
+
+export class TierModelParamsQueryDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  model?: string;
+}
+
+const MAX_PARAM_CHANGES = 50;
+
+export class UpdateTierModelParamsBodyDto {
+  // Keys are param paths (`reasoning.effort`), values the JSON to store.
+  @IsOptional()
+  @IsObject()
+  @Validate(RequestParamDefaultsConstraint)
+  set?: Record<string, JsonValue>;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_PARAM_CHANGES)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  unset?: string[];
 }
 
 function isJsonObject(value: unknown, depth = 0): value is Record<string, unknown> {

@@ -270,6 +270,35 @@ const MOCK_API_RESPONSE = {
       },
     },
   },
+  openrouter: {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    models: {
+      'qwen/qwen3-coder': {
+        id: 'qwen/qwen3-coder',
+        name: 'Qwen3 Coder',
+        tool_call: true,
+        cost: { input: 0.3, output: 1 },
+        limit: { context: 262144 },
+        modalities: { input: ['text'], output: ['text'] },
+      },
+      'google/gemini-3.5-flash': {
+        id: 'google/gemini-3.5-flash',
+        name: 'Gemini 3.5 Flash',
+        tool_call: true,
+        cost: { input: 0.3, output: 2.5 },
+        limit: { context: 1000000 },
+        modalities: { input: ['text', 'image'], output: ['text'] },
+      },
+      'google/gemma-3-4b-it': {
+        id: 'google/gemma-3-4b-it',
+        name: 'Gemma 3 4B',
+        tool_call: false,
+        cost: { input: 0.02, output: 0.04 },
+        modalities: { input: ['text'], output: ['text'] },
+      },
+    },
+  },
   nvidia: {
     id: 'nvidia',
     name: 'NVIDIA',
@@ -313,6 +342,33 @@ const MOCK_API_RESPONSE = {
       },
     },
   },
+  'ollama-cloud': {
+    id: 'ollama-cloud',
+    name: 'Ollama Cloud',
+    models: {
+      'kimi-k3': {
+        id: 'kimi-k3',
+        name: 'kimi-k3',
+        reasoning: true,
+        tool_call: true,
+        modalities: { input: ['text', 'image'], output: ['text'] },
+      },
+      'deepseek-v4-pro': {
+        id: 'deepseek-v4-pro',
+        name: 'deepseek-v4-pro',
+        reasoning: true,
+        tool_call: true,
+        modalities: { input: ['text'], output: ['text'] },
+      },
+      'gpt-oss:120b': {
+        id: 'gpt-oss:120b',
+        name: 'gpt-oss:120b',
+        reasoning: true,
+        tool_call: true,
+        modalities: { input: ['text'], output: ['text'] },
+      },
+    },
+  },
   'unknown-provider': {
     id: 'unknown-provider',
     name: 'Unknown',
@@ -346,10 +402,11 @@ describe('ModelsDevSyncService', () => {
         'https://models.dev/api.json',
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
-      // anthropic: 2, google: 1 (audio excluded), openai: 1, deepseek: 1,
-      // fireworks: 1, mistral: 6, xai: 3, bedrock: 8, groq: 2,
-      // nvidia: 1, opencode-go: 1, opencode: 1, cerebras: 1 = 29
-      expect(count).toBe(29);
+      // anthropic: 2, google: 1 (audio excluded), openai: 1, deepseek: 2
+      // (deepseek-chat + deepseek-flash stub), fireworks: 1, mistral: 6, xai: 3,
+      // bedrock: 8, groq: 2, nvidia: 1, opencode-go: 1, opencode: 1, cerebras: 1,
+      // ollama-cloud: 3 = 33
+      expect(count).toBe(33);
     });
 
     it('should filter out non-text-output models', async () => {
@@ -699,6 +756,7 @@ describe('ModelsDevSyncService', () => {
       expect(service.isProviderSupported('fireworks')).toBe(true);
       expect(service.isProviderSupported('bedrock')).toBe(true);
       expect(service.isProviderSupported('cerebras')).toBe(true);
+      expect(service.isProviderSupported('ollama-cloud')).toBe(true);
     });
 
     it('should return false for unmapped providers', () => {
@@ -1014,6 +1072,407 @@ describe('ModelsDevSyncService', () => {
     });
   });
 
+  describe('time-of-day pricing tiers', () => {
+    it('parses time tiers from cost.tiers and ignores context tiers', async () => {
+      const response = {
+        openai: {
+          id: 'openai',
+          name: 'OpenAI',
+          models: {
+            'tiered-model': {
+              id: 'tiered-model',
+              name: 'Tiered',
+              cost: {
+                input: 1.0,
+                output: 2.0,
+                tiers: [
+                  { tier: { type: 'context', size: 200_000 }, input: 2.0, output: 4.0 },
+                  {
+                    tier: { type: 'time', windows: ['01:00-04:00', '06:00-10:00'] },
+                    input: 2.0,
+                    output: 4.0,
+                    cache_read: 0.2,
+                  },
+                ],
+              },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      const model = service.lookupModel('openai', 'tiered-model');
+      expect(model!.timeTiers).toEqual([
+        {
+          windows: ['01:00-04:00', '06:00-10:00'],
+          days: null,
+          inputPricePerToken: 2.0 / 1_000_000,
+          outputPricePerToken: 4.0 / 1_000_000,
+          cacheReadPricePerToken: 0.2 / 1_000_000,
+          cacheWritePricePerToken: null,
+        },
+      ]);
+    });
+
+    it('drops time tiers with malformed or missing windows', async () => {
+      const response = {
+        openai: {
+          id: 'openai',
+          name: 'OpenAI',
+          models: {
+            'bad-tiers': {
+              id: 'bad-tiers',
+              name: 'Bad Tiers',
+              cost: {
+                input: 1.0,
+                output: 2.0,
+                tiers: [
+                  {
+                    tier: { type: 'time', windows: ['25:00-99:00', 'later'] },
+                    input: 2.0,
+                    output: 4.0,
+                  },
+                  { tier: { type: 'time' }, input: 2.0, output: 4.0 },
+                ],
+              },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      expect(service.lookupModel('openai', 'bad-tiers')!.timeTiers).toBeNull();
+    });
+
+    it('keeps only valid windows within a mixed tier and nulls unpriced fields', async () => {
+      const response = {
+        openai: {
+          id: 'openai',
+          name: 'OpenAI',
+          models: {
+            'mixed-windows': {
+              id: 'mixed-windows',
+              name: 'Mixed Windows',
+              cost: {
+                input: 1.0,
+                output: 2.0,
+                tiers: [
+                  {
+                    tier: { type: 'time', windows: ['01:00-04:00', 'garbage', '06:00-06:00'] },
+                    input: 2.0,
+                  },
+                ],
+              },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      expect(service.lookupModel('openai', 'mixed-windows')!.timeTiers).toEqual([
+        {
+          windows: ['01:00-04:00'],
+          days: null,
+          inputPricePerToken: 2.0 / 1_000_000,
+          outputPricePerToken: null,
+          cacheReadPricePerToken: null,
+          cacheWritePricePerToken: null,
+        },
+      ]);
+    });
+
+    const flashPeakTier = {
+      windows: ['01:00-04:00', '06:00-10:00'],
+      days: [1, 2, 3, 4, 5],
+      inputPricePerToken: 0.3 / 1_000_000,
+      outputPricePerToken: 1.2 / 1_000_000,
+      cacheReadPricePerToken: 0.006 / 1_000_000,
+      cacheWritePricePerToken: null,
+    };
+
+    it('seeds DeepSeek V4.1 Flash peak pricing when the catalog carries no time tiers', async () => {
+      const response = {
+        deepseek: {
+          id: 'deepseek',
+          name: 'DeepSeek',
+          models: {
+            'deepseek-flash': {
+              id: 'deepseek-flash',
+              name: 'DeepSeek V4.1 Flash',
+              cost: { input: 0.14, output: 0.28, cache_read: 0.0028, cache_write: 0.35 },
+              modalities: { input: ['text', 'image'], output: ['text'] },
+            },
+            'deepseek-v4-flash': {
+              id: 'deepseek-v4-flash',
+              name: 'DeepSeek V4 Flash',
+              cost: { input: 0.14, output: 0.28, cache_read: 0.0028, cache_write: 0.35 },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+            'deepseek-chat': {
+              id: 'deepseek-chat',
+              name: 'DeepSeek Chat',
+              cost: { input: 0.14, output: 0.28 },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      const flash = service.lookupModel('deepseek', 'deepseek-flash');
+      // Stale catalog rates are replaced by the V4.1 Flash off-peak base…
+      expect(flash!.inputPricePerToken).toBe(0.15 / 1_000_000);
+      expect(flash!.outputPricePerToken).toBe(0.6 / 1_000_000);
+      expect(flash!.cacheReadPricePerToken).toBe(0.003 / 1_000_000);
+      // The stale catalog cache-write rate must not survive either: DeepSeek
+      // bills cache writes at the input rate, which null falls back to.
+      expect(flash!.cacheWritePricePerToken).toBeNull();
+      // …plus the peak windows at double.
+      expect(flash!.timeTiers).toEqual([flashPeakTier]);
+      // Retired aliases still accepted by DeepSeek are billed on the same card.
+      const legacy = service.lookupModel('deepseek', 'deepseek-v4-flash');
+      expect(legacy!.inputPricePerToken).toBe(0.15 / 1_000_000);
+      expect(legacy!.timeTiers).toEqual([flashPeakTier]);
+      // Models outside the seed are untouched.
+      const chat = service.lookupModel('deepseek', 'deepseek-chat');
+      expect(chat!.inputPricePerToken).toBe(0.14 / 1_000_000);
+      expect(chat!.timeTiers).toBeNull();
+    });
+
+    it('synthesizes deepseek-flash when the catalog has not listed it yet', async () => {
+      const response = {
+        deepseek: {
+          id: 'deepseek',
+          name: 'DeepSeek',
+          models: {
+            'deepseek-v4-flash': {
+              id: 'deepseek-v4-flash',
+              name: 'DeepSeek V4 Flash',
+              cost: { input: 0.14, output: 0.28, cache_read: 0.0028 },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      const ga = service.lookupModel('deepseek', 'deepseek-flash');
+      expect(ga).not.toBeNull();
+      expect(ga!.name).toBe('DeepSeek V4.1 Flash');
+      expect(ga!.inputPricePerToken).toBe(0.15 / 1_000_000);
+      expect(ga!.timeTiers).toEqual([flashPeakTier]);
+    });
+
+    it('seeds the vision preview on the Flash card', async () => {
+      const response = {
+        deepseek: {
+          id: 'deepseek',
+          name: 'DeepSeek',
+          models: {
+            'deepseek-v4-flash-vision-exp': {
+              id: 'deepseek-v4-flash-vision-exp',
+              name: 'DeepSeek V4 Flash Vision',
+              cost: { input: 0.14, output: 0.28, cache_read: 0.0028 },
+              modalities: { input: ['text', 'image'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      const vision = service.lookupModel('deepseek', 'deepseek-v4-flash-vision-exp');
+      expect(vision!.inputPricePerToken).toBe(0.15 / 1_000_000);
+      expect(vision!.outputPricePerToken).toBe(0.6 / 1_000_000);
+      expect(vision!.timeTiers).toEqual([flashPeakTier]);
+    });
+
+    describe('deepseek-v4-pro Flash cutover', () => {
+      const proResponse = {
+        deepseek: {
+          id: 'deepseek',
+          name: 'DeepSeek',
+          models: {
+            'deepseek-v4-pro': {
+              id: 'deepseek-v4-pro',
+              name: 'DeepSeek V4 Pro',
+              cost: { input: 0.435, output: 0.87, cache_read: 0.003625 },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+
+      afterEach(() => {
+        jest.restoreAllMocks();
+      });
+
+      it('keeps the Pro card until 2026-09-14 04:00 UTC', async () => {
+        jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T03:59:59Z'));
+        fetchSpy.mockResolvedValue({ ok: true, json: async () => proResponse });
+
+        await service.refreshCache();
+
+        const pro = service.lookupModel('deepseek', 'deepseek-v4-pro');
+        expect(pro!.inputPricePerToken).toBe(0.66 / 1_000_000);
+        expect(pro!.outputPricePerToken).toBe(1.98 / 1_000_000);
+        expect(pro!.cacheReadPricePerToken).toBe(0.022 / 1_000_000);
+        expect(pro!.timeTiers).toEqual([
+          {
+            windows: ['01:00-04:00', '06:00-10:00'],
+            days: [1, 2, 3, 4, 5],
+            inputPricePerToken: 1.32 / 1_000_000,
+            outputPricePerToken: 3.96 / 1_000_000,
+            cacheReadPricePerToken: 0.044 / 1_000_000,
+            cacheWritePricePerToken: null,
+          },
+        ]);
+      });
+
+      it('bills Pro on the Flash card from 2026-09-14 04:00 UTC', async () => {
+        jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T04:00:00Z'));
+        fetchSpy.mockResolvedValue({ ok: true, json: async () => proResponse });
+
+        await service.refreshCache();
+
+        const pro = service.lookupModel('deepseek', 'deepseek-v4-pro');
+        expect(pro!.inputPricePerToken).toBe(0.15 / 1_000_000);
+        expect(pro!.outputPricePerToken).toBe(0.6 / 1_000_000);
+        expect(pro!.cacheReadPricePerToken).toBe(0.003 / 1_000_000);
+        expect(pro!.timeTiers).toEqual([flashPeakTier]);
+      });
+    });
+
+    it('carries a catalog day list through to the tier', async () => {
+      const response = {
+        openai: {
+          id: 'openai',
+          name: 'OpenAI',
+          models: {
+            'weekday-model': {
+              id: 'weekday-model',
+              name: 'Weekday',
+              cost: {
+                input: 1.0,
+                output: 2.0,
+                tiers: [
+                  {
+                    tier: { type: 'time', windows: ['01:00-04:00'], days: [1, 2, 3, 4, 5] },
+                    input: 2.0,
+                    output: 4.0,
+                  },
+                ],
+              },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      expect(service.lookupModel('openai', 'weekday-model')!.timeTiers![0].days).toEqual([
+        1, 2, 3, 4, 5,
+      ]);
+    });
+
+    it.each([
+      ['a non-array', 'weekdays'],
+      ['an out-of-range weekday', [1, 2, 3, 4, 5, 8]],
+      ['a non-integer weekday', [1, 2.5]],
+      ['a non-numeric entry', [1, 2, 3, 4, 5, '6']],
+      ['an empty list', []],
+    ])('drops %s day list whole rather than salvaging part of it', async (_label, days) => {
+      // Filtering [1,2,3,4,5,'6'] down to [1..5] would read as a clean weekday
+      // rule and quietly discount a day the provider charges peak for.
+      const response = {
+        openai: {
+          id: 'openai',
+          name: 'OpenAI',
+          models: {
+            'bad-days': {
+              id: 'bad-days',
+              name: 'Bad Days',
+              cost: {
+                input: 1.0,
+                output: 2.0,
+                tiers: [
+                  {
+                    tier: { type: 'time', windows: ['01:00-04:00'], days },
+                    input: 2.0,
+                    output: 4.0,
+                  },
+                ],
+              },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      const tiers = service.lookupModel('openai', 'bad-days')!.timeTiers;
+      expect(tiers).toHaveLength(1);
+      expect(tiers![0].days).toBeNull();
+    });
+
+    it('prefers catalog time tiers over the DeepSeek seed once models.dev has them', async () => {
+      const response = {
+        deepseek: {
+          id: 'deepseek',
+          name: 'DeepSeek',
+          models: {
+            'deepseek-v4-flash': {
+              id: 'deepseek-v4-flash',
+              name: 'DeepSeek V4 Flash',
+              cost: {
+                input: 0.25,
+                output: 0.7,
+                tiers: [
+                  { tier: { type: 'time', windows: ['02:00-05:00'] }, input: 0.5, output: 1.4 },
+                ],
+              },
+              modalities: { input: ['text'], output: ['text'] },
+            },
+          },
+        },
+      };
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => response });
+
+      await service.refreshCache();
+
+      const flash = service.lookupModel('deepseek', 'deepseek-v4-flash');
+      expect(flash!.inputPricePerToken).toBe(0.25 / 1_000_000);
+      expect(flash!.timeTiers).toEqual([
+        {
+          windows: ['02:00-05:00'],
+          days: null,
+          inputPricePerToken: 0.5 / 1_000_000,
+          outputPricePerToken: 1.4 / 1_000_000,
+          cacheReadPricePerToken: null,
+          cacheWritePricePerToken: null,
+        },
+      ]);
+    });
+  });
+
   describe('refreshCache edge cases', () => {
     it('should skip providers with no models key', async () => {
       const response = {
@@ -1203,6 +1662,55 @@ describe('ModelsDevSyncService', () => {
     });
   });
 
+  describe('ollama-cloud', () => {
+    beforeEach(async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => MOCK_API_RESPONSE,
+      });
+      await service.refreshCache();
+    });
+
+    it('should expose modalities and capability flags for cloud models', () => {
+      const model = service.lookupModel('ollama-cloud', 'kimi-k3');
+      expect(model).not.toBeNull();
+      expect(model!.inputModalities).toEqual(['text', 'image']);
+      expect(model!.outputModalities).toEqual(['text']);
+      expect(model!.reasoning).toBe(true);
+      expect(model!.toolCall).toBe(true);
+    });
+
+    it('should leave pricing null when models.dev lists no cost', () => {
+      const model = service.lookupModel('ollama-cloud', 'deepseek-v4-pro');
+      expect(model).not.toBeNull();
+      expect(model!.inputPricePerToken).toBeNull();
+      expect(model!.outputPricePerToken).toBeNull();
+    });
+
+    it('should strip Ollama release tags absent from the models.dev key', () => {
+      expect(service.lookupModel('ollama-cloud', 'deepseek-v4-pro:preview')?.id).toBe(
+        'deepseek-v4-pro',
+      );
+      expect(service.lookupModel('ollama-cloud', 'deepseek-v4-pro:0813')?.id).toBe(
+        'deepseek-v4-pro',
+      );
+    });
+
+    it('should not strip parameter-size tags that are part of the model ID', () => {
+      expect(service.lookupModel('ollama-cloud', 'gpt-oss:120b')?.id).toBe('gpt-oss:120b');
+      expect(service.lookupModel('ollama-cloud', 'gpt-oss:20b')).toBeNull();
+    });
+
+    it('should not apply the tag strip to other providers', () => {
+      expect(service.lookupModel('bedrock', 'qwen.qwen3-32b:preview')).toBeNull();
+    });
+
+    it('should leave local ollama unsupported', () => {
+      expect(service.isProviderSupported('ollama')).toBe(false);
+      expect(service.lookupModel('ollama', 'kimi-k3')).toBeNull();
+    });
+  });
+
   describe('lookupCustomProviderModel', () => {
     beforeEach(async () => {
       fetchSpy.mockResolvedValue({
@@ -1235,6 +1743,90 @@ describe('ModelsDevSyncService', () => {
     it('should return null when provider or model is missing', () => {
       expect(service.lookupCustomProviderModel('Mammouth', 'openai/gpt-4o-mini')).toBeNull();
       expect(service.lookupCustomProviderModel('Kilo Gateway', 'missing-model')).toBeNull();
+    });
+  });
+
+  describe('lookupModelCapabilities', () => {
+    beforeEach(async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => MOCK_API_RESPONSE,
+      });
+      await service.refreshCache();
+    });
+
+    it('should prefer the native catalog', () => {
+      const model = service.lookupModelCapabilities('anthropic', 'claude-opus-4-6');
+      expect(model).not.toBeNull();
+      expect(model!.inputModalities).toEqual(['text', 'image']);
+    });
+
+    it('should resolve capability-only providers', () => {
+      // `kilo` is a first-class Manifest provider that models.dev may not
+      // price, so only the capability catalog resolves it.
+      expect(service.lookupModel('kilo', 'openai/gpt-4o-mini')).toBeNull();
+      const model = service.lookupModelCapabilities('kilo', 'openai/gpt-4o-mini');
+      expect(model).not.toBeNull();
+      expect(model!.name).toBe('GPT-4o mini');
+    });
+
+    it('should keep capability-only providers out of every pricing consumer', () => {
+      // getModelsForProvider feeds the shared pricing cache and the discovery
+      // fallback catalog. Kilo lists resold vendor models under the vendor's
+      // own ID, so its rates must not reach either.
+      expect(service.getModelsForProvider('kilo')).toEqual([]);
+      expect(service.isProviderSupported('kilo')).toBe(false);
+    });
+
+    it('should not count capability-only models as priced coverage', async () => {
+      fetchSpy.mockResolvedValue({ ok: true, json: async () => MOCK_API_RESPONSE });
+      // Same total as refreshCache asserts: the kilo model is cached for
+      // capabilities but never counted or priced.
+      expect(await service.refreshCache()).toBe(33);
+    });
+
+    it('should declare tool support for OpenRouter models', () => {
+      // #2737: every OpenRouter model looked tool-incapable because OpenRouter
+      // reached neither map, so `tools` was never added.
+      expect(service.lookupModel('openrouter', 'qwen/qwen3-coder')).toBeNull();
+      const model = service.lookupModelCapabilities('openrouter', 'qwen/qwen3-coder');
+      expect(model).not.toBeNull();
+      expect(model!.capabilities).toContain('tools');
+      expect(
+        service.lookupModelCapabilities('openrouter', 'google/gemini-3.5-flash')!.inputModalities,
+      ).toEqual(['text', 'image']);
+    });
+
+    it('should keep OpenRouter models.dev rates out of the pricing cache', () => {
+      // OpenRouter's own /models feed prices its connections, including the
+      // `:free` and `:nitro` variants models.dev does not carry.
+      expect(service.getModelsForProvider('openrouter')).toEqual([]);
+      expect(service.isProviderSupported('openrouter')).toBe(false);
+    });
+
+    it('should resolve an OpenRouter variant suffix to its base model', () => {
+      // OpenRouter sells routing variants (`:batch`, `:free`, `:nitro`) that
+      // models.dev lists only under the base ID. Capabilities are the base
+      // model's either way.
+      const batch = service.lookupModelCapabilities('openrouter', 'qwen/qwen3-coder:batch');
+      expect(batch?.id).toBe('qwen/qwen3-coder');
+      expect(service.lookupModelCapabilities('openrouter', 'qwen/unknown-model:batch')).toBeNull();
+    });
+
+    it('should not strip a colon suffix for providers that use one in model IDs', () => {
+      // Ollama tags (`gpt-oss:120b`) and Bedrock versions (`-v1:0`) are part of
+      // the model ID, not a routing variant.
+      expect(service.lookupModelCapabilities('ollama-cloud', 'gpt-oss:120b')).not.toBeNull();
+      expect(service.lookupModelCapabilities('ollama-cloud', 'kimi-k3:8b')).toBeNull();
+    });
+
+    it('should not resolve local Ollama against the Ollama Cloud catalog', () => {
+      expect(service.lookupModelCapabilities('ollama', 'kimi-k3')).toBeNull();
+    });
+
+    it('should return null for providers on neither map', () => {
+      expect(service.lookupModelCapabilities('nous', 'some-model')).toBeNull();
+      expect(service.lookupModelCapabilities('kilo', 'missing-model')).toBeNull();
     });
   });
 

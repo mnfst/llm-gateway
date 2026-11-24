@@ -7,7 +7,12 @@ import { Tenant } from '../../entities/tenant.entity';
 import { Agent } from '../../entities/agent.entity';
 import { AgentApiKey } from '../../entities/agent-api-key.entity';
 import { hashKey, keyPrefix } from '../../common/utils/hash.util';
-import { encrypt, decrypt, getEncryptionSecret } from '../../common/utils/crypto.util';
+import {
+  encrypt,
+  decryptWithAny,
+  getEncryptionSecret,
+  getDecryptionSecrets,
+} from '../../common/utils/crypto.util';
 import { API_KEY_PREFIX } from '../../common/constants/api-key.constants';
 import { AgentKeyAuthGuard } from '../guards/agent-key-auth.guard';
 
@@ -39,6 +44,10 @@ export class ApiKeyGeneratorService {
     displayName?: string;
     agentCategory?: string;
     agentPlatform?: string;
+    /** Explicit Autofix choice. Undefined → column default / mode inherit (NULL). */
+    autofixEnabled?: boolean;
+    /** Explicit recording choice. Undefined → column default (true for new agents). */
+    recordMessages?: boolean;
   }): Promise<{ tenantId: string; agentId: string; apiKey: string }> {
     let tenantId: string;
     if (params.tenantId) {
@@ -74,6 +83,11 @@ export class ApiKeyGeneratorService {
       description: params.agentDescription ?? null,
       agent_category: params.agentCategory ?? null,
       agent_platform: params.agentPlatform ?? null,
+      // Only set when the caller made an explicit choice. Leaving them out lets
+      // the column default / NULL-inherit path apply (Autofix mode default,
+      // recording ON for new agents).
+      ...(params.autofixEnabled !== undefined ? { autofix_enabled: params.autofixEnabled } : {}),
+      ...(params.recordMessages !== undefined ? { record_messages: params.recordMessages } : {}),
       is_active: true,
       tenant_id: tenantId,
     });
@@ -113,7 +127,7 @@ export class ApiKeyGeneratorService {
 
     if (keyRecord.key) {
       try {
-        const fullKey = decrypt(keyRecord.key, getEncryptionSecret());
+        const fullKey = decryptWithAny(keyRecord.key, getDecryptionSecrets()).plaintext;
         return { keyPrefix: keyRecord.key_prefix, fullKey };
       } catch {
         return { keyPrefix: keyRecord.key_prefix };

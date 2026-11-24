@@ -1,3 +1,4 @@
+import type { AgentScope } from './analytics-scope.service';
 import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, SelectQueryBuilder } from 'typeorm';
@@ -7,6 +8,7 @@ import {
   MetricWithTrend,
   computeTrend,
   addTenantFilter,
+  sqlAgentScope,
   excludePlaygroundAgents,
   excludeDirectAttempts,
   sqlExcludeDirectRequests,
@@ -19,6 +21,7 @@ import {
 } from './query-helpers';
 import { computeCutoff, sqlSanitizeCost } from '../../common/utils/postgres-sql';
 import { ManifestRequest } from '../../entities/request.entity';
+import { AgentUsageDailyService } from './agent-usage-daily.service';
 
 export { MetricWithTrend };
 
@@ -35,16 +38,18 @@ export class AggregationService {
     @Optional()
     @InjectRepository(ManifestRequest)
     private readonly requestRepo?: Repository<ManifestRequest>,
+    @Optional()
+    private readonly agentUsageDaily?: AgentUsageDailyService,
   ) {}
 
   async hasAnyData(
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
     excludePlayground = false,
     excludeDirect = false,
   ): Promise<boolean> {
     const attemptQb = this.turnRepo.createQueryBuilder('at').select('1').limit(1);
-    addTenantFilter(attemptQb, tenantId, agentName);
+    addTenantFilter(attemptQb, tenantId, agentScope);
     // Mirror the overview's exclusion: a tenant whose only traffic is Playground
     // must read as empty, or has_data=true paints a non-empty state over cards
     // and charts that all dropped Playground and so render blank.
@@ -56,19 +61,7 @@ export class AggregationService {
     let requestRow: Promise<unknown> = Promise.resolve(null);
     if (this.requestRepo) {
       const requestQb = this.requestRepo.createQueryBuilder('r').select('1').limit(1);
-      if (tenantId)
-        requestQb.where('r.tenant_id = :requestTenantId', { requestTenantId: tenantId });
-      else requestQb.where('1 = 0');
-      if (agentName && tenantId) {
-        requestQb.andWhere(
-          `r.agent_id = (
-            SELECT id FROM agents
-            WHERE tenant_id = :requestTenantId AND name = :requestAgentName AND deleted_at IS NULL
-            LIMIT 1
-          )`,
-          { requestAgentName: agentName },
-        );
-      }
+      addTenantFilter(requestQb, tenantId, agentScope, 'r');
       if (excludePlayground) requestQb.andWhere(sqlExcludePlayground('r'));
       if (excludeDirect) requestQb.andWhere(sqlExcludeDirectRequests('r'));
       requestRow = requestQb.getRawOne();
@@ -81,10 +74,10 @@ export class AggregationService {
   async getPreviousTokenTotal(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<number> {
     const { cutoff, prevCutoff } = this.computeWindow(range);
-    const row = await this.buildPreviousWindowQuery(tenantId, agentName, cutoff, prevCutoff)
+    const row = await this.buildPreviousWindowQuery(tenantId, agentScope, cutoff, prevCutoff)
       .select('COALESCE(SUM(at.input_tokens + at.output_tokens), 0)', 'total')
       .getRawOne();
     return Number(row?.total ?? 0);
@@ -93,11 +86,11 @@ export class AggregationService {
   async getPreviousCostTotal(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<number> {
     const { cutoff, prevCutoff } = this.computeWindow(range);
     const safeCost = sqlSanitizeCost('at.cost_usd');
-    const row = await this.buildPreviousWindowQuery(tenantId, agentName, cutoff, prevCutoff)
+    const row = await this.buildPreviousWindowQuery(tenantId, agentScope, cutoff, prevCutoff)
       .select(`COALESCE(SUM(${safeCost}), 0)`, 'total')
       .getRawOne();
     return Number(row?.total ?? 0);
@@ -106,7 +99,7 @@ export class AggregationService {
   async getSummaryMetrics(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
     authType?: string,
     provider?: string,
     excludePlayground = false,
@@ -123,7 +116,7 @@ export class AggregationService {
       .addSelect('COALESCE(SUM(at.output_tokens), 0)', 'out')
       .addSelect(`COALESCE(SUM(${safeCost}), 0)`, 'cost')
       .where('at.timestamp >= :cutoff', { cutoff });
-    addTenantFilter(currentQb, tenantId, agentName);
+    addTenantFilter(currentQb, tenantId, agentScope);
     if (authType) currentQb.andWhere('at.auth_type = :authType', { authType });
     if (provider) currentQb.andWhere('at.provider = :provider', { provider });
     if (excludePlayground) excludePlaygroundAgents(currentQb);
@@ -131,7 +124,7 @@ export class AggregationService {
 
     const prevQb = this.buildPreviousWindowQuery(
       tenantId,
-      agentName,
+      agentScope,
       cutoff,
       prevCutoff,
       authType,
@@ -181,15 +174,36 @@ export class AggregationService {
   async getPreviousWindowMetrics(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
     excludePlayground = false,
     excludeDirect = false,
   ): Promise<{ tokens: number; cost: number; messages: number }> {
+    if (
+      excludePlayground &&
+      this.agentUsageDaily?.supportsRange(tenantId, range) &&
+      tenantId !== null
+    ) {
+      const rows = await this.agentUsageDaily.getRangeRows(tenantId, range, {
+        agentScope,
+        previous: true,
+        excludeDirect,
+      });
+      return rows.reduce(
+        (totals, row) => {
+          totals.tokens += Number(row.input_tokens) + Number(row.output_tokens);
+          totals.cost += Number(row.cost_usd);
+          totals.messages += Number(row.request_count);
+          return totals;
+        },
+        { tokens: 0, cost: 0, messages: 0 },
+      );
+    }
+
     const { cutoff, prevCutoff } = this.computeWindow(range);
     const safeCost = sqlSanitizeCost('at.cost_usd');
     const prev = await this.buildPreviousWindowQuery(
       tenantId,
-      agentName,
+      agentScope,
       cutoff,
       prevCutoff,
       undefined,
@@ -214,7 +228,7 @@ export class AggregationService {
   async getRequestReliability(
     range: string,
     tenantId: string | null,
-    agentName?: string,
+    agentScope?: AgentScope,
     excludePlayground = false,
     excludeDirect = false,
   ): Promise<{
@@ -238,21 +252,9 @@ export class AggregationService {
       };
     }
     const { cutoff, prevCutoff } = this.computeWindow(range);
-    const agentPredicate = agentName
-      ? `AND r.agent_id = (
-          SELECT id FROM agents
-          WHERE tenant_id = $1 AND name = $4 AND deleted_at IS NULL
-          LIMIT 1
-        )`
-      : '';
+    const agentPredicate = sqlAgentScope('r', '$4', agentScope);
     const playgroundPredicate = excludePlayground ? `AND ${sqlExcludePlayground('r')}` : '';
-    const unlinkedAgentPredicate = agentName
-      ? `AND pa.agent_id = (
-          SELECT id FROM agents
-          WHERE tenant_id = $1 AND name = $4 AND deleted_at IS NULL
-          LIMIT 1
-        )`
-      : '';
+    const unlinkedAgentPredicate = sqlAgentScope('pa', '$4', agentScope);
     const unlinkedPlaygroundPredicate = excludePlayground
       ? `AND ${sqlExcludePlayground('pa')}`
       : '';
@@ -264,8 +266,8 @@ export class AggregationService {
     const unlinkedDirectPredicate = excludeDirect
       ? `AND pa.routing_reason IS DISTINCT FROM 'direct'`
       : '';
-    const queryParams = agentName
-      ? [tenantId, prevCutoff, cutoff, agentName]
+    const queryParams = agentScope
+      ? [tenantId, prevCutoff, cutoff, agentScope.agentId]
       : [tenantId, prevCutoff, cutoff];
     const rows = (await this.turnRepo.query(
       `WITH scoped_requests AS (
@@ -381,7 +383,7 @@ export class AggregationService {
 
   private buildPreviousWindowQuery(
     tenantId: string | null,
-    agentName: string | undefined,
+    agentScope: AgentScope | undefined,
     cutoff: string,
     prevCutoff: string,
     authType?: string,
@@ -395,7 +397,7 @@ export class AggregationService {
       .createQueryBuilder('at')
       .where('at.timestamp >= :prevCutoff', { prevCutoff })
       .andWhere('at.timestamp < :cutoff', { cutoff });
-    addTenantFilter(qb, tenantId, agentName);
+    addTenantFilter(qb, tenantId, agentScope);
     if (authType) qb.andWhere('at.auth_type = :authType', { authType });
     if (provider) qb.andWhere('at.provider = :provider', { provider });
     if (excludePlayground) excludePlaygroundAgents(qb);

@@ -119,7 +119,9 @@ describe(`Provider Attempt recording E2E (${expectedBackend})`, () => {
     expect(metadataTables).toHaveLength(0);
 
     const objectBytes = await storage.get(jsonRecording.recording_key);
-    expect([...objectBytes.subarray(0, 2)]).toEqual([0x1f, 0x8b]);
+    // Encrypted envelope, not gzip: the on-disk object must not expose the exchange.
+    expect(objectBytes.subarray(0, 4).toString('ascii')).toBe('MRE1');
+    expect(objectBytes.includes(Buffer.from(largeTail, 'utf8'))).toBe(false);
     await expect(decodeRequestRecording(objectBytes)).resolves.toEqual({
       version: 1,
       wire_format: 'openai_chat_completions',
@@ -170,6 +172,36 @@ describe(`Provider Attempt recording E2E (${expectedBackend})`, () => {
     );
     expect(attempt.recording.response_body.raw_sse).toBe(response.text);
   }, 15_000);
+
+  it('stores no inline image bytes while still forwarding them to the provider', async () => {
+    const base64 = 'A'.repeat(4096);
+    const known = new Set([jsonRecording.recording_key, streamRecording.recording_key]);
+
+    await agentAuth(api().post('/v1/chat/completions'))
+      .send({
+        model: modelKey(),
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'describe this screenshot' },
+              { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+            ],
+          },
+        ],
+        stream: false,
+      })
+      .expect(200);
+
+    const imageRecording = await waitForRecordingOutside(known);
+    const stored = JSON.stringify(
+      await decodeRequestRecording(await storage.get(imageRecording.recording_key)),
+    );
+    expect(stored).not.toContain(base64);
+    expect(stored).toContain('[inline image: image/png,');
+    expect(stored).toContain('describe this screenshot');
+    expect(JSON.stringify(providerRequestBodies.at(-1))).toContain(base64);
+  });
 
   it('does not expose a recording across tenant boundaries', async () => {
     const timestamp = new Date().toISOString();
@@ -266,20 +298,23 @@ describe(`Provider Attempt recording E2E (${expectedBackend})`, () => {
     await expect(storage.get(jsonRecording.recording_key)).resolves.toBeInstanceOf(Buffer);
   });
 
-  it('retention removes the object before clearing its attempt pointer and preserves the parent Request', async () => {
-    await dataSource.query(
-      `UPDATE agent_messages
-       SET timestamp = CURRENT_TIMESTAMP - INTERVAL '10 days'
-       WHERE id = $1`,
+  it('Manifest Cloud keeps an expired recording even with a retention window set', async () => {
+    await backdateJsonRecording();
+    const retention = retentionService('cloud');
+
+    await expect(retention.deleteExpiredRecordings()).resolves.toBe(0);
+
+    const metadata = await dataSource.query(
+      `SELECT recording_key FROM agent_messages WHERE id = $1`,
       [jsonRecording.attempt_id],
     );
-    const retention = new RequestRecordingRetentionService(
-      dataSource,
-      {
-        get: (key: string) => (key === 'app.requestRecordingRetentionDays' ? 1 : undefined),
-      } as ConfigService,
-      storage,
-    );
+    expect(metadata).toEqual([{ recording_key: jsonRecording.recording_key }]);
+    await expect(storage.get(jsonRecording.recording_key)).resolves.toBeInstanceOf(Buffer);
+  });
+
+  it('self-hosted retention removes the object before clearing its attempt pointer and preserves the parent Request', async () => {
+    await backdateJsonRecording();
+    const retention = retentionService('selfhosted');
 
     await expect(retention.deleteExpiredRecordings()).resolves.toBe(1);
 
@@ -299,6 +334,33 @@ describe(`Provider Attempt recording E2E (${expectedBackend})`, () => {
 function refreshAppReferences(): void {
   dataSource = app.get(DataSource);
   storage = app.get(RequestRecordingStorageService);
+}
+
+async function backdateJsonRecording(): Promise<void> {
+  await dataSource.query(
+    `UPDATE agent_messages
+     SET timestamp = CURRENT_TIMESTAMP - INTERVAL '10 days'
+     WHERE id = $1`,
+    [jsonRecording.attempt_id],
+  );
+}
+
+/** Builds the retention job as a one-day window would in the given deployment mode. */
+function retentionService(mode: 'cloud' | 'selfhosted'): RequestRecordingRetentionService {
+  const previousMode = process.env['MANIFEST_MODE'];
+  process.env['MANIFEST_MODE'] = mode;
+  try {
+    return new RequestRecordingRetentionService(
+      dataSource,
+      {
+        get: (key: string) => (key === 'app.requestRecordingRetentionDays' ? 1 : undefined),
+      } as ConfigService,
+      storage,
+    );
+  } finally {
+    if (previousMode === undefined) delete process.env['MANIFEST_MODE'];
+    else process.env['MANIFEST_MODE'] = previousMode;
+  }
 }
 
 async function configureRecordingAgent(): Promise<void> {
@@ -368,6 +430,26 @@ async function waitForLatestRecording(
   throw new Error(
     `Timed out waiting for a Provider Attempt recording: ${JSON.stringify(attempts)}`,
   );
+}
+
+async function waitForRecordingOutside(
+  knownKeys: Set<string>,
+  timeoutMs = 5_000,
+): Promise<AttemptRecordingPointer> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const rows = (await dataSource.query(
+      `SELECT id AS attempt_id, request_id, recording_key
+       FROM agent_messages
+       WHERE recording_key IS NOT NULL
+       ORDER BY timestamp DESC, id DESC
+       LIMIT 5`,
+    )) as AttemptRecordingPointer[];
+    const fresh = rows.find((row) => !knownKeys.has(row.recording_key));
+    if (fresh) return fresh;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error('Timed out waiting for the inline-image Provider Attempt recording');
 }
 
 async function waitForStorageObject(recording: AttemptRecordingPointer): Promise<void> {

@@ -2,7 +2,6 @@ import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { Agent } from '../../../entities/agent.entity';
-import { Tenant } from '../../../entities/tenant.entity';
 import type { ForwardResult } from '../../proxy/provider-client';
 import { AutofixService, type MaybeHealParams } from '../autofix.service';
 import { HealContractError, type HealingClient } from '../healing-client';
@@ -25,14 +24,15 @@ function makeForward(body: string, status: number): ForwardResult {
 }
 
 type HealingClientMock = {
-  heal: jest.Mock<Promise<HealResponse>, [unknown]>;
+  heal: jest.Mock<Promise<HealResponse>, [unknown, unknown?]>;
   reportOutcome: jest.Mock;
 };
 
 function makeHealingClient(): HealingClientMock {
   return {
     heal: jest.fn(),
-    reportOutcome: jest.fn().mockResolvedValue(null),
+    // A landed report (null means "didn't reach Phoenix" and triggers resends).
+    reportOutcome: jest.fn().mockResolvedValue({ healAttemptId: 'heal-1', status: 'succeeded' }),
   };
 }
 
@@ -51,33 +51,14 @@ function makeAgentRepo(findOneImpl?: () => unknown): {
   return { repo: { findOne } as unknown as Repository<Agent>, findOne };
 }
 
-/**
- * Tenant repo mock for the early-access gate. Default: the tenant is explicitly
- * GRANTED (`autofix_access_granted_at` set), which unlocks Auto-fix in every
- * rollout phase — so the heal-path tests below proceed regardless of phase.
- * Override to deny, e.g. `() => ({ autofix_access_granted_at: null, autofix_waitlist_at: null })`.
- */
-function makeTenantRepo(findOneImpl?: () => unknown): {
-  repo: Repository<Tenant>;
-  findOne: jest.Mock;
-} {
-  const findOne = jest.fn(
-    findOneImpl ??
-      (() => ({ autofix_access_granted_at: '2026-01-01T00:00:00Z', autofix_waitlist_at: null })),
-  );
-  return { repo: { findOne } as unknown as Repository<Tenant>, findOne };
-}
-
 function makeService(opts: {
   client?: HealingClient;
   repo?: Repository<Agent>;
-  tenantRepo?: Repository<Tenant>;
   config?: ConfigService;
 }): AutofixService {
   return new AutofixService(
     opts.client ?? (makeHealingClient() as unknown as HealingClient),
     opts.repo ?? makeAgentRepo().repo,
-    opts.tenantRepo ?? makeTenantRepo().repo,
     opts.config ?? makeConfig(),
   );
 }
@@ -132,9 +113,6 @@ function reforwardMock(
     Promise.resolve(makeForward(body, status)),
   );
 }
-
-/** Yield to the microtask queue so fire-and-forget `.catch` handlers run. */
-const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
 
 // ---------------------------------------------------------------------------
 
@@ -281,153 +259,6 @@ describe('AutofixService', () => {
       expect(service.isRepairable(422)).toBe(true);
     });
   });
-
-  // -------------------------------------------------------------------------
-  // hasAccess — three-phase rollout gate (AUTOFIX_ROLLOUT)
-  // -------------------------------------------------------------------------
-  const granted = (over: Record<string, unknown> = {}) => ({
-    autofix_access_granted_at: '2026-02-01',
-    autofix_waitlist_at: null,
-    ...over,
-  });
-  const joinedOnly = () => ({ autofix_access_granted_at: null, autofix_waitlist_at: '2026-02-01' });
-  const neither = () => ({ autofix_access_granted_at: null, autofix_waitlist_at: null });
-
-  describe('hasAccess three-phase gate', () => {
-    it('everyone phase: grants any tenant with no DB read', async () => {
-      const { repo: tenantRepo, findOne } = makeTenantRepo(neither);
-      const service = makeService({
-        tenantRepo,
-        config: makeConfig({ AUTOFIX_ROLLOUT: 'everyone' }),
-      });
-      expect(await service.hasAccess('t1')).toBe(true);
-      expect(findOne).not.toHaveBeenCalled();
-    });
-
-    it('denies a null tenant (no context) in every phase', async () => {
-      const service = makeService({ config: makeConfig({ AUTOFIX_ROLLOUT: 'everyone' }) });
-      expect(await service.hasAccess(null)).toBe(false);
-    });
-
-    // Phase 1 — selected (default)
-    it('selected phase: grants a hand-picked (granted) tenant', async () => {
-      const service = makeService({ tenantRepo: makeTenantRepo(granted).repo });
-      expect(await service.hasAccess('t1')).toBe(true);
-    });
-
-    it('selected phase: denies a tenant that only joined the waitlist', async () => {
-      const service = makeService({ tenantRepo: makeTenantRepo(joinedOnly).repo });
-      expect(await service.hasAccess('t1')).toBe(false);
-    });
-
-    it('selected phase: denies a tenant with neither grant nor waitlist', async () => {
-      const service = makeService({ tenantRepo: makeTenantRepo(neither).repo });
-      expect(await service.hasAccess('t1')).toBe(false);
-    });
-
-    it('selected phase: denies an unknown tenant row', async () => {
-      const service = makeService({ tenantRepo: makeTenantRepo(() => null).repo });
-      expect(await service.hasAccess('t1')).toBe(false);
-    });
-
-    // Phase 2 — waitlist
-    it('waitlist phase: grants a tenant that joined the waitlist', async () => {
-      const service = makeService({
-        tenantRepo: makeTenantRepo(joinedOnly).repo,
-        config: makeConfig({ AUTOFIX_ROLLOUT: 'waitlist' }),
-      });
-      expect(await service.hasAccess('t1')).toBe(true);
-    });
-
-    it('waitlist phase: still grants a hand-picked tenant that never joined', async () => {
-      const service = makeService({
-        tenantRepo: makeTenantRepo(granted).repo,
-        config: makeConfig({ AUTOFIX_ROLLOUT: 'waitlist' }),
-      });
-      expect(await service.hasAccess('t1')).toBe(true);
-    });
-
-    it('waitlist phase: denies a tenant with neither', async () => {
-      const service = makeService({
-        tenantRepo: makeTenantRepo(neither).repo,
-        config: makeConfig({ AUTOFIX_ROLLOUT: 'waitlist' }),
-      });
-      expect(await service.hasAccess('t1')).toBe(false);
-    });
-
-    it('treats an unknown AUTOFIX_ROLLOUT value as the default "selected" phase', async () => {
-      // Invalid → parseRollout falls back to `selected`, so waitlist alone is denied.
-      const service = makeService({
-        tenantRepo: makeTenantRepo(joinedOnly).repo,
-        config: makeConfig({ AUTOFIX_ROLLOUT: 'bogus' }),
-      });
-      expect(await service.hasAccess('t1')).toBe(false);
-    });
-
-    it('caches the decision; invalidateAccess forces a fresh read', async () => {
-      const { repo: tenantRepo, findOne } = makeTenantRepo(granted);
-      const service = makeService({ tenantRepo });
-      expect(await service.hasAccess('t1')).toBe(true);
-      expect(await service.hasAccess('t1')).toBe(true);
-      expect(findOne).toHaveBeenCalledTimes(1);
-      service.invalidateAccess('t1');
-      expect(await service.hasAccess('t1')).toBe(true);
-      expect(findOne).toHaveBeenCalledTimes(2);
-    });
-
-    it('re-reads when the cached decision has expired', async () => {
-      const { repo: tenantRepo, findOne } = makeTenantRepo(granted);
-      const service = makeService({ tenantRepo });
-      const cache = (
-        service as unknown as { accessCache: Map<string, { value: boolean; expiresAt: number }> }
-      ).accessCache;
-      cache.set('t1', { value: false, expiresAt: Date.now() - 1 }); // already expired
-      expect(await service.hasAccess('t1')).toBe(true);
-      expect(findOne).toHaveBeenCalledTimes(1);
-    });
-
-    it('clears the access cache once it reaches the bound', async () => {
-      const service = makeService({ tenantRepo: makeTenantRepo(granted).repo });
-      const cache = (service as unknown as { accessCache: Map<string, unknown> }).accessCache;
-      for (let i = 0; i < 5000; i += 1) {
-        cache.set(`filler-${i}`, { value: true, expiresAt: Date.now() + 30_000 });
-      }
-      expect(cache.size).toBe(5000);
-      await service.hasAccess('fresh-tenant');
-      expect(cache.size).toBe(1);
-      expect(cache.has('fresh-tenant')).toBe(true);
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // maybeHeal — early-access gate (no heal for non-access tenants)
-  // -------------------------------------------------------------------------
-  describe('maybeHeal early-access gate', () => {
-    it('returns null (never calls Phoenix) when the tenant lacks access', async () => {
-      const client = makeHealingClient();
-      const { repo } = makeAgentRepo(() => ({ autofix_enabled: true }));
-      const { repo: tenantRepo } = makeTenantRepo(neither);
-      const service = makeService({ client: client as unknown as HealingClient, repo, tenantRepo });
-
-      const result = await service.maybeHeal(makeParams({}));
-
-      expect(result).toBeNull();
-      expect(client.heal).not.toHaveBeenCalled();
-    });
-
-    it('degrades to null (does not throw) when the access check rejects', async () => {
-      const { repo } = makeAgentRepo(() => ({ autofix_enabled: true }));
-      const { repo: tenantRepo } = makeTenantRepo(() => {
-        throw new Error('tenant db down');
-      });
-      // Silence the expected "autofix gate load failed" warning.
-      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-      const service = makeService({ repo, tenantRepo });
-
-      await expect(service.maybeHeal(makeParams({}))).resolves.toBeNull();
-    });
-  });
-
   // -------------------------------------------------------------------------
   // maybeHeal — hot-path no-ops (no config load, no body read)
   // -------------------------------------------------------------------------
@@ -482,6 +313,50 @@ describe('AutofixService', () => {
       expect(result).toBeNull();
       expect(findOne).not.toHaveBeenCalled();
     });
+
+    it('does not send Anthropic subscription extra-usage exhaustion to Phoenix', async () => {
+      const client = makeHealingClient();
+      const { repo, findOne } = makeAgentRepo(() => ({ autofix_enabled: true }));
+      const service = makeService({ client: client as unknown as HealingClient, repo });
+      const forward = makeForward(
+        JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'invalid_request_error',
+            message: 'You are out of extra usage. Add more at claude.ai to keep going.',
+          },
+        }),
+        400,
+      );
+
+      const result = await service.maybeHeal(makeParams({ forward, provider: 'anthropic' }));
+
+      expect(result).toBeNull();
+      expect(client.heal).not.toHaveBeenCalled();
+      expect(findOne).not.toHaveBeenCalled();
+      expect(forward.response.status).toBe(400);
+      expect(forward.response.bodyUsed).toBe(false);
+    });
+
+    it('keeps status-based healing when Anthropic billing inspection fails', async () => {
+      const client = makeHealingClient();
+      client.heal.mockResolvedValue({ status: 'no_patch', issueId: 'issue-1' });
+      const { repo } = makeAgentRepo(() => ({ autofix_enabled: true }));
+      const service = makeService({ client: client as unknown as HealingClient, repo });
+      const forward = makeForward('{"error":{"message":"boom"}}', 400);
+      jest.spyOn(forward.response, 'clone').mockImplementation(() => {
+        throw new Error('clone failed');
+      });
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+
+      const result = await service.maybeHeal(makeParams({ forward, provider: 'anthropic' }));
+
+      expect(result?.record.outcome).toBe('unfixable');
+      expect(client.heal).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(
+        'could not inspect Anthropic 400 for billing semantics: clone failed',
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -518,7 +393,7 @@ describe('AutofixService', () => {
       // real-DB regression in test/autofix-null-flag.e2e-spec.ts.
       expect(findOne).toHaveBeenCalledWith({
         where: { id: 'a-9', tenant_id: 't-9' },
-        select: ['id', 'autofix_enabled'],
+        select: ['id', 'autofix_enabled', 'agent_platform'],
       });
     });
   });
@@ -527,7 +402,7 @@ describe('AutofixService', () => {
   // maybeHeal — happy heal on the single attempt
   // -------------------------------------------------------------------------
   describe('maybeHeal happy path', () => {
-    it('finishes the original Provider Attempt before Auto-fix consumes its response', async () => {
+    it('finishes the original Provider Attempt before Autofix consumes its response', async () => {
       const client = makeHealingClient();
       client.heal.mockResolvedValue({ status: 'no_patch', issueId: 'issue-recording' });
       const finishRecording = jest.fn().mockResolvedValue(undefined);
@@ -568,7 +443,7 @@ describe('AutofixService', () => {
 
       const result = await service.maybeHeal(makeParams({ forward }));
 
-      expect(client.heal).toHaveBeenCalledWith(
+      expect(client.heal.mock.calls[0][0]).toEqual(
         expect.objectContaining({
           providerExchange: {
             format: 'anthropic_messages',
@@ -601,7 +476,7 @@ describe('AutofixService', () => {
 
       await service.maybeHeal(makeParams({ forward }));
 
-      expect(client.heal).toHaveBeenCalledWith(
+      expect(client.heal.mock.calls[0][0]).toEqual(
         expect.objectContaining({
           providerExchange: {
             format: 'anthropic_messages',
@@ -613,6 +488,34 @@ describe('AutofixService', () => {
           },
         }),
       );
+    });
+
+    it('coerces the cached agent platform into the Phoenix harness context', async () => {
+      const client = makeHealingClient();
+      client.heal.mockResolvedValue({ status: 'no_patch', issueId: 'issue-1' });
+      const { repo } = makeAgentRepo(() => ({
+        autofix_enabled: true,
+        agent_platform: 'claude-code',
+      }));
+      const service = makeService({ client: client as unknown as HealingClient, repo });
+
+      await service.maybeHeal(makeParams({}));
+
+      expect(client.heal.mock.calls[0][1]).toEqual({ harness: 'claude-code' });
+    });
+
+    it('never sends an unknown persisted platform value to Phoenix', async () => {
+      const client = makeHealingClient();
+      client.heal.mockResolvedValue({ status: 'no_patch', issueId: 'issue-1' });
+      const { repo } = makeAgentRepo(() => ({
+        autofix_enabled: true,
+        agent_platform: 'customer-specific-name',
+      }));
+      const service = makeService({ client: client as unknown as HealingClient, repo });
+
+      await service.maybeHeal(makeParams({}));
+
+      expect(client.heal.mock.calls[0][1]).toEqual({ harness: 'other' });
     });
 
     it('heals on the patched retry, reports the cleared retry, and records the chain', async () => {
@@ -640,7 +543,11 @@ describe('AutofixService', () => {
 
       // reportOutcome called once with the cleared 2xx retry status and no error.
       expect(client.reportOutcome).toHaveBeenCalledTimes(1);
-      expect(client.reportOutcome).toHaveBeenCalledWith('heal-1', { retryStatusCode: 200 });
+      expect(client.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        { retryStatusCode: 200 },
+        { harness: 'other' },
+      );
       // The success report carries no `error` key.
       expect(client.reportOutcome.mock.calls[0][1]).not.toHaveProperty('error');
 
@@ -778,7 +685,7 @@ describe('AutofixService', () => {
         }),
       );
 
-      expect(client.heal).toHaveBeenCalledWith(
+      expect(client.heal.mock.calls[0][0]).toEqual(
         expect.objectContaining({
           model: 'gemini-2.5-flash',
           request: requestBody,
@@ -894,7 +801,7 @@ describe('AutofixService', () => {
     it('preserves a failed patched retry as the terminal exhausted attempt', async () => {
       const client = makeHealingClient();
       client.heal.mockResolvedValue(patchedHeal());
-      // The patched retry still fails with a repairable 400 — Auto-fix does NOT
+      // The patched retry still fails with a repairable 400 — Autofix does NOT
       // re-heal; it reports and returns the retry as the terminal attempt.
       const reforward = reforwardMock('{"error":{"message":"still-broken","code":"dup"}}', 400);
       const { repo } = makeAgentRepo(() => ({ autofix_enabled: true }));
@@ -911,10 +818,14 @@ describe('AutofixService', () => {
       expect(reforward).toHaveBeenCalledTimes(1);
       // The single failed retry is reported to Phoenix with its status + error.
       expect(client.reportOutcome).toHaveBeenCalledTimes(1);
-      expect(client.reportOutcome).toHaveBeenCalledWith('heal-1', {
-        retryStatusCode: 400,
-        error: { message: 'still-broken', type: null, param: null, code: 'dup' },
-      });
+      expect(client.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        {
+          retryStatusCode: 400,
+          error: { message: 'still-broken', type: null, param: null, code: 'dup' },
+        },
+        { harness: 'other' },
+      );
 
       // The original is linked to the distinct failed retry that Phoenix produced.
       expect(result!.record.chain).toHaveLength(2);
@@ -1106,23 +1017,79 @@ describe('AutofixService', () => {
   // reportOutcome — fire-and-forget error handling
   // -------------------------------------------------------------------------
   describe('reportOutcome fire-and-forget', () => {
-    it('does not throw out of maybeHeal when reportOutcome rejects', async () => {
+    afterEach(() => {
+      jest.useRealTimers();
+    });
+
+    it('does not throw out of maybeHeal when reportOutcome rejects, and resends', async () => {
+      jest.useFakeTimers();
       const client = makeHealingClient();
       client.heal.mockResolvedValue(patchedHeal());
       client.reportOutcome.mockRejectedValueOnce(new Error('report exploded'));
       const reforward = jest.fn().mockResolvedValue(makeForward('{"ok":true}', 200));
       const { repo } = makeAgentRepo(() => ({ autofix_enabled: true }));
-      // Silence the expected "reportOutcome ... failed" warning from the .catch handler.
+      // Silence the expected "reportOutcome ... failed" warning from the catch.
       jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
       const service = makeService({ client: client as unknown as HealingClient, repo });
 
-      // Should resolve normally (the .catch handles the rejection).
+      // Should resolve normally (the delivery loop handles the rejection).
       const result = await service.maybeHeal(makeParams({ reforward }));
       expect(result!.record.outcome).toBe('healed');
 
-      // Let the fire-and-forget .catch run; must not surface as an unhandled rejection.
-      await flushMicrotasks();
-      expect(client.reportOutcome).toHaveBeenCalledWith('heal-1', { retryStatusCode: 200 });
+      // Let the fire-and-forget catch run; must not surface as an unhandled rejection.
+      await jest.advanceTimersByTimeAsync(0);
+      expect(client.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        { retryStatusCode: 200 },
+        { harness: 'other' },
+      );
+
+      // The rejected send is retried after the first resend delay and lands.
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(client.reportOutcome).toHaveBeenCalledTimes(2);
+    });
+
+    it('resends a report the healer dropped, then stops once it lands', async () => {
+      jest.useFakeTimers();
+      const client = makeHealingClient();
+      client.heal.mockResolvedValue(patchedHeal());
+      // null = the PATCH did not land (transport failure or non-2xx).
+      client.reportOutcome
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ healAttemptId: 'heal-1', status: 'succeeded' });
+      const reforward = jest.fn().mockResolvedValue(makeForward('{"ok":true}', 200));
+      const { repo } = makeAgentRepo(() => ({ autofix_enabled: true }));
+      const service = makeService({ client: client as unknown as HealingClient, repo });
+
+      await service.maybeHeal(makeParams({ reforward }));
+      expect(client.reportOutcome).toHaveBeenCalledTimes(1);
+
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(client.reportOutcome).toHaveBeenCalledTimes(2);
+
+      // Landed on the second send — the schedule stops, no further resends.
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(client.reportOutcome).toHaveBeenCalledTimes(2);
+    });
+
+    it('gives up once the resend schedule is exhausted', async () => {
+      jest.useFakeTimers();
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const client = makeHealingClient();
+      client.heal.mockResolvedValue(patchedHeal());
+      client.reportOutcome.mockResolvedValue(null);
+      const reforward = jest.fn().mockResolvedValue(makeForward('{"ok":true}', 200));
+      const { repo } = makeAgentRepo(() => ({ autofix_enabled: true }));
+      const service = makeService({ client: client as unknown as HealingClient, repo });
+
+      await service.maybeHeal(makeParams({ reforward }));
+      await jest.advanceTimersByTimeAsync(1_000);
+      await jest.advanceTimersByTimeAsync(5_000);
+      await jest.advanceTimersByTimeAsync(60_000);
+
+      // Initial send + one resend per schedule slot, then a loud give-up.
+      expect(client.reportOutcome).toHaveBeenCalledTimes(3);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('giving up after 3 sends'));
     });
   });
 
@@ -1167,8 +1134,20 @@ describe('AutofixService', () => {
       expect(result!.record.chain[0].patch_worked).toBe(false);
       expect(typeof result!.record.groupId).toBe('string');
 
-      // A reforward (provider) failure is not a Phoenix failure — no outcome report.
-      expect(client.reportOutcome).not.toHaveBeenCalled();
+      // The evidence loop still closes: a dead retry has no provider status to
+      // send, so the death is reported as a synthetic 499 — otherwise the served
+      // attempt dangles `pending` until Phoenix's sweeper expires it.
+      expect(client.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        {
+          retryStatusCode: 499,
+          error: {
+            message: 'patched retry never completed: socket hang up',
+            type: 'retry_not_completed',
+          },
+        },
+        { harness: 'other' },
+      );
 
       // The returned forward is the rebuilt original — still readable downstream.
       expect(result!.forward.response.status).toBe(400);
@@ -1204,94 +1183,78 @@ describe('AutofixService', () => {
   });
 
   // -------------------------------------------------------------------------
-  // maybeHeal — per-agent config cache (M4)
+  // maybeHeal — per-agent config freshness
   // -------------------------------------------------------------------------
-  describe('maybeHeal config cache', () => {
-    it('caches the per-agent config so a second heal for the same agent skips the DB read', async () => {
+  describe('maybeHeal config freshness', () => {
+    it('observes toggles made by another replica without local invalidation', async () => {
       const client = makeHealingClient();
-      // Each maybeHeal needs a fresh failing forward; keep them from healing so
-      // the flow is simple — no_patch returns quickly without a reforward.
       client.heal.mockResolvedValue({ status: 'no_patch', issueId: 'issue-x' });
-      const { repo, findOne } = makeAgentRepo(() => ({ autofix_enabled: true }));
+      let enabled = false;
+      const { repo, findOne } = makeAgentRepo(() => ({ autofix_enabled: enabled }));
       const service = makeService({ client: client as unknown as HealingClient, repo });
 
-      // First heal: cold cache → one DB read.
+      // This replica first observes the agent as disabled.
       await service.maybeHeal(
         makeParams({ forward: makeForward('{"error":{"message":"a"}}', 400) }),
       );
       expect(findOne).toHaveBeenCalledTimes(1);
+      expect(client.heal).not.toHaveBeenCalled();
 
-      // Second heal for the SAME agent/tenant: warm cache → no additional read.
+      // Another replica enables the agent. The next failure must read the new
+      // value immediately instead of reusing this replica's previous value.
+      enabled = true;
       await service.maybeHeal(
         makeParams({ forward: makeForward('{"error":{"message":"b"}}', 400) }),
       );
-      expect(findOne).toHaveBeenCalledTimes(1);
+      expect(findOne).toHaveBeenCalledTimes(2);
+      expect(client.heal).toHaveBeenCalledTimes(1);
 
-      // Invalidating the entry forces the next heal to hit the DB again.
-      service.invalidateConfig('tenant-1', 'agent-1');
+      // Disabling is equally immediate because this flag controls consent to
+      // send the request body to Phoenix.
+      enabled = false;
       await service.maybeHeal(
         makeParams({ forward: makeForward('{"error":{"message":"c"}}', 400) }),
       );
-      expect(findOne).toHaveBeenCalledTimes(2);
+      expect(findOne).toHaveBeenCalledTimes(3);
+      expect(client.heal).toHaveBeenCalledTimes(1);
     });
 
-    it('caches per (tenant, agent) key so a different agent still reads the DB', async () => {
-      const client = makeHealingClient();
-      client.heal.mockResolvedValue({ status: 'no_patch', issueId: 'issue-x' });
-      const { repo, findOne } = makeAgentRepo(() => ({ autofix_enabled: true }));
-      const service = makeService({ client: client as unknown as HealingClient, repo });
-
-      await service.maybeHeal(
-        makeParams({
-          agentId: 'agent-A',
-          forward: makeForward('{"error":{"message":"a"}}', 400),
-        }),
+    it('queues a fresh shared consent read for requests that arrive during an older read', async () => {
+      const resolveLoads: Array<(agent: Partial<Agent>) => void> = [];
+      const findOne = jest.fn(
+        () =>
+          new Promise<Partial<Agent>>((resolve) => {
+            resolveLoads.push(resolve);
+          }),
       );
-      // Different agent under the same tenant is a distinct cache key → new read.
-      await service.maybeHeal(
-        makeParams({
-          agentId: 'agent-B',
-          forward: makeForward('{"error":{"message":"b"}}', 400),
-        }),
-      );
-      expect(findOne).toHaveBeenCalledTimes(2);
-    });
+      const service = makeService({
+        repo: { findOne } as unknown as Repository<Agent>,
+      });
 
-    it('clears the whole cache once it reaches the bound, then re-populates', async () => {
-      const client = makeHealingClient();
-      client.heal.mockResolvedValue({ status: 'no_patch', issueId: 'issue-x' });
-      const { repo, findOne } = makeAgentRepo(() => ({ autofix_enabled: true }));
-      const service = makeService({ client: client as unknown as HealingClient, repo });
-
-      // Pre-fill the bounded cache to exactly its cap (5000) with dummy entries
-      // so the next real load trips the `size >= CONFIG_CACHE_MAX` branch.
-      const cache = (service as unknown as { configCache: Map<string, unknown> }).configCache;
-      for (let i = 0; i < 5000; i += 1) {
-        cache.set(`filler-tenant:filler-agent-${i}`, {
-          value: { enabled: false },
-          expiresAt: Date.now() + 30_000,
-        });
-      }
-      expect(cache.size).toBe(5000);
-
-      // A fresh load with a full cache clears everything, then stores this one.
-      await service.maybeHeal(
-        makeParams({ forward: makeForward('{"error":{"message":"z"}}', 400) }),
-      );
-
-      // DB was still read (nothing for this key survived the clear) and the cache
-      // now holds only the single freshly-loaded entry.
+      const first = service.isActiveFor('tenant-1', 'agent-1');
+      const second = service.isActiveFor('tenant-1', 'agent-1');
+      const third = service.isActiveFor('tenant-1', 'agent-1');
       expect(findOne).toHaveBeenCalledTimes(1);
-      expect(cache.size).toBe(1);
-      expect(cache.has('tenant-1:agent-1')).toBe(true);
+
+      // The first result can predate a toggle. Later callers ignore it and share
+      // a generation that begins only after this read has completed.
+      resolveLoads[0]({ id: 'agent-1', autofix_enabled: false });
+      await expect(first).resolves.toBe(false);
+      await Promise.resolve();
+      expect(findOne).toHaveBeenCalledTimes(2);
+
+      resolveLoads[1]({ id: 'agent-1', autofix_enabled: true });
+      await expect(Promise.all([second, third])).resolves.toEqual([true, true]);
+
+      findOne.mockResolvedValue({ id: 'agent-1', autofix_enabled: false });
+      await expect(service.isActiveFor('tenant-1', 'agent-1')).resolves.toBe(false);
+      expect(findOne).toHaveBeenCalledTimes(3);
     });
   });
 });
 
 describe('isActiveFor (the consent gate)', () => {
-  const DENIED = () => ({ autofix_access_granted_at: null, autofix_waitlist_at: null });
-
-  it('is active when the deployment, the tenant and the agent all allow it', async () => {
+  it('is active when the deployment and agent allow it', async () => {
     const service = makeService({ repo: makeAgentRepo(() => ({ autofix_enabled: true })).repo });
 
     await expect(service.isActiveFor('tenant-1', 'agent-1')).resolves.toBe(true);
@@ -1322,7 +1285,7 @@ describe('isActiveFor (the consent gate)', () => {
     });
   });
 
-  it('inherits the self-hosted default, where Auto-fix is opt-in', async () => {
+  it('inherits the self-hosted default, where Autofix is opt-in', async () => {
     await withMode('selfhosted', async () => {
       const service = makeService({ repo: makeAgentRepo(() => ({ autofix_enabled: null })).repo });
 
@@ -1330,31 +1293,16 @@ describe('isActiveFor (the consent gate)', () => {
     });
   });
 
-  it('is inactive when the deployment killed Auto-fix globally', async () => {
+  it('is inactive when the deployment killed Autofix globally', async () => {
     const service = makeService({ config: makeConfig({ AUTOFIX_GLOBAL_ENABLED: 'false' }) });
 
     await expect(service.isActiveFor('tenant-1', 'agent-1')).resolves.toBe(false);
   });
 
-  it('is inactive when the tenant has no early access', async () => {
-    const service = makeService({ tenantRepo: makeTenantRepo(DENIED).repo });
-
-    await expect(service.isActiveFor('tenant-1', 'agent-1')).resolves.toBe(false);
-  });
-
-  it('is inactive when the agent turned Auto-fix off', async () => {
+  it('is inactive when the agent turned Autofix off', async () => {
     const service = makeService({ repo: makeAgentRepo(() => ({ autofix_enabled: false })).repo });
 
     await expect(service.isActiveFor('tenant-1', 'agent-1')).resolves.toBe(false);
-  });
-
-  it('does not read the agent when the tenant gate already denied', async () => {
-    const agent = makeAgentRepo(() => ({ autofix_enabled: true }));
-    const service = makeService({ repo: agent.repo, tenantRepo: makeTenantRepo(DENIED).repo });
-
-    await service.isActiveFor('tenant-1', 'agent-1');
-
-    expect(agent.findOne).not.toHaveBeenCalled();
   });
 
   it('rejects rather than reporting false, so callers fail closed on a DB error', async () => {

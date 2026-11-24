@@ -156,4 +156,43 @@ describe('ProxyMessageRecorder.recordFailedFallbacks — per-failure auth_type',
     expect(rows[0].auth_type).toBe('subscription');
     expect(rows[1].auth_type).toBe('api_key');
   });
+
+  it('stamps the Autofix audit carried by a recovered fallback hop', async () => {
+    const failures = [
+      {
+        model: 'deepseek-flash',
+        provider: 'opencode-go',
+        status: 400,
+        errorBody: 'response_format unavailable',
+        fallbackIndex: 0,
+        autofixRole: 'original' as const,
+        autofix: {
+          groupId: 'group-1',
+          outcome: 'healed' as const,
+          original_http_status: 400,
+          chain: [
+            {
+              attempt: 0,
+              origin: 'original' as const,
+              request: {},
+              http_status: 400,
+              issue_id: 'issue-1',
+              patch_id: 'patch-1',
+              operations: [{ type: 'drop_param' }],
+            },
+            { attempt: 1, origin: 'autofix' as const, request: {}, http_status: 200 },
+          ],
+        },
+      },
+    ];
+
+    await recorder.recordFailedFallbacks(ctx, 'standard', 'gpt-4o', failures);
+
+    const rows = insertMock.mock.calls[0][0] as Array<Record<string, unknown>>;
+    expect(rows[0]).toMatchObject({
+      autofix_applied: true,
+      autofix_group_id: 'group-1',
+      autofix_role: 'original',
+    });
+  });
 });

@@ -12,6 +12,14 @@ export interface FetchJsonOptions {
    * deny-list. Deny-listed URLs are never cached regardless of this flag.
    */
   cache?: boolean;
+  /**
+   * Whether a 401 that looks like a session expiry hard-navigates the browser
+   * to `/login`. Defaults to `true`. Pass `false` for a probe that may run
+   * before the session is known (the plan prefetch in AuthGuard): it then
+   * rejects with the same error and leaves the redirect, and the preserved
+   * requested path, to the auth guard.
+   */
+  loginRedirect?: boolean;
 }
 
 export async function fetchJson<T>(
@@ -30,14 +38,15 @@ export async function fetchJson<T>(
   // Default-on SWR caching for GETs, unless the caller opted out or the URL is on
   // the always-fresh deny-list (sessions, key reveal/rotate, SSE, health).
   const useCache = options?.cache !== false && isCacheable(key);
+  const loginRedirect = options?.loginRedirect !== false;
   if (useCache) {
-    return cachedFetch<T>(key, () => doFetchJson<T>(key));
+    return cachedFetch<T>(key, () => doFetchJson<T>(key, loginRedirect));
   }
-  return doFetchJson<T>(key);
+  return doFetchJson<T>(key, loginRedirect);
 }
 
 /** Performs the raw GET + error handling. Kept separate so the cache wraps only the network. */
-async function doFetchJson<T>(url: string): Promise<T> {
+async function doFetchJson<T>(url: string, loginRedirect = true): Promise<T> {
   // 'default' lets the browser revalidate via ETag / Cache-Control. Backend
   // analytics endpoints set short max-age=10 which keeps stale UI bounded;
   // SSE-driven refetches still bypass cache because they pass a unique signal.
@@ -51,7 +60,7 @@ async function doFetchJson<T>(url: string): Promise<T> {
     const looksLikeSessionExpiry =
       !body || /session|cookie|unauthenticated|not authenticated/i.test(body);
     if (looksLikeSessionExpiry) {
-      if (window.location.pathname !== '/login') {
+      if (loginRedirect && window.location.pathname !== '/login') {
         window.location.href = '/login';
       }
       throw new Error('Session expired');

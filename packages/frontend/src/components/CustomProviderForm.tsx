@@ -1,17 +1,23 @@
 import { createResource, createSignal, Index, Show, type Component } from 'solid-js';
+import { deriveCustomProviderAlias, normalizeCustomProviderAlias } from 'manifest-shared';
 import {
   createCustomProvider,
   deleteCustomProvider,
+  getProviders,
   probeCustomProvider,
   updateCustomProvider,
   type CustomProviderApiKind,
   type CustomProviderModel,
   type CustomProviderData,
+  type RoutingProvider,
 } from '../services/api.js';
 import { toast } from '../services/toast-store.js';
 import { checkIsSelfHosted } from '../services/setup-status.js';
+import { customProviderColor } from '../services/formatters.js';
+import type { ProviderDef } from '../services/providers.js';
 import type { CustomProviderPrefill } from '../services/routing-params.js';
 import InfoTooltip from './InfoTooltip.jsx';
+import ProviderKeyForm, { MAX_KEYS_PER_PROVIDER } from './ProviderKeyForm.jsx';
 
 const BASE_URL_PLACEHOLDERS: Record<CustomProviderApiKind, string> = {
   openai: 'https://api.example.com/v1',
@@ -67,6 +73,16 @@ const CustomProviderForm: Component<Props> = (props) => {
   };
 
   const [name, setName] = createSignal(props.initialData?.name ?? props.prefill?.name ?? '');
+  // The alias follows the name while creating, until the user edits it by
+  // hand. In edit mode it is the stored value: a rename must never rewrite
+  // the model ids clients already use.
+  const [alias, setAlias] = createSignal(
+    props.initialData ? (props.initialData.alias ?? '') : (deriveCustomProviderAlias(name()) ?? ''),
+  );
+  const [aliasTouched, setAliasTouched] = createSignal(isEdit());
+  const normalizedAlias = () => normalizeCustomProviderAlias(alias());
+  const modelIdPreview = () =>
+    normalizedAlias() ? `${normalizedAlias()}/<model>` : 'custom:<provider-id>/<model>';
   const [baseUrl, setBaseUrl] = createSignal(
     props.initialData?.base_url ?? props.prefill?.baseUrl ?? '',
   );
@@ -85,6 +101,66 @@ const CustomProviderForm: Component<Props> = (props) => {
   const [probeError, setProbeError] = createSignal<string | null>(null);
   const [isSelfHosted] = createResource(() => checkIsSelfHosted());
 
+  // In edit mode an API-key provider manages its keys the way native providers
+  // do: each key is a connection, added, renamed, replaced and removed on the
+  // spot through ProviderKeyForm, independently of "Save changes". Local-style
+  // providers (LM Studio, Ollama names) keep the single optional key field.
+  const [connections, { refetch: refetchConnections }] = createResource(
+    () => (props.initialData ? props.agentName : null),
+    // A failed refresh after a key change keeps the list already on screen.
+    async (agentName: string, { value }: { value?: RoutingProvider[] }) => {
+      try {
+        return await getProviders(agentName);
+      } catch (err) {
+        if (value) return value;
+        throw err;
+      }
+    },
+  );
+  // Reading a failed resource throws, so every read goes through this guard.
+  const loadedConnections = () => (connections.error ? undefined : connections.latest);
+  const ownConnections = () =>
+    (loadedConnections() ?? []).filter((p) => p.provider === `custom:${props.initialData?.id}`);
+  const isLocalConnection = () => ownConnections().some((p) => p.auth_type === 'local');
+  const showConnections = () => isEdit() && ownConnections().length > 0 && !isLocalConnection();
+  // Fall back to the single field whenever the connection list can't drive
+  // the key section (fetch failed, or no row for this provider).
+  const showKeyField = () =>
+    !isEdit() ||
+    isLocalConnection() ||
+    (!!connections.error && !connections.loading) ||
+    (loadedConnections() !== undefined && ownConnections().length === 0);
+  const activeKeys = () =>
+    ownConnections()
+      .filter((p) => p.auth_type === 'api_key' && p.is_active && p.has_api_key)
+      .sort((a, b) => a.priority - b.priority);
+  const [keyBusy, setKeyBusy] = createSignal(false);
+  const [keyInput, setKeyInput] = createSignal('');
+  const [keyEditing, setKeyEditing] = createSignal(false);
+  const [keyError, setKeyError] = createSignal<string | null>(null);
+  const [addKeyOpen, setAddKeyOpen] = createSignal(false);
+  const keysConnected = () => activeKeys().length > 0;
+  const showAddKeyButton = () =>
+    keysConnected() && activeKeys().length < MAX_KEYS_PER_PROVIDER && !addKeyOpen();
+  const keyProviderDef = (): ProviderDef => {
+    const cpName = props.initialData?.name ?? '';
+    return {
+      id: `custom:${props.initialData?.id}`,
+      name: cpName,
+      color: customProviderColor(cpName),
+      initial: cpName.charAt(0).toUpperCase(),
+      subtitle: '',
+      models: [],
+      keyPrefix: '',
+      minKeyLength: 0,
+      keyPlaceholder: 'sk-...',
+    };
+  };
+  const keyPrefixDisplay = () => {
+    const prefix = activeKeys()[0]?.key_prefix;
+    return prefix ? `${prefix}${'•'.repeat(8)}` : '••••••••••••';
+  };
+
   const handleProbe = async () => {
     const url = baseUrl().trim();
     if (!url) {
@@ -94,12 +170,18 @@ const CustomProviderForm: Component<Props> = (props) => {
     setProbeBusy(true);
     setProbeError(null);
     try {
+      // Edit mode: forward provider_id so the backend can probe with the
+      // stored key (the form never sees plaintext). A user-typed key still
+      // wins so freshly entered keys can be verified before saving.
+      const typedKey = apiKey().trim() || undefined;
+      const probeId = !typedKey && isEdit() ? props.initialData?.id : undefined;
       const { models } = await probeCustomProvider(
         props.agentName,
         url,
-        apiKey().trim() || undefined,
+        typedKey,
         apiKind(),
         name().trim() || undefined,
+        probeId,
       );
       if (models.length === 0) {
         setProbeError('Server returned no models');
@@ -156,6 +238,7 @@ const CustomProviderForm: Component<Props> = (props) => {
     try {
       await createCustomProvider(props.agentName, {
         name: name().trim(),
+        alias: normalizedAlias(),
         base_url: baseUrl().trim(),
         api_kind: apiKind(),
         apiKey: apiKey().trim() || undefined,
@@ -174,6 +257,7 @@ const CustomProviderForm: Component<Props> = (props) => {
     setError(null);
     const data: Record<string, unknown> = {
       name: name().trim(),
+      alias: normalizedAlias(),
       base_url: baseUrl().trim(),
       models: buildModels(),
     };
@@ -257,9 +341,32 @@ const CustomProviderForm: Component<Props> = (props) => {
             value={name()}
             onInput={(e) => {
               setName(e.currentTarget.value);
+              if (!aliasTouched()) setAlias(deriveCustomProviderAlias(e.currentTarget.value) ?? '');
               setError(null);
             }}
           />
+        </div>
+
+        <div class="provider-detail__field">
+          <label class="provider-detail__label" for="cp-alias">
+            Alias
+          </label>
+          <input
+            id="cp-alias"
+            class="provider-detail__input"
+            type="text"
+            placeholder="e.g. vercel-ai-gateway"
+            value={alias()}
+            onInput={(e) => {
+              setAlias(e.currentTarget.value);
+              setAliasTouched(true);
+              setError(null);
+            }}
+          />
+          <div class="provider-detail__hint" data-testid="cp-alias-hint">
+            Models are listed as <code>{modelIdPreview()}</code> in <code>/v1/models</code>.
+            <Show when={isEdit()}> Changing the alias changes the model ids your clients use.</Show>
+          </div>
         </div>
 
         <fieldset
@@ -357,47 +464,49 @@ const CustomProviderForm: Component<Props> = (props) => {
           </Show>
         </div>
 
-        <div class="provider-detail__field">
-          <label class="provider-detail__label" for="cp-api-key">
-            API Key{' '}
-            <span style="color: hsl(var(--muted-foreground)); font-weight: 400;">
-              (optional for local providers)
-            </span>
-          </label>
-          <Show when={isEdit() && !editingKey()}>
-            <div class="provider-detail__key-row">
+        <Show when={showKeyField()}>
+          <div class="provider-detail__field">
+            <label class="provider-detail__label" for="cp-api-key">
+              API Key{' '}
+              <span style="color: hsl(var(--muted-foreground)); font-weight: 400;">
+                (optional for local providers)
+              </span>
+            </label>
+            <Show when={isEdit() && !editingKey()}>
+              <div class="provider-detail__key-row">
+                <input
+                  id="cp-api-key"
+                  class="provider-detail__input provider-detail__input--disabled"
+                  type="text"
+                  value={props.initialData?.has_api_key ? '••••••••••••' : 'No key set'}
+                  disabled
+                  aria-label="Current API key (masked)"
+                />
+                <button
+                  type="button"
+                  class="btn btn--outline btn--sm"
+                  onClick={() => {
+                    setEditingKey(true);
+                    setApiKey('');
+                  }}
+                >
+                  Change
+                </button>
+              </div>
+            </Show>
+            <Show when={!isEdit() || editingKey()}>
               <input
                 id="cp-api-key"
-                class="provider-detail__input provider-detail__input--disabled"
+                class="provider-detail__input provider-detail__input--masked"
                 type="text"
-                value={props.initialData?.has_api_key ? '••••••••••••' : 'No key set'}
-                disabled
-                aria-label="Current API key (masked)"
+                autocomplete="off"
+                placeholder="sk-..."
+                value={apiKey()}
+                onInput={(e) => setApiKey(e.currentTarget.value)}
               />
-              <button
-                type="button"
-                class="btn btn--outline btn--sm"
-                onClick={() => {
-                  setEditingKey(true);
-                  setApiKey('');
-                }}
-              >
-                Change
-              </button>
-            </div>
-          </Show>
-          <Show when={!isEdit() || editingKey()}>
-            <input
-              id="cp-api-key"
-              class="provider-detail__input provider-detail__input--masked"
-              type="text"
-              autocomplete="off"
-              placeholder="sk-..."
-              value={apiKey()}
-              onInput={(e) => setApiKey(e.currentTarget.value)}
-            />
-          </Show>
-        </div>
+            </Show>
+          </div>
+        </Show>
 
         <div class="provider-detail__field">
           <div id="cp-models-label" class="provider-detail__label custom-provider-models__label">
@@ -512,6 +621,65 @@ const CustomProviderForm: Component<Props> = (props) => {
           </button>
         </div>
       </form>
+
+      <Show when={showConnections()}>
+        <div
+          class="custom-provider-connections"
+          style="margin-top: 20px; padding-top: 16px; border-top: 1px solid hsl(var(--border));"
+        >
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px;">
+            <span style="font-size: var(--font-size-xs); color: hsl(var(--muted-foreground));">
+              Each key is a separate connection. Changes apply immediately.
+            </span>
+            <Show when={showAddKeyButton()}>
+              <button
+                type="button"
+                class="btn btn--sm"
+                style="background: hsl(var(--foreground)); color: hsl(var(--background)); border: none; font-size: var(--font-size-xs); display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;"
+                onClick={() => setAddKeyOpen(true)}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="14"
+                  height="14"
+                  fill="currentColor"
+                  viewBox="0 0 24 24"
+                  aria-hidden="true"
+                >
+                  <path d="M4 11h11v2H4zm0-5h16v2H4zm0 10h8v2H4zm15-3h-2v3h-3v2h3v3h2v-3h3v-2h-3z" />
+                </svg>
+                Add another key
+              </button>
+            </Show>
+          </div>
+          <ProviderKeyForm
+            provDef={keyProviderDef()}
+            provId={`custom:${props.initialData!.id}`}
+            agentName={props.agentName}
+            isSubMode={() => false}
+            connected={keysConnected}
+            selectedAuthType={() => 'api_key'}
+            busy={keyBusy}
+            setBusy={setKeyBusy}
+            keyInput={keyInput}
+            setKeyInput={setKeyInput}
+            editing={keyEditing}
+            setEditing={setKeyEditing}
+            validationError={keyError}
+            setValidationError={setKeyError}
+            getKeyPrefixDisplay={keyPrefixDisplay}
+            providers={loadedConnections() ?? []}
+            addKeyOpen={addKeyOpen}
+            setAddKeyOpen={setAddKeyOpen}
+            canDisconnect={false}
+            onBack={() => {
+              setKeyEditing(false);
+              setKeyInput('');
+            }}
+            onUpdate={() => void refetchConnections()}
+          />
+        </div>
+      </Show>
 
       {/* -- Delete Confirmation Modal -- */}
       <Show when={showDeleteConfirm()}>

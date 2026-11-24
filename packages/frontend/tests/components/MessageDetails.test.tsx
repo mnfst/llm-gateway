@@ -107,7 +107,7 @@ describe('MessageDetails', () => {
     const { container } = render(() => <MessageDetails messageId="msg-1" />);
     await vi.waitFor(() => {
       // The redesign renders the error message inside `.msg-detail__error-inline`
-      // (an icon + the message span) within the error/auto-fix row.
+      // (an icon + the message span) within the error/autofix row.
       const errorBox = container.querySelector('.msg-detail__error-inline');
       expect(errorBox).not.toBeNull();
       expect(errorBox!.textContent).toBe('401 Unauthorized: invalid API key');
@@ -178,7 +178,7 @@ describe('MessageDetails', () => {
     });
 
     const codeLink = container.querySelector('.msg-detail__error-code');
-    expect(codeLink?.getAttribute('href')).toBe('https://manifest.build/docs/errors/M100');
+    expect(codeLink?.getAttribute('href')).toBe('https://manifest.build/llm-gateway/docs/errors/M100/');
     expect(codeLink?.getAttribute('target')).toBe('_blank');
     expect(container.textContent).toContain('No anthropic API key yet');
   });
@@ -264,8 +264,8 @@ describe('MessageDetails', () => {
     });
   });
 
-  it('does not treat a normalized superseded Auto-fix original as a fallback error', async () => {
-    // A superseded row that is the Auto-fix original must route to its own
+  it('does not treat a normalized superseded Autofix original as a fallback error', async () => {
+    // A superseded row that is the Autofix original must route to its own
     // next-action panel, never the fallback one — the `!isAutofixOriginal`
     // guard on the new superseded branch.
     mockGetMessageDetails.mockResolvedValue({

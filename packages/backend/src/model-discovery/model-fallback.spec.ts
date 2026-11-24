@@ -2,6 +2,7 @@ import {
   buildFallbackModels,
   buildModelsDevFallback,
   buildSubscriptionFallbackModels,
+  reconcileCachedSubscriptionContextWindow,
   supplementWithKnownModels,
   findOpenRouterPrefix,
   lookupWithVariants,
@@ -20,6 +21,53 @@ function makePricingSync(
 }
 
 describe('buildFallbackModels', () => {
+  it('uses native MiniMax IDs without importing gateway free pricing', () => {
+    const pricing = makePricingSync(
+      new Map([
+        ['minimax/minimax-m3.1-flash:free', { input: 0, output: 0, contextWindow: 512000 }],
+        ['minimax/minimax-m3', { input: 0.000001, output: 0.000004 }],
+        ['minimax/minimax-m2.7', { input: 0.000001, output: 0.000002 }],
+      ]),
+    );
+    const models = buildFallbackModels(pricing, 'minimax');
+    expect(models.map((model) => model.id)).toEqual([
+      'MiniMax-M3.1-Flash',
+      'MiniMax-M3',
+      'minimax-m2.7',
+    ]);
+    expect(models[0]).toMatchObject({ inputPricePerToken: null, outputPricePerToken: null });
+    expect(lookupWithVariants(pricing, 'minimax', 'minimax-m3.1-flash')).toBeNull();
+    expect(buildSubscriptionFallbackModels('minimax')[0]).toMatchObject({
+      id: 'MiniMax-M3.1-Flash',
+      contextWindow: 1000000,
+    });
+    expect(buildSubscriptionFallbackModels('minimax', 'cn').map((m) => m.id)).not.toContain(
+      'MiniMax-M3.1-Flash',
+    );
+    expect(supplementWithKnownModels([], 'minimax', 'cn').map((m) => m.id)).not.toContain(
+      'MiniMax-M3.1-Flash',
+    );
+  });
+  it('keeps direct MiniMax pricing when a :free route for the same model comes first', () => {
+    const pricing = makePricingSync(
+      new Map([
+        ['minimax/minimax-m3.1-flash:free', { input: 0, output: 0 }],
+        ['minimax/minimax-m3', { input: 0.000001, output: 0.000004 }],
+        ['minimax/minimax-m3.1-flash', { input: 0.0000002, output: 0.0000011 }],
+        ['minimax/minimax-m3:free', { input: 0, output: 0 }],
+      ]),
+    );
+    const models = buildFallbackModels(pricing, 'minimax');
+    expect(models.map((model) => model.id)).toEqual(['MiniMax-M3.1-Flash', 'MiniMax-M3']);
+    expect(models[0]).toMatchObject({
+      inputPricePerToken: 0.0000002,
+      outputPricePerToken: 0.0000011,
+    });
+    expect(models[1]).toMatchObject({
+      inputPricePerToken: 0.000001,
+      outputPricePerToken: 0.000004,
+    });
+  });
   it('should return models from OpenRouter cache for the given provider', () => {
     const cache = new Map([
       ['openai/gpt-4o', { input: 0.01, output: 0.02, displayName: 'GPT-4o' }],
@@ -31,6 +79,17 @@ describe('buildFallbackModels', () => {
 
     expect(result).toHaveLength(2);
     expect(result.map((m) => m.id)).toEqual(['gpt-4o', 'gpt-4-turbo']);
+  });
+
+  it('should filter out :batch variants (only served via the async Batch API)', () => {
+    const cache = new Map([
+      ['openai/gpt-5', { input: 0.01, output: 0.02 }],
+      ['openai/gpt-5:batch', { input: 0.005, output: 0.01 }],
+    ]);
+
+    const result = buildFallbackModels(makePricingSync(cache), 'openai');
+
+    expect(result.map((m) => m.id)).toEqual(['gpt-5']);
   });
 
   it('should return empty when pricingSync is null', () => {
@@ -141,6 +200,31 @@ describe('buildFallbackModels', () => {
 
     expect(result[0].displayName).toBe('gpt-4o');
   });
+
+  it('should limit Meta fallback discovery to the shared Muse Spark catalog', () => {
+    const cache = new Map([
+      ['meta/muse-spark-1.2', { input: 0.0000004, output: 0.0000016 }],
+      ['meta/muse-spark-1.2-contributor', { input: 0.0000002, output: 0.0000008 }],
+      ['meta/muse-spark-1.1', { input: 0.0000004, output: 0.0000016 }],
+      ['meta/unrelated-model', { input: 0.01, output: 0.02 }],
+    ]);
+
+    const result = buildFallbackModels(makePricingSync(cache), 'meta');
+
+    expect(result.map((model) => model.id)).toEqual([
+      'muse-spark-1.2',
+      'muse-spark-1.2-contributor',
+      'muse-spark-1.1',
+    ]);
+    expect(result[1]).toMatchObject({
+      displayName: 'Muse Spark 1.2 Contributor (inputs and outputs may train Meta)',
+      contextWindow: 1_048_576,
+      capabilityReasoning: true,
+      capabilityCode: true,
+      inputModalities: ['text', 'image', 'audio', 'video'],
+      outputModalities: ['text'],
+    });
+  });
 });
 
 describe('findOpenRouterPrefix', () => {
@@ -162,6 +246,10 @@ describe('findOpenRouterPrefix', () => {
 
   it('should resolve via display name', () => {
     expect(findOpenRouterPrefix('Mistral')).toBeTruthy();
+  });
+
+  it('should resolve the Meta OpenRouter prefix', () => {
+    expect(findOpenRouterPrefix('meta')).toBe('meta');
   });
 });
 
@@ -264,343 +352,74 @@ describe('lookupWithVariants', () => {
 });
 
 describe('buildSubscriptionFallbackModels', () => {
-  it('should return empty for providers with no known models', () => {
-    const cache = new Map([['openai/gpt-4o', { input: 0.01, output: 0.02 }]]);
-
-    const result = buildSubscriptionFallbackModels(makePricingSync(cache), 'unknown-provider');
-
-    expect(result).toEqual([]);
+  it('returns empty for providers without curated models', () => {
+    expect(buildSubscriptionFallbackModels('unknown-provider')).toEqual([]);
+    expect(buildSubscriptionFallbackModels('opencode-go')).toEqual([]);
   });
 
-  it('should return models for known subscription providers', () => {
-    const cache = new Map([
-      ['anthropic/claude-opus-4-6', { input: 0.015, output: 0.075, displayName: 'Claude Opus' }],
+  it('returns exactly the curated Anthropic subscription models', () => {
+    const result = buildSubscriptionFallbackModels('anthropic');
+
+    expect(result.map((model) => model.id)).toEqual([
+      'claude-fable-5',
+      'claude-fable-5-1',
+      'claude-opus-4',
+      'claude-sonnet-4',
+      'claude-haiku-4',
+      'claude-opus-5',
+      'claude-opus-5-5',
+      'claude-sonnet-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
     ]);
-
-    const result = buildSubscriptionFallbackModels(makePricingSync(cache), 'anthropic');
-
-    expect(result.length).toBeGreaterThanOrEqual(1);
+    expect(result.every((model) => model.provider === 'anthropic')).toBe(true);
+    expect(result.every((model) => model.displayName === model.id)).toBe(true);
+    expect(result.every((model) => model.inputPricePerToken === 0)).toBe(true);
+    expect(result.every((model) => model.outputPricePerToken === 0)).toBe(true);
   });
 
-  it('should handle null pricingSync', () => {
-    const result = buildSubscriptionFallbackModels(null, 'anthropic');
+  it('applies subscription context windows to curated models', () => {
+    const result = buildSubscriptionFallbackModels('anthropic');
 
-    expect(result.length).toBeGreaterThanOrEqual(1);
+    expect(result.find((model) => model.id === 'claude-opus-4')?.contextWindow).toBe(200000);
+    expect(result.find((model) => model.id === 'claude-opus-5')?.contextWindow).toBe(1000000);
+    expect(result.find((model) => model.id === 'claude-opus-5-5')?.contextWindow).toBe(1000000);
+    expect(result.find((model) => model.id === 'claude-sonnet-5')?.contextWindow).toBe(1000000);
+    expect(result.find((model) => model.id === 'claude-sonnet-5-5')?.contextWindow).toBe(1000000);
+    expect(result.find((model) => model.id === 'claude-haiku-5-5')?.contextWindow).toBe(200000);
+    expect(result.every((model) => model.contextWindowSource === 'subscription_config')).toBe(true);
   });
 
-  it('excludes Anthropic claude-*-fast pseudo-models that 404 at the API', () => {
-    const cache = new Map([
-      [
-        'anthropic/claude-opus-4-8',
-        { input: 0.015, output: 0.075, displayName: 'Claude Opus 4.8' },
-      ],
-      [
-        'anthropic/claude-opus-4.8-fast',
-        { input: 0.015, output: 0.075, displayName: 'Claude Opus 4.8 (fast)' },
-      ],
+  it('applies moonshot per-model context windows without prefix bleed', () => {
+    const result = buildSubscriptionFallbackModels('moonshot');
+
+    expect(result.map((model) => model.id)).toEqual([
+      'k3',
+      'k3-256k',
+      'kimi-for-coding',
+      'kimi-for-coding-highspeed',
     ]);
-
-    const ids = buildSubscriptionFallbackModels(makePricingSync(cache), 'anthropic').map(
-      (m) => m.id,
+    expect(result.find((model) => model.id === 'k3')?.contextWindow).toBe(1048576);
+    // k3-256k must not inherit the 1M window of its k3 prefix sibling.
+    expect(result.find((model) => model.id === 'k3-256k')?.contextWindow).toBe(262144);
+    expect(result.find((model) => model.id === 'kimi-for-coding')?.contextWindow).toBe(262144);
+    expect(result.find((model) => model.id === 'kimi-for-coding-highspeed')?.contextWindow).toBe(
+      262144,
     );
-
-    expect(ids).toContain('claude-opus-4-8');
-    expect(ids.some((id) => id.includes('-fast'))).toBe(false);
   });
 
-  it('uses the Anthropic Opus 4.8 subscription context override', () => {
-    const cache = new Map([
-      [
-        'anthropic/claude-opus-4-8',
-        {
-          input: 0.015,
-          output: 0.075,
-          contextWindow: 200000,
-          displayName: 'Claude Opus 4.8',
-        },
-      ],
+  it('preserves curated model casing', () => {
+    expect(buildSubscriptionFallbackModels('minimax').map((model) => model.id)).toEqual([
+      'MiniMax-M3.1-Flash',
+      'MiniMax-M3',
+      'MiniMax-M2.7',
+      'MiniMax-M2.7-highspeed',
+      'MiniMax-M2.5',
+      'MiniMax-M2.5-highspeed',
+      'MiniMax-M2.1',
+      'MiniMax-M2.1-highspeed',
+      'MiniMax-M2',
     ]);
-
-    const model = buildSubscriptionFallbackModels(makePricingSync(cache), 'anthropic').find(
-      (m) => m.id === 'claude-opus-4-8',
-    );
-
-    expect(model).toBeDefined();
-    expect(model!.contextWindow).toBe(1000000);
-  });
-
-  it('applies Anthropic Opus 4.8 context override to dated variants', () => {
-    const cache = new Map([
-      [
-        'anthropic/claude-opus-4-8-20260929',
-        {
-          input: 0.015,
-          output: 0.075,
-          contextWindow: 200000,
-          displayName: 'Claude Opus 4.8',
-        },
-      ],
-    ]);
-
-    const model = buildSubscriptionFallbackModels(makePricingSync(cache), 'anthropic').find(
-      (m) => m.id === 'claude-opus-4-8-20260929',
-    );
-
-    expect(model).toBeDefined();
-    expect(model!.contextWindow).toBe(1000000);
-  });
-
-  it('uses the Anthropic Opus 5 subscription context override', () => {
-    const cache = new Map([
-      [
-        'anthropic/claude-opus-5',
-        {
-          input: 0.005,
-          output: 0.025,
-          contextWindow: 200000,
-          displayName: 'Claude Opus 5',
-        },
-      ],
-    ]);
-
-    const model = buildSubscriptionFallbackModels(makePricingSync(cache), 'anthropic').find(
-      (m) => m.id === 'claude-opus-5',
-    );
-
-    expect(model).toBeDefined();
-    expect(model!.contextWindow).toBe(1000000);
-  });
-
-  it('surfaces claude-opus-5 even when the pricing cache lacks it', () => {
-    // The 5 generation dropped the claude-opus-4 prefix, so Opus 5 reaches the
-    // curated catalog only via its own knownModels entry.
-    const ids = buildSubscriptionFallbackModels(makePricingSync(new Map()), 'anthropic').map(
-      (m) => m.id,
-    );
-
-    expect(ids).toContain('claude-opus-5');
-  });
-
-  it('surfaces claude-fable-5 even when the pricing cache lacks it', () => {
-    // claude-fable-5 is a valid Anthropic subscription model with no pricing
-    // cache entry; the knownModels fallback must still offer it.
-    const ids = buildSubscriptionFallbackModels(makePricingSync(new Map()), 'anthropic').map(
-      (m) => m.id,
-    );
-
-    expect(ids).toContain('claude-fable-5');
-  });
-
-  it('returns [] for opencode-go because its catalog is fetched dynamically', () => {
-    // OpenCode Go has no hardcoded knownModels. The fallback path must stay empty
-    // so we do not fabricate stale entries when the live catalog is unreachable.
-    const result = buildSubscriptionFallbackModels(makePricingSync(new Map()), 'opencode-go');
-    expect(result).toEqual([]);
-  });
-
-  it('surfaces the fixed Mistral Vibe model even when the pricing cache lacks it', () => {
-    const ids = buildSubscriptionFallbackModels(makePricingSync(new Map()), 'mistral').map(
-      (m) => m.id,
-    );
-
-    expect(ids).toEqual(['mistral-vibe-cli-latest']);
-  });
-
-  it('keeps Mistral Vibe fallback matching exact', () => {
-    const cache = new Map([
-      [
-        'mistralai/mistral-vibe-cli-latest',
-        { input: 0.000001, output: 0.000003, displayName: 'Mistral Vibe CLI' },
-      ],
-      [
-        'mistralai/mistral-vibe-cli-fast',
-        { input: 0.000001, output: 0.000003, displayName: 'Mistral Vibe CLI Fast' },
-      ],
-    ]);
-
-    const result = buildSubscriptionFallbackModels(makePricingSync(cache), 'mistral');
-    expect(result.map((m) => m.id)).toEqual(['mistral-vibe-cli-latest']);
-    expect(result[0].displayName).toBe('Mistral Vibe CLI');
-  });
-
-  describe('knownModelsMatch exact mode (gemini)', () => {
-    it('includes only verbatim knownModel entries from the OpenRouter cache', () => {
-      const cache = new Map([
-        // Exact match for 'gemini-2.5-pro' → included
-        [
-          'google/gemini-2.5-pro',
-          {
-            input: 0.00000125,
-            output: 0.00001,
-            contextWindow: 1000000,
-            displayName: 'Gemini 2.5 Pro',
-          },
-        ],
-        // Exact match for 'gemini-2.5-flash' → included
-        [
-          'google/gemini-2.5-flash',
-          {
-            input: 0.0000003,
-            output: 0.0000025,
-            contextWindow: 1000000,
-            displayName: 'Gemini 2.5 Flash',
-          },
-        ],
-        // Exact current preview model → included because it is explicitly known
-        [
-          'google/gemini-3.1-pro-preview',
-          {
-            input: 0.000002,
-            output: 0.000012,
-            contextWindow: 1000000,
-            displayName: 'Gemini 3.1 Pro Preview',
-          },
-        ],
-        // Suffixed preview → excluded in exact mode
-        [
-          'google/gemini-2.5-pro-preview-06-05',
-          {
-            input: 0.00000125,
-            output: 0.00001,
-            contextWindow: 1000000,
-            displayName: 'Gemini 2.5 Pro Preview',
-          },
-        ],
-        // Suffixed lite preview → excluded in exact mode
-        [
-          'google/gemini-2.5-flash-lite-preview-06-17',
-          {
-            input: 0.0000001,
-            output: 0.0000008,
-            contextWindow: 1000000,
-            displayName: 'Flash Lite Preview',
-          },
-        ],
-        // Different provider — excluded
-        [
-          'openai/gpt-4o',
-          { input: 0.0000025, output: 0.00001, contextWindow: 128000, displayName: 'GPT-4o' },
-        ],
-      ]);
-
-      const result = buildSubscriptionFallbackModels(makePricingSync(cache), 'gemini');
-      const ids = result.map((m) => m.id);
-
-      expect(ids).toContain('gemini-2.5-pro');
-      expect(ids).toContain('gemini-2.5-flash');
-      expect(ids).toContain('gemini-3.1-pro-preview');
-      // Suffixed variants excluded
-      expect(ids).not.toContain('gemini-2.5-pro-preview-06-05');
-      expect(ids).not.toContain('gemini-2.5-flash-lite-preview-06-17');
-      // gemini-2.5-flash-lite knownModel not in cache → added as zero-cost directly
-      expect(ids).toContain('gemini-2.5-flash-lite');
-      expect(result.find((m) => m.id === 'gemini-2.5-flash-lite')!.inputPricePerToken).toBe(0);
-    });
-
-    it('compares exact match case-insensitively', () => {
-      // OpenRouter may return 'gemini-2.5-pro' in lowercase, config has lowercase too
-      const cache = new Map([
-        [
-          'google/gemini-2.5-pro',
-          {
-            input: 0.00000125,
-            output: 0.00001,
-            contextWindow: 1000000,
-            displayName: 'Gemini 2.5 Pro',
-          },
-        ],
-      ]);
-
-      const result = buildSubscriptionFallbackModels(makePricingSync(cache), 'gemini');
-      expect(result.map((m) => m.id)).toContain('gemini-2.5-pro');
-    });
-
-    it('contrast: prefix mode keeps suffix entries that exact mode would drop', () => {
-      // Anthropic uses prefix mode: 'claude-opus-4-20260301' starts with 'claude-opus-4' → included
-      // Gemini uses exact mode: 'gemini-2.5-pro-preview' does NOT equal 'gemini-2.5-pro' → excluded
-      const anthropicCache = new Map([
-        [
-          'anthropic/claude-opus-4-20260301',
-          {
-            input: 0.000015,
-            output: 0.000075,
-            contextWindow: 200000,
-            displayName: 'Claude Opus 4',
-          },
-        ],
-      ]);
-      const geminiCache = new Map([
-        [
-          'google/gemini-2.5-pro-preview',
-          {
-            input: 0.00000125,
-            output: 0.00001,
-            contextWindow: 1000000,
-            displayName: 'Gemini 2.5 Pro Preview',
-          },
-        ],
-      ]);
-
-      const anthropicResult = buildSubscriptionFallbackModels(
-        makePricingSync(anthropicCache),
-        'anthropic',
-      );
-      const geminiResult = buildSubscriptionFallbackModels(makePricingSync(geminiCache), 'gemini');
-
-      // Prefix: dated suffix accepted
-      expect(anthropicResult.map((m) => m.id)).toContain('claude-opus-4-20260301');
-      // Exact: preview suffix rejected
-      expect(geminiResult.map((m) => m.id)).not.toContain('gemini-2.5-pro-preview');
-      // Exact mode keeps explicit known preview IDs separate from their base model IDs.
-      expect(geminiResult.map((m) => m.id)).toContain('gemini-2.5-pro');
-      expect(geminiResult.map((m) => m.id)).toContain('gemini-2.5-flash');
-      expect(geminiResult.map((m) => m.id)).toContain('gemini-2.5-flash-lite');
-      expect(geminiResult.map((m) => m.id)).toContain('gemini-3.1-pro-preview');
-      expect(geminiResult.map((m) => m.id)).toContain('gemini-3.1-flash-lite');
-      expect(geminiResult.map((m) => m.id)).toContain('gemini-3.1-flash-lite-preview');
-    });
-
-    it('applies maxContextWindow cap from gemini subscription capabilities', () => {
-      const cache = new Map([
-        // OpenRouter reports 2M but Gemini subscription caps at 1M
-        [
-          'google/gemini-2.5-pro',
-          {
-            input: 0.00000125,
-            output: 0.00001,
-            contextWindow: 2000000,
-            displayName: 'Gemini 2.5 Pro',
-          },
-        ],
-      ]);
-
-      const result = buildSubscriptionFallbackModels(makePricingSync(cache), 'gemini');
-      const proModel = result.find((m) => m.id === 'gemini-2.5-pro');
-
-      expect(proModel).toBeDefined();
-      // Capped at Gemini subscription capability maxContextWindow (1000000)
-      expect(proModel!.contextWindow).toBe(1000000);
-    });
-
-    it('returns all gemini knownModels as zero-cost when pricingSync returns nothing', () => {
-      const result = buildSubscriptionFallbackModels(makePricingSync(new Map()), 'gemini');
-
-      expect(result).toHaveLength(7);
-      expect(result.map((m) => m.id).sort()).toEqual([
-        'gemini-2.5-flash',
-        'gemini-2.5-flash-lite',
-        'gemini-2.5-pro',
-        'gemini-3-flash-preview',
-        'gemini-3.1-flash-lite',
-        'gemini-3.1-flash-lite-preview',
-        'gemini-3.1-pro-preview',
-      ]);
-      for (const m of result) {
-        expect(m.inputPricePerToken).toBe(0);
-        expect(m.outputPricePerToken).toBe(0);
-        expect(m.provider).toBe('gemini');
-      }
-    });
   });
 });
 
@@ -626,6 +445,12 @@ describe('supplementWithKnownModels', () => {
     expect(result).toHaveLength(1);
   });
 
+  it('marks supplemented context windows as subscription configuration', () => {
+    const result = supplementWithKnownModels([], 'openai');
+
+    expect(result.every((model) => model.contextWindowSource === 'subscription_config')).toBe(true);
+  });
+
   it('should not add known models that are already covered', () => {
     const raw = [
       {
@@ -647,7 +472,7 @@ describe('supplementWithKnownModels', () => {
     expect(opusEntries).toHaveLength(1);
   });
 
-  it('keeps explicit gemini preview known models separate in exact mode', () => {
+  it('adds current gemini known models without reintroducing retired previews in exact mode', () => {
     const raw = [
       {
         id: 'gemini-3.1-flash-lite',
@@ -666,7 +491,78 @@ describe('supplementWithKnownModels', () => {
     const ids = result.map((m) => m.id);
 
     expect(ids).toContain('gemini-3.1-flash-lite');
-    expect(ids).toContain('gemini-3.1-flash-lite-preview');
+    expect(ids).toContain('gemini-3.5-flash');
+    expect(ids).not.toContain('gemini-3.1-flash-lite-preview');
+    expect(ids).not.toContain('gemini-3.1-pro-preview');
+    expect(ids).not.toContain('gemini-3-flash-preview');
+  });
+});
+
+describe('reconcileCachedSubscriptionContextWindow', () => {
+  const model = {
+    id: 'gpt-5.6-sol',
+    displayName: 'GPT-5.6 Sol',
+    provider: 'openai',
+    contextWindow: 272000,
+    inputPricePerToken: 0,
+    outputPricePerToken: 0,
+    capabilityReasoning: true,
+    capabilityCode: true,
+    qualityScore: 5,
+  };
+
+  it('updates a context window that came from subscription configuration', () => {
+    expect(
+      reconcileCachedSubscriptionContextWindow(
+        { ...model, contextWindowSource: 'subscription_config' },
+        'openai',
+      ),
+    ).toMatchObject({ contextWindow: 1050000, contextWindowSource: 'subscription_config' });
+  });
+
+  it('preserves a context window reported by the provider', () => {
+    const cached = { ...model, contextWindowSource: 'provider' as const };
+
+    expect(reconcileCachedSubscriptionContextWindow(cached, 'openai')).toBe(cached);
+  });
+
+  it('preserves an untagged legacy context window', () => {
+    expect(reconcileCachedSubscriptionContextWindow(model, 'openai')).toBe(model);
+  });
+
+  it('matches subscription catalogs and context overrides by prefix', () => {
+    const cached = {
+      ...model,
+      id: 'claude-opus-4-8-20260801',
+      provider: 'anthropic',
+      contextWindow: 200000,
+      contextWindowSource: 'subscription_config' as const,
+    };
+
+    expect(reconcileCachedSubscriptionContextWindow(cached, 'anthropic')).toMatchObject({
+      contextWindow: 1000000,
+    });
+  });
+
+  it('preserves tagged rows outside the current subscription catalog', () => {
+    const cached = {
+      ...model,
+      id: 'unknown-model',
+      contextWindowSource: 'subscription_config' as const,
+    };
+
+    expect(reconcileCachedSubscriptionContextWindow(cached, 'openai')).toBe(cached);
+    expect(reconcileCachedSubscriptionContextWindow(cached, 'unknown-provider')).toBe(cached);
+  });
+
+  it('returns an already-current row unchanged', () => {
+    const cached = {
+      ...model,
+      contextWindow: 1050000,
+      contextWindowSource: 'subscription_config' as const,
+    };
+
+    expect(reconcileCachedSubscriptionContextWindow(cached, 'openai')).toBe(cached);
   });
 });
 

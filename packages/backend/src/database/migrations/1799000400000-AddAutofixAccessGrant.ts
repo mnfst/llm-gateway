@@ -2,8 +2,8 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Adds an `autofix_access_granted_at` timestamp column to the `tenants` table.
- * When non-null, WE have explicitly hand-picked this tenant for Auto-fix early
- * access — it unlocks Auto-fix in every rollout phase (see `AUTOFIX_ROLLOUT`),
+ * When non-null, WE have explicitly hand-picked this tenant for Autofix early
+ * access — it unlocks Autofix in every rollout phase (see `AUTOFIX_ROLLOUT`),
  * independent of whether the tenant joined the opt-in `autofix_waitlist_at`.
  */
 export class AddAutofixAccessGrant1799000400000 implements MigrationInterface {

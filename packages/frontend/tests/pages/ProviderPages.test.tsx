@@ -58,10 +58,17 @@ vi.mock('../../src/components/ProviderIcon.jsx', () => ({
     providerId === 'openai' ? <span data-testid="provider-icon" /> : null,
 }));
 
-vi.mock('../../src/services/providers.js', () => ({
+vi.mock('../../src/services/providers.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/services/providers.js')>()),
   PROVIDERS: [
     { id: 'openai', name: 'OpenAI', supportsSubscription: true },
     { id: 'anthropic', name: 'Anthropic', supportsSubscription: true },
+    {
+      id: 'gemini',
+      name: 'Google',
+      supportsSubscription: true,
+      subscriptionClosedNote: 'No new Google sign-ins.',
+    },
     { id: 'groq', name: 'Groq' },
     { id: 'ollama', name: 'Ollama', localOnly: true },
   ],
@@ -95,12 +102,12 @@ vi.mock('../../src/services/api.js', () => ({
 }));
 
 vi.mock('../../src/services/api/analytics.js', () => ({
-  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Auto-fix or fallback.',
+  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Autofix or fallback.',
   REQUEST_SUCCESS_RATE_TOOLTIP:
     'Successful requests over all requests. Recovered requests count as successful.',
   totalAttemptsTooltip: (doctor: boolean) =>
     doctor
-      ? 'Every provider call counts here, including fallback retries and auto-fixed attempts. One request can produce several attempts.'
+      ? 'Every provider call counts here, including fallback retries and autofixed attempts. One request can produce several attempts.'
       : 'Every provider call counts here, including fallback retries. One request can produce several attempts.',
   MODEL_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this model.',
   PROVIDER_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this provider.',
@@ -118,14 +125,11 @@ vi.mock('../../src/services/api/analytics.js', () => ({
   getPerProviderReliability: () => Promise.resolve([]),
 }));
 
-vi.mock('../../src/services/api/autofix.js', () => ({
-  getAutofixCohort: () => Promise.resolve({ eligible: false }),
-}));
-
 // SSE ping signals drive the usage resource's source; stub them to no-op
 // accessors so the page mounts without a live EventSource under jsdom.
 vi.mock('../../src/services/sse.js', () => ({
   messagePing: () => 0,
+  analyticsPing: () => 0,
   routingPing: () => 0,
 }));
 
@@ -333,6 +337,69 @@ describe('provider pages', () => {
 
     fireEvent.click(screen.getByText('Old Claude').closest('tr')!);
     expect(mockNavigate).toHaveBeenCalledWith('/providers/connections/sub-old-claude');
+  });
+
+  it('keeps a provider closed to new subscriptions out of the catalog until connected', async () => {
+    render(() => <Subscriptions />);
+    // Anthropic has no connection in the fixture, so it only shows once the catalog renders.
+    await waitFor(() => expect(screen.getByText('Anthropic')).toBeDefined());
+    expect(screen.queryByText('Google')).toBeNull();
+  });
+
+  it('drops a closed provider from the catalog once its connections are inactive', async () => {
+    mockGetGlobalProviders.mockResolvedValue({
+      ...globalProvidersResponse,
+      providers: [
+        ...globalProvidersResponse.providers,
+        {
+          provider: 'gemini',
+          auth_type: 'subscription',
+          connection_count: 1,
+          connections: [connection('sub-google-old', 'Old Google', false)],
+          total_models: 0,
+          consumption_tokens: 0,
+          consumption_messages: 0,
+          consumption_cost: 0,
+          last_used_at: null,
+          sparkline_7d: [],
+        },
+      ],
+    });
+
+    render(() => <Subscriptions />);
+
+    await waitFor(() => expect(screen.getByText('Old Google')).toBeDefined());
+    // Listed once, in the connections table only.
+    expect(screen.getAllByText('Google').length).toBe(1);
+  });
+
+  it('keeps an existing connection to a closed provider listed and reachable', async () => {
+    mockGetGlobalProviders.mockResolvedValue({
+      ...globalProvidersResponse,
+      providers: [
+        ...globalProvidersResponse.providers,
+        {
+          provider: 'gemini',
+          auth_type: 'subscription',
+          connection_count: 1,
+          connections: [connection('sub-google', 'Work Google')],
+          total_models: 3,
+          consumption_tokens: 0,
+          consumption_messages: 0,
+          consumption_cost: 0,
+          last_used_at: null,
+          sparkline_7d: [],
+        },
+      ],
+    });
+
+    render(() => <Subscriptions />);
+
+    await waitFor(() => expect(screen.getByText('Work Google')).toBeDefined());
+    // Once in the connections table, once in the catalog.
+    expect(screen.getAllByText('Google').length).toBe(2);
+    fireEvent.click(screen.getByText('Work Google').closest('tr')!);
+    expect(mockNavigate).toHaveBeenCalledWith('/providers/connections/sub-google');
   });
 
   it('deep-links the connect modal to a specific provider when added from its row', async () => {
@@ -857,5 +924,115 @@ describe('provider pages', () => {
       const spark = screen.getByTestId('sparkline');
       expect(spark.textContent).toBe('4');
     });
+  });
+  // ── Collapsed connections list ──────────────────────────────────────────
+  // Past six connections the list is capped inside its own card so the
+  // supported-provider catalog below stays reachable. Nothing is dropped: the
+  // card scrolls, and the footer button expands it to full height.
+  const manyConnections = (count: number) => ({
+    providers: [
+      {
+        provider: 'openai',
+        auth_type: 'api_key',
+        connection_count: count,
+        connections: Array.from({ length: count }, (_, i) =>
+          connection(`key-${i}`, `Key ${i + 1}`),
+        ),
+        total_models: 3,
+        consumption_tokens: 1,
+        consumption_messages: 1,
+        consumption_cost: 0,
+        last_used_at: null,
+        sparkline_7d: [],
+      },
+    ],
+    model_counts: {},
+  });
+
+  it('leaves the connections list uncapped at six connections', async () => {
+    mockGetGlobalProviders.mockResolvedValue(manyConnections(6));
+    mockGetProviderUsage.mockResolvedValue({ providers: [] });
+    const { container } = render(() => <Byok />);
+    await waitFor(() => expect(screen.getByText('Key 6')).toBeDefined());
+
+    expect(container.querySelector('.connections-panel--collapsed')).toBeNull();
+    expect(screen.queryByText(/^Show all /)).toBeNull();
+  });
+
+  it('caps the connections list past six and names how many there are', async () => {
+    mockGetGlobalProviders.mockResolvedValue(manyConnections(9));
+    mockGetProviderUsage.mockResolvedValue({ providers: [] });
+    const { container } = render(() => <Byok />);
+    await waitFor(() => expect(screen.getByText('Key 9')).toBeDefined());
+
+    expect(container.querySelector('.connections-panel--collapsed')).not.toBeNull();
+    const toggle = screen.getByText('Show all 9 connections').closest('button')!;
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // Every row stays in the DOM: the card scrolls, it does not paginate.
+    expect(screen.getByText('Key 1')).toBeDefined();
+    expect(screen.getByText('Key 9')).toBeDefined();
+  });
+
+  it('expands the connections list and collapses it again', async () => {
+    mockGetGlobalProviders.mockResolvedValue(manyConnections(8));
+    mockGetProviderUsage.mockResolvedValue({ providers: [] });
+    const { container } = render(() => <Byok />);
+    await waitFor(() => expect(screen.getByText('Show all 8 connections')).toBeDefined());
+
+    const toggle = screen.getByText('Show all 8 connections').closest('button')!;
+    // The button points at the region it expands.
+    expect(container.querySelector(`#${toggle.getAttribute('aria-controls')}`)).not.toBeNull();
+
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(screen.getByText('Show less')).toBeDefined();
+      expect(container.querySelector('.connections-panel--collapsed')).toBeNull();
+    });
+    expect(screen.getByText('Show less').closest('button')!.getAttribute('aria-expanded')).toBe(
+      'true',
+    );
+
+    fireEvent.click(screen.getByText('Show less').closest('button')!);
+    await waitFor(() => {
+      expect(screen.getByText('Show all 8 connections')).toBeDefined();
+      expect(container.querySelector('.connections-panel--collapsed')).not.toBeNull();
+    });
+  });
+
+  it('brings the bottom fade back after expanding and collapsing again', async () => {
+    mockGetGlobalProviders.mockResolvedValue(manyConnections(8));
+    mockGetProviderUsage.mockResolvedValue({ providers: [] });
+    const { container } = render(() => <Byok />);
+    await waitFor(() => expect(screen.getByText('Show all 8 connections')).toBeDefined());
+
+    const body = container.querySelector('.connections-panel__body') as HTMLElement;
+    const viewport = container.querySelector('.connections-panel__viewport')!;
+    fireEvent.scroll(body);
+    expect(viewport.classList.contains('scroll-panel--at-bottom')).toBe(true);
+
+    // Expanding drops the scroll position, so the flag must not survive into
+    // the next collapse and hide the fade at the top of the list.
+    fireEvent.click(screen.getByText('Show all 8 connections').closest('button')!);
+    await waitFor(() => expect(screen.getByText('Show less')).toBeDefined());
+    expect(viewport.classList.contains('scroll-panel--at-bottom')).toBe(false);
+
+    fireEvent.click(screen.getByText('Show less').closest('button')!);
+    await waitFor(() => expect(screen.getByText('Show all 8 connections')).toBeDefined());
+    expect(viewport.classList.contains('scroll-panel--at-bottom')).toBe(false);
+  });
+
+  it('drops the bottom fade once the capped list is scrolled to the end', async () => {
+    mockGetGlobalProviders.mockResolvedValue(manyConnections(8));
+    mockGetProviderUsage.mockResolvedValue({ providers: [] });
+    const { container } = render(() => <Byok />);
+    await waitFor(() => expect(screen.getByText('Show all 8 connections')).toBeDefined());
+
+    const body = container.querySelector('.connections-panel__body') as HTMLElement;
+    const viewport = container.querySelector('.connections-panel__viewport')!;
+    expect(viewport.classList.contains('scroll-panel--at-bottom')).toBe(false);
+
+    // jsdom reports zero layout, which reads as "already at the end".
+    fireEvent.scroll(body);
+    expect(viewport.classList.contains('scroll-panel--at-bottom')).toBe(true);
   });
 });

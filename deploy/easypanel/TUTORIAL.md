@@ -22,7 +22,7 @@ If Manifest is available in your Easypanel template catalog:
 4. Keep the default image `manifestdotbuild/manifest:6` unless you need to pin another version.
 5. Deploy the template.
 
-The template provisions Manifest, PostgreSQL, generated secrets, and a domain proxy on port `2099`.
+The template provisions Manifest, PostgreSQL, a persistent request-recording volume, generated secrets, and a domain proxy on port `2099`.
 
 ## Manual Deploy
 
@@ -59,6 +59,8 @@ NODE_ENV=production
 SEED_DATA=false
 DB_POOL_MAX=10
 AUTH_DB_POOL_MAX=5
+REQUEST_RECORDING_STORAGE=filesystem
+REQUEST_RECORDING_FILESYSTEM_PATH=/data/request-recordings
 MANIFEST_TELEMETRY_DISABLED=0
 ```
 
@@ -71,7 +73,7 @@ openssl rand -hex 32
 
 Use an alphanumeric or hex PostgreSQL password in `DATABASE_URL`. If your password contains URL-reserved characters such as `@`, `:`, `/`, `%`, or `#`, percent-encode them before pasting the connection string.
 
-Deploy the app.
+Add an app volume named `recordings`, mount it at `/data/request-recordings`, then deploy the app.
 
 ## Open Manifest
 

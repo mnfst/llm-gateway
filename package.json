@@ -5,10 +5,10 @@
   "homepage": "https://manifest.build",
   "repository": {
     "type": "git",
-    "url": "https://github.com/mnfst/manifest"
+    "url": "https://github.com/mnfst/llm-gateway"
   },
   "bugs": {
-    "url": "https://github.com/mnfst/manifest/issues"
+    "url": "https://github.com/mnfst/llm-gateway/issues"
   },
   "author": "MNFST Inc.",
   "license": "MIT",
@@ -30,7 +30,8 @@
     "packages/shared",
     "packages/frontend",
     "packages/backend",
-    "packages/manifest"
+    "packages/manifest",
+    "packages/cli"
   ],
   "scripts": {
     "dev": "turbo dev --filter=manifest-frontend",
@@ -39,9 +40,11 @@
     "start": "node packages/backend/dist/main.js",
     "check:api-prefix": "node scripts/check-api-prefix.js",
     "check:changesets": "node scripts/check-changesets.js",
+    "design:registry": "node design-system/generate-registry.mjs",
+    "design:registry:check": "node design-system/generate-registry.mjs --check",
     "railway:http-logs": "node scripts/railway-http-logs.js",
     "test:scripts": "node --test scripts/*.test.js",
-    "lint": "eslint packages/shared/src packages/backend/src packages/frontend/src",
+    "lint": "eslint packages/shared/src packages/backend/src packages/frontend/src packages/cli/src",
     "format": "prettier --write 'packages/*/src/**/*.{ts,tsx,css}'",
     "changeset": "changeset",
     "version-packages": "changeset version",
@@ -59,22 +62,28 @@
   },
   "overrides": {
     "lodash": "^4.18.0",
+    "nanoid": "^3.3.19",
     "defu": "^6.1.5",
     "picomatch": "^4.0.4",
     "path-to-regexp": "8.4.1",
-    "brace-expansion": "5.0.8",
+    "brace-expansion": "5.0.9",
+    "multer": "2.3.0",
+    "read-yaml-file": {
+      "js-yaml": "3.15.2"
+    },
     "undici": "^6.27.0",
     "form-data": "^4.0.6",
     "ws": "^8.21.0"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
-    "@typescript-eslint/eslint-plugin": "^8.65.0",
+    "@typescript-eslint/eslint-plugin": "^8.69.0",
     "@typescript-eslint/parser": "^8.56.0",
-    "eslint": "^10.8.0",
+    "ajv": "8.20.0",
+    "eslint": "^10.10.0",
     "eslint-config-prettier": "^10.1.8",
     "husky": "^9.1.7",
-    "lint-staged": "^16.3.1",
+    "lint-staged": "^17.4.1",
     "prettier": "^3.9.6",
     "turbo": "^2"
   }

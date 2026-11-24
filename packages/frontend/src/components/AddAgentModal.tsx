@@ -1,9 +1,17 @@
-import { createSignal, onCleanup, Show, type Component } from 'solid-js';
+import {
+  createEffect,
+  createResource,
+  createSignal,
+  onCleanup,
+  Show,
+  type Component,
+} from 'solid-js';
 import { useNavigate } from '@solidjs/router';
 import AgentTypeSelect from './AgentTypeSelect.jsx';
 import { createAgent, getGlobalProviders } from '../services/api.js';
 import { toast } from '../services/toast-store.js';
 import { markAgentCreated, markSetupPending } from '../services/recent-agents.js';
+import { checkIsSelfHosted } from '../services/setup-status.js';
 import { refreshAgents } from '../services/sse.js';
 import { type AgentCategory, type AgentPlatform, PLATFORMS_BY_CATEGORY } from 'manifest-shared';
 
@@ -25,13 +33,38 @@ const AddAgentModal: Component<{ open: boolean; onClose: () => void }> = (props)
     PLATFORMS_BY_CATEGORY['personal'][0] ?? null,
   );
   const [creating, setCreating] = createSignal(false);
+  // Both default ON — explicit so create always sends a choice rather than
+  // relying on the server-side inherit path (which is OFF for Autofix on
+  // self-hosted).
+  const [autofixEnabled, setAutofixEnabled] = createSignal(true);
+  const [recordingEnabled, setRecordingEnabled] = createSignal(true);
+  // Where the logs live depends on the deployment: self-hosted keeps them in
+  // the operator's own database, cloud in the Manifest workspace.
+  const [selfHosted] = createResource(checkIsSelfHosted);
 
   // Tracks whether the user dismissed the modal (overlay click / Escape) while a
   // create request was still in flight. A dismissed create must NOT run its
   // post-success side effects (toast, markAgentCreated) or navigate afterwards —
   // otherwise closing the modal mid-request still yanks the user to Routing once
-  // the request resolves. Reset at the start of every create attempt.
+  // the request resolves.
   let cancelled = false;
+  // Monotonic id of the current create attempt. Each async hop re-checks the
+  // token it started with, so a dismissed or superseded attempt drops its
+  // result instead of acting on it.
+  let attemptToken = 0;
+  const beginAttempt = (): number => {
+    cancelled = false;
+    return ++attemptToken;
+  };
+  const isStale = (token: number): boolean => cancelled || token !== attemptToken;
+  // Reopening invalidates whatever the previous session left in flight. The
+  // success path closes the modal *before* awaiting the providers lookup, and
+  // closing is not a dismissal — so a user who immediately reopens to add a
+  // second harness would otherwise be yanked to the first one the moment that
+  // lookup lands, mid-typing.
+  createEffect(() => {
+    if (props.open) attemptToken++;
+  });
   // If the component unmounts mid-request, treat it like a dismissal so we never
   // navigate from a disposed modal.
   onCleanup(() => {
@@ -49,23 +82,28 @@ const AddAgentModal: Component<{ open: boolean; onClose: () => void }> = (props)
     setPlatform(PLATFORMS_BY_CATEGORY[c][0] ?? null);
   };
 
-  const handleCreate = async () => {
+  /**
+   * @param token attempt id from {@link beginAttempt}, re-checked after every await.
+   * @param autofixChoice the Autofix setting pinned when the submit started.
+   */
+  const createAgentNow = async (token: number, autofixChoice: boolean) => {
     const agentName = name().trim();
     if (!agentName) return;
-    cancelled = false;
     setCreating(true);
     try {
       const result = await createAgent({
         name: agentName,
         ...(category() ? { agent_category: category()! } : {}),
         ...(platform() ? { agent_platform: platform()! } : {}),
+        autofix_enabled: autofixChoice,
+        record_messages: recordingEnabled(),
       });
       // Local creates do not wait for the asynchronous server-sent event. This
       // immediately reruns the sidebar's harness-list resource with fresh data.
       refreshAgents();
       // The user dismissed the modal while the request was in flight — honour
       // that dismissal and skip every success side effect + the navigation.
-      if (cancelled) return;
+      if (isStale(token)) return;
       toast.success(`Harness "${agentName}" connected`);
       props.onClose();
       resetForm();
@@ -89,7 +127,7 @@ const AddAgentModal: Component<{ open: boolean; onClose: () => void }> = (props)
       }
 
       // A dismissal during the providers lookup must also skip the redirect.
-      if (cancelled) return;
+      if (isStale(token)) return;
 
       // Land on Routing either way; the new agent's API key is surfaced there.
       navigate(`/harnesses/${encodeURIComponent(slug)}/routing`, {
@@ -105,10 +143,22 @@ const AddAgentModal: Component<{ open: boolean; onClose: () => void }> = (props)
     }
   };
 
+  const handleCreate = async () => {
+    if (!name().trim()) return;
+    // A second submit while the create is already running would issue a
+    // duplicate agent-creation request.
+    if (creating()) return;
+    // The legal line under the toggles is the consent act: the backend records
+    // the install-level consent when the create carries autofix_enabled: true.
+    await createAgentNow(beginAttempt(), autofixEnabled());
+  };
+
   const resetForm = () => {
     setName('');
     setCategory('personal');
     setPlatform(PLATFORMS_BY_CATEGORY['personal'][0] ?? null);
+    setAutofixEnabled(true);
+    setRecordingEnabled(true);
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
@@ -162,6 +212,87 @@ const AddAgentModal: Component<{ open: boolean; onClose: () => void }> = (props)
               />
             </div>
           </div>
+
+          <div class="add-agent-toggles">
+            <div class="model-params__group">
+              {/* Same label treatment as the Type / Harness name field labels,
+                  not the larger Model-params group header. */}
+              <div class="modal-card__field-label add-agent-toggles__header">Settings</div>
+              <div class="model-params__group-card">
+                <div class="model-params__row">
+                  <div class="model-params__row-text">
+                    <div class="model-params__label-title">
+                      <span>Autofix</span>
+                    </div>
+                    <div class="model-params__label-hint">
+                      Repair eligible failing requests before falling back.
+                    </div>
+                  </div>
+                  <div class="model-params__row-control">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={autofixEnabled()}
+                      aria-label="Autofix"
+                      class="settings-switch"
+                      classList={{ 'settings-switch--on': autofixEnabled() }}
+                      disabled={creating()}
+                      onClick={() => setAutofixEnabled(!autofixEnabled())}
+                    >
+                      <span class="settings-switch__track">
+                        <span class="settings-switch__thumb" />
+                      </span>
+                    </button>
+                  </div>
+                </div>
+                <div class="model-params__separator" />
+                <div class="model-params__row">
+                  <div class="model-params__row-text">
+                    <div class="model-params__label-title">
+                      <span>Enable logs</span>
+                    </div>
+                    <div class="model-params__label-hint">
+                      See exactly what your agent sends on every attempt, and debug it faster.{' '}
+                      {selfHosted.state === 'ready' &&
+                        (selfHosted()
+                          ? 'Logs stay in your own database.'
+                          : 'Logs are stored in your Manifest workspace.')}
+                    </div>
+                  </div>
+                  <div class="model-params__row-control">
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={recordingEnabled()}
+                      aria-label="Enable logs"
+                      class="settings-switch"
+                      classList={{ 'settings-switch--on': recordingEnabled() }}
+                      disabled={creating()}
+                      onClick={() => setRecordingEnabled(!recordingEnabled())}
+                    >
+                      <span class="settings-switch__track">
+                        <span class="settings-switch__thumb" />
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <Show when={autofixEnabled()}>
+            <p class="autofix-consent__legal add-agent-legal">
+              By enabling Autofix, you agree to Manifest&apos;s{' '}
+              <a href="https://manifest.build/terms" target="_blank" rel="noopener noreferrer">
+                Terms
+              </a>{' '}
+              and{' '}
+              <a href="https://manifest.build/privacy" target="_blank" rel="noopener noreferrer">
+                Privacy Policy
+              </a>
+              .
+            </p>
+          </Show>
 
           <div class="modal-card__footer">
             <button

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { RouteModelParamsModule } from './model-params/route-model-params.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ModelPricesModule } from '../model-prices/model-prices.module';
 import { ModelDiscoveryModule } from '../model-discovery/model-discovery.module';
@@ -30,6 +31,7 @@ import { Tenant } from '../entities/tenant.entity';
 import { TierAssignment } from '../entities/tier-assignment.entity';
 import { SpecificityAssignment } from '../entities/specificity-assignment.entity';
 import { HeaderTier } from '../entities/header-tier.entity';
+import { InstallMetadata } from '../entities/install-metadata.entity';
 
 @Module({
   imports: [
@@ -42,6 +44,7 @@ import { HeaderTier } from '../entities/header-tier.entity';
       TierAssignment,
       SpecificityAssignment,
       HeaderTier,
+      InstallMetadata,
     ]),
     RoutingCoreModule,
     ModelPricesModule,
@@ -54,6 +57,7 @@ import { HeaderTier } from '../entities/header-tier.entity';
     ResolveModule,
     HeaderTiersModule,
     AutofixModule,
+    RouteModelParamsModule,
   ],
   controllers: [
     ProviderController,

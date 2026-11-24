@@ -31,54 +31,6 @@
   color: hsl(var(--popover-foreground));
 }
 
-/* ── Cost Range Filter ─────────────────────────────── */
-.cost-range-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.cost-range-filter__input {
-  width: 80px;
-  height: 2.25rem;
-  background: hsl(var(--background));
-  color: hsl(var(--foreground));
-  border: 1px solid hsl(var(--input));
-  border-radius: var(--radius);
-  padding: 0 0.5rem;
-  font-size: var(--font-size-sm);
-  font-family: var(--font-family);
-  transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-
-.cost-range-filter__input::placeholder {
-  color: hsl(var(--muted-foreground));
-}
-
-.cost-range-filter__input:focus-visible {
-  outline: none;
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
-}
-
-/* Hide number input spinners */
-.cost-range-filter__input::-webkit-inner-spin-button,
-.cost-range-filter__input::-webkit-outer-spin-button {
-  -webkit-appearance: none;
-  margin: 0;
-}
-.cost-range-filter__input {
-  -moz-appearance: textfield;
-}
-
-.cost-range-filter__sep {
-  color: hsl(var(--muted-foreground));
-  font-size: var(--font-size-sm);
-  user-select: none;
-}
-
 /* ── Setup Steps (inline) ──────────────────────────── */
 .setup-steps {
   display: flex;
@@ -339,8 +291,8 @@
 }
 
 .header__logo-img {
-  width: 104px;
-  height: auto;
+  height: 28px;
+  width: auto;
   object-fit: contain;
 }
 
@@ -365,6 +317,10 @@
   border-radius: var(--radius);
   background: hsl(var(--success) / 0.15);
   color: hsl(var(--success));
+  /* The header's left group shrinks around the breadcrumb on small screens;
+     the badge must stay one line rather than break "SELF-" / "HOSTED". */
+  white-space: nowrap;
+  flex-shrink: 0;
   line-height: 1;
   user-select: none;
 }
@@ -372,53 +328,6 @@
 .header__mode-badge--dev {
   background: hsl(25 95% 53% / 0.15);
   color: hsl(25 95% 53%);
-}
-
-.header__dev-autofix {
-  gap: 5px;
-  border: 1px solid hsl(25 95% 53% / 0.2);
-  font: inherit;
-  font-size: 10px;
-  font-weight: 600;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    border-color var(--transition-fast);
-}
-
-.header__dev-autofix:hover:not(:disabled) {
-  background: hsl(25 95% 53% / 0.22);
-  border-color: hsl(25 95% 53% / 0.4);
-}
-
-.header__dev-autofix:focus-visible {
-  outline: 2px solid hsl(25 95% 53% / 0.65);
-  outline-offset: 2px;
-}
-
-.header__dev-autofix:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.header__dev-autofix-divider {
-  width: 1px;
-  height: 10px;
-  background: currentColor;
-  opacity: 0.3;
-}
-
-.header__dev-autofix-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: hsl(var(--muted-foreground));
-  box-shadow: 0 0 0 2px hsl(var(--muted-foreground) / 0.12);
-}
-
-.header__dev-autofix--active .header__dev-autofix-dot {
-  background: hsl(var(--success));
-  box-shadow: 0 0 0 2px hsl(var(--success) / 0.18);
 }
 
 .header__separator {
@@ -452,9 +361,21 @@
   height: 14px;
 }
 
+.header__breadcrumb-provider-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.header__breadcrumb-label {
+  color: hsl(var(--muted-foreground));
+  font-weight: 400;
+}
+
 .dark .header__breadcrumb-icon[src*='openai'],
 .dark .header__breadcrumb-icon[src*='anthropic'],
 .dark .header__breadcrumb-icon[src*='vercel'],
+.dark .header__breadcrumb-icon[src*='hermes'],
 .dark .header__breadcrumb-icon[src*='other'] {
   filter: invert(1);
 }

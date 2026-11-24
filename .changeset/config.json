@@ -7,5 +7,5 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": ["manifest-backend", "manifest-frontend", "manifest-shared"]
+  "ignore": ["manifest-backend", "manifest-frontend", "manifest-shared", "mnfst-gateway-cli"]
 }

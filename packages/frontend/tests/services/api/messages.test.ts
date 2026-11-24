@@ -61,6 +61,51 @@ describe('messages API client', () => {
     expect(url).toContain('include_filter_options=false');
   });
 
+  it('getMessages can bypass the GET cache for polling', async () => {
+    const fetchMock = setupFetch({ rows: [] });
+    const params = { agent_name: 'cache-bypass-demo', limit: '1' };
+
+    await messages.getMessages(params);
+    await messages.getMessages(params, { cache: false });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('getMessageCount requests one row with an exact total', async () => {
+    const fetchMock = setupFetch({ total_count: 42 });
+
+    await messages.getMessageCount({ range: '30d', agent_name: 'demo' });
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/messages');
+    expect(url).toContain('range=30d');
+    expect(url).toContain('agent_name=demo');
+    expect(url).toContain('limit=1');
+    expect(url).toContain('include_total=true');
+    expect(url).toContain('cache_total=true');
+    expect(url).toContain('include_filter_options=false');
+  });
+
+  it('getRecentRequests asks for five rows without count, facets, or Playground', async () => {
+    const fetchMock = setupFetch({ items: [] });
+
+    await messages.getRecentRequests('30d');
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/messages');
+    expect(url).toContain('range=30d');
+    expect(url).toContain('limit=5');
+    expect(url).toContain('include_total=false');
+    expect(url).toContain('include_filter_options=false');
+    expect(url).toContain('exclude_playground=true');
+  });
+
+  it('getRecentRequests defaults to 24h', async () => {
+    const fetchMock = setupFetch({ items: [] });
+    await messages.getRecentRequests();
+    expect(fetchMock.mock.calls[0][0] as string).toContain('range=24h');
+  });
+
   it('getMessageFilterOptions GETs filter metadata with agent scope', async () => {
     const fetchMock = setupFetch({ providers: [] });
     await messages.getMessageFilterOptions({ range: '30d', agent_name: 'demo' });

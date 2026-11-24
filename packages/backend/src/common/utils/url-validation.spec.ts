@@ -164,6 +164,10 @@ describe('isCloudMetadataIp', () => {
     expect(isCloudMetadataIp('fd00:ec2::254')).toBe(true);
   });
 
+  it('does not treat a longer fd00:ec2::254-prefixed ULA as metadata', () => {
+    expect(isCloudMetadataIp('fd00:ec2::254:1')).toBe(false);
+  });
+
   it('detects IPv4-mapped metadata IP', () => {
     expect(isCloudMetadataIp('::ffff:169.254.169.254')).toBe(true);
   });

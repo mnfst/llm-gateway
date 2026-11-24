@@ -1,3 +1,8 @@
+import {
+  AnalyticsScopeService,
+  agentScopeCacheKey,
+  type AgentScope,
+} from './analytics-scope.service';
 import { Injectable, Optional } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { Brackets, DataSource, In, QueryRunner, Repository, SelectQueryBuilder } from 'typeorm';
@@ -29,6 +34,7 @@ import { computeCutoff, sqlCastFloat, sqlSanitizeCost } from '../../common/utils
 import { inferProviderFromModel } from '../../common/utils/provider-inference';
 import { TtlCache } from '../../common/utils/ttl-cache';
 import { ManifestRequest } from '../../entities/request.entity';
+import { HeaderTier } from '../../entities/header-tier.entity';
 
 // The Messages-log "failed"/"errors" filters and every "messages" KPI count
 // share one definition of an error status (see query-helpers.sqlCountMessages).
@@ -74,16 +80,45 @@ WITH RECURSIVE p AS (
 )
 SELECT provider FROM p WHERE provider IS NOT NULL`;
 
+/**
+ * Bound a correlated Provider Attempt lookup to the tenant and time window its
+ * parent Request already sits in.
+ *
+ * An attempt always carries its parent's tenant and never starts before its
+ * parent: the Request row takes the first attempt's start time, and the request
+ * backfill keeps the earliest attempt's time. So for any Request in range these
+ * predicates are always true, and the lookup returns the same rows. They exist
+ * for the planner: without them Postgres probes `agent_messages` by request_id
+ * once per parent row (about 135k pages for a 23k-request week, tens of seconds
+ * cold); with them it reads the tenant's attempts in range once through a
+ * (tenant_id, timestamp) index and hash-joins them. The day of slack absorbs
+ * clock ordering between rows written by different hops.
+ *
+ * `tenantParam` and `cutoffParam` name parameters the caller already binds.
+ */
+function attemptWindow(alias: string, tenantParam: string, cutoffParam?: string): string {
+  const tenant = `${alias}.tenant_id = :${tenantParam}`;
+  if (!cutoffParam) return tenant;
+  return `${tenant} AND ${alias}.timestamp >= CAST(:${cutoffParam} AS timestamp) - interval '1 day'`;
+}
+
 interface MessageFilterParams {
   range?: string;
   tenantId: string | null;
   agent_name?: string;
+  agentScope?: AgentScope;
 }
 
 interface MessageQueryParams extends MessageFilterParams {
   provider?: string;
   /** tenant_providers ids; requests must have touched one of these connections. */
   connections?: string[];
+  /**
+   * Model names, OR'd together. Matches any attempt's model — the same "any
+   * attempt" rule the provider filter uses — or, for a request that never
+   * reached a provider, its `requested_model`.
+   */
+  models?: string[];
   service_type?: string;
   cost_min?: number;
   cost_max?: number;
@@ -99,6 +134,8 @@ interface MessageQueryParams extends MessageFilterParams {
   specificity_category?: string;
   header_tier_id?: string;
   include_total?: boolean;
+  /** Allow a recent exact total to be reused instead of forcing a fresh first-page count. */
+  cache_total?: boolean;
   include_filter_options?: boolean;
   exclude_playground?: boolean;
   /**
@@ -149,9 +186,46 @@ function connectionAttemptPredicate(
   );
 }
 
+/** A custom (header) tier as the Requests Tier filter offers it. */
+export interface HeaderTierFilterOption {
+  name: string;
+  /** Every tier id the option covers — same name on several harnesses. */
+  ids: string[];
+}
+
+/**
+ * One Tier-filter option can cover the same custom tier defined on several
+ * harnesses, so `header_tier_id` accepts a comma-separated list of ids. A
+ * single id (what older clients send) parses to a one-element list.
+ */
+function parseHeaderTierIds(value: string): string[] {
+  return [
+    ...new Set(
+      value
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+/** Filter metadata for a caller that opted out of computing it. */
+function emptyFilterOptions(): {
+  providers: string[];
+  provider_labels: Record<string, string>;
+  header_tiers: HeaderTierFilterOption[];
+  models: string[];
+} {
+  return { providers: [], provider_labels: {}, header_tiers: [], models: [] };
+}
+
 @Injectable()
 export class MessagesQueryService {
   private readonly modelsCache = new TtlCache<string, { models: string[]; providers: string[] }>({
+    maxSize: MAX_CACHE_ENTRIES,
+    ttlMs: MODELS_CACHE_TTL_MS,
+  });
+  private readonly attemptlessModelsCache = new TtlCache<string, string[]>({
     maxSize: MAX_CACHE_ENTRIES,
     ttlMs: MODELS_CACHE_TTL_MS,
   });
@@ -161,6 +235,7 @@ export class MessagesQueryService {
   });
 
   constructor(
+    private readonly analyticsScope: AnalyticsScopeService,
     @InjectRepository(AgentMessage)
     private readonly turnRepo: Repository<AgentMessage>,
     @InjectRepository(CustomProvider)
@@ -174,9 +249,18 @@ export class MessagesQueryService {
     @Optional()
     @InjectDataSource()
     private readonly dataSource?: DataSource,
+    @Optional()
+    @InjectRepository(HeaderTier)
+    private readonly headerTierRepo?: Repository<HeaderTier>,
   ) {}
 
   async getMessages(params: MessageQueryParams) {
+    params = {
+      ...params,
+      agentScope:
+        params.agentScope ??
+        (await this.analyticsScope.resolve(params.tenantId, params.agent_name)),
+    };
     if (this.requestRepo) return this.getRequests(params);
     const baseQb = await this.buildBaseMessageQuery(params);
 
@@ -200,7 +284,9 @@ export class MessagesQueryService {
     // always runs a fresh count so the total stays current for clients that poll
     // it (a stale first-page total would lag newly recorded messages by the TTL).
     const cachedCount =
-      includeTotal && params.cursor ? this.countCache.get(countCacheKey) : undefined;
+      includeTotal && (params.cursor || params.cache_total)
+        ? this.countCache.get(countCacheKey)
+        : undefined;
     const countHit = cachedCount !== undefined;
     const [countResult, rows, filterOptions] = await Promise.all([
       includeTotal ? (countHit ? null : countQb.getRawOne()) : null,
@@ -211,7 +297,7 @@ export class MessagesQueryService {
         .getRawMany(),
       includeFilterOptions
         ? this.getMessageFilterOptions(params)
-        : Promise.resolve({ providers: [] as string[], provider_labels: {} }),
+        : Promise.resolve(emptyFilterOptions()),
     ]);
 
     const hasMore = rows.length > params.limit;
@@ -235,31 +321,20 @@ export class MessagesQueryService {
       total_count_exact: includeTotal,
       providers: filterOptions.providers,
       provider_labels: filterOptions.provider_labels,
+      header_tiers: filterOptions.header_tiers,
+      models: filterOptions.models,
     };
   }
 
   /** Request-first log. Attempts are aggregated into their parent row. */
   private async getRequests(params: MessageQueryParams) {
-    const qb = this.requestRepo!.createQueryBuilder('r').leftJoin(
-      AgentMessage,
-      'at',
-      'at.request_id = r.id',
-    );
+    const qb = this.requestRepo!.createQueryBuilder('r');
     const cutoff = params.range ? computeCutoff(rangeToInterval(params.range)) : undefined;
     if (cutoff) qb.where('r.timestamp >= :requestCutoff', { requestCutoff: cutoff });
-    if (params.tenantId)
-      qb.andWhere('r.tenant_id = :requestTenantId', { requestTenantId: params.tenantId });
-    else qb.andWhere('1 = 0');
-    if (params.agent_name) {
-      qb.andWhere(
-        `r.agent_id = (
-          SELECT id FROM agents
-          WHERE tenant_id = r.tenant_id AND name = :requestAgentName AND deleted_at IS NULL
-          LIMIT 1
-        )`,
-        { requestAgentName: params.agent_name },
-      );
-    }
+    addTenantFilter(qb, params.tenantId, params.agentScope, 'r');
+    // Only meaningful with a tenant: without one the query is already `1 = 0`.
+    const window = (alias: string): string =>
+      attemptWindow(alias, 'tenantId', cutoff ? 'requestCutoff' : undefined);
     if (params.exclude_playground) {
       qb.andWhere(sqlExcludePlayground('r'));
     }
@@ -269,7 +344,10 @@ export class MessagesQueryService {
     if (params.status === 'failed' || params.status === 'errors') {
       // "Not a success" across both vocabularies: a normalized `success` row must
       // never leak into the failed filter just because it is not literally `ok`.
-      qb.andWhere(`r.status NOT IN (${SUCCESS_STATUS_SQL_LIST})`);
+      // `cancelled` and `pending` are excluded on purpose — a hung-up caller and
+      // an in-flight request are not failures, which is the same line
+      // `sqlIsFailedStatus` draws. `cancelled` has its own filter value.
+      qb.andWhere(sqlIsFailedStatus('r.status'));
     } else if (params.status === 'ok' || params.status === 'success') {
       qb.andWhere(`r.status IN (${SUCCESS_STATUS_SQL_LIST})`);
     } else if (params.status) {
@@ -285,11 +363,33 @@ export class MessagesQueryService {
         requestErrorClass: params.error_class,
       });
     }
+    if (params.models?.length) {
+      // Kept outside `attemptPredicates` on purpose: those AND together on ONE
+      // attempt row, while a model match is about the request as a whole. The
+      // requested_model arm catches Manifest-blocked requests, which carry no
+      // attempt but still render a model in the log.
+      qb.andWhere(
+        `(EXISTS (
+            SELECT 1 FROM agent_messages model_attempt
+            WHERE model_attempt.request_id = r.id AND ${window('model_attempt')}
+              AND model_attempt.model IN (:...requestModels)
+          )
+          OR (
+            r.requested_model IN (:...requestModels)
+            AND NOT EXISTS (
+              SELECT 1 FROM agent_messages any_attempt
+              WHERE any_attempt.request_id = r.id AND ${window('any_attempt')}
+            )
+          ))`,
+        { requestModels: params.models },
+      );
+    }
     const attemptPredicates: string[] = [];
     const attemptParameters: Record<string, unknown> = {};
     const matchingAttempt = (predicates: string[]): string => `EXISTS (
       SELECT 1 FROM agent_messages filtered_attempt
-      WHERE filtered_attempt.request_id = r.id AND ${predicates.join(' AND ')}
+      WHERE filtered_attempt.request_id = r.id AND ${window('filtered_attempt')}
+        AND ${predicates.join(' AND ')}
     )`;
     if (params.provider) {
       attemptPredicates.push('filtered_attempt.provider = :requestProvider');
@@ -320,9 +420,12 @@ export class MessagesQueryService {
       attemptPredicates.push('filtered_attempt.specificity_category = :requestSpecificity');
       attemptParameters['requestSpecificity'] = params.specificity_category;
     }
-    if (params.header_tier_id) {
-      attemptPredicates.push('filtered_attempt.header_tier_id = :requestHeaderTier');
-      attemptParameters['requestHeaderTier'] = params.header_tier_id;
+    const requestHeaderTierIds = params.header_tier_id
+      ? parseHeaderTierIds(params.header_tier_id)
+      : [];
+    if (requestHeaderTierIds.length) {
+      attemptPredicates.push('filtered_attempt.header_tier_id IN (:...requestHeaderTiers)');
+      attemptParameters['requestHeaderTiers'] = requestHeaderTierIds;
     }
     if (params.triggers?.length) {
       // Several recovery-attempt kinds OR together (a multiselect facet). When
@@ -346,18 +449,24 @@ export class MessagesQueryService {
         : '';
       const triggerExists = (condition: string): string => `EXISTS (
         SELECT 1 FROM agent_messages trigger_attempt
-        WHERE trigger_attempt.request_id = r.id AND ${condition}${connScope}
+        WHERE trigger_attempt.request_id = r.id AND ${window('trigger_attempt')}
+          AND ${condition}${connScope}
       )`;
       const parts = params.triggers.map((trigger) => {
         if (trigger === 'autofix') return triggerExists('trigger_attempt.autofix_applied = true');
         if (trigger === 'fallback')
           return triggerExists('trigger_attempt.fallback_from_model IS NOT NULL');
-        // 'none': no recovery attempt anywhere on the request.
-        return `NOT EXISTS (
+        // 'none': no recovery attempt anywhere on the request. Two anti-joins
+        // rather than one over `autofix OR fallback`: each kind has its own
+        // partial index, and the OR forced a heap read of every attempt in range.
+        const noAttempt = (condition: string): string => `NOT EXISTS (
           SELECT 1 FROM agent_messages trigger_attempt
-          WHERE trigger_attempt.request_id = r.id
-          AND (trigger_attempt.autofix_applied = true OR trigger_attempt.fallback_from_model IS NOT NULL)
+          WHERE trigger_attempt.request_id = r.id AND ${window('trigger_attempt')}
+            AND ${condition}
         )`;
+        return `(${noAttempt('trigger_attempt.autofix_applied = true')} AND ${noAttempt(
+          'trigger_attempt.fallback_from_model IS NOT NULL',
+        )})`;
       });
       qb.andWhere(`(${parts.join(' OR ')})`, triggerParameters);
     }
@@ -387,7 +496,8 @@ export class MessagesQueryService {
         qb.andWhere(
           `EXISTS (
             SELECT 1 FROM agent_messages outcome_attempt
-            WHERE outcome_attempt.request_id = r.id AND ${condition}${connScope}
+            WHERE outcome_attempt.request_id = r.id AND ${window('outcome_attempt')}
+              AND ${condition}${connScope}
           )`,
           outcomeParameters,
         );
@@ -396,6 +506,28 @@ export class MessagesQueryService {
     if (attemptPredicates.length > 0) {
       qb.andWhere(matchingAttempt(attemptPredicates), attemptParameters);
     }
+    const includeTotal = params.include_total !== false;
+    const countCacheKey = this.buildCountCacheKey(params);
+    const cachedCount =
+      includeTotal && (params.cursor || params.cache_total)
+        ? this.countCache.get(countCacheKey)
+        : undefined;
+    const needsCount = includeTotal && cachedCount === undefined;
+    const canPageFirst = params.cost_min === undefined && params.cost_max === undefined;
+    let requestCountQuery: { sql: string; parameters: unknown[] } | null = null;
+
+    // Without cost HAVING, the exact total is a direct count of eligible parent
+    // requests. Do not clone the display query: joining every Provider Attempt
+    // before COUNT made the common unfiltered first page scan the full history.
+    if (needsCount && canPageFirst) {
+      const countSource = qb.clone().select('COUNT(*)', 'total').orderBy();
+      const [countSql, countParameters] = countSource.getQueryAndParameters();
+      requestCountQuery = {
+        sql: countSql,
+        parameters: countParameters,
+      };
+    }
+
     if (params.cursor) {
       const sep = params.cursor.indexOf('|');
       if (sep !== -1) {
@@ -417,7 +549,20 @@ export class MessagesQueryService {
       }
     }
 
-    const includeTotal = params.include_total !== false;
+    if (canPageFirst) {
+      // Select the 51 parent ids first, then aggregate attempts only for that
+      // small page. The outer WHERE intentionally replaces the duplicated
+      // filters: they remain inside the bounded keyset subquery.
+      const pageSource = qb
+        .clone()
+        .select('r.id', 'id')
+        .orderBy('r.timestamp', 'DESC')
+        .addOrderBy('r.id', 'DESC')
+        .limit(params.limit + 1);
+      qb.where(`r.id IN (${pageSource.getQuery()})`, pageSource.getParameters());
+    }
+
+    qb.leftJoin(AgentMessage, 'at', 'at.request_id = r.id');
     const rank = `CASE WHEN ${sqlIsSuccessStatus('at.status')} THEN 3 WHEN NOT COALESCE(at.superseded, false) AND at.status NOT IN ('fallback_error', 'auto_fixed') THEN 2 ELSE 1 END`;
     const picked = (column: string): string =>
       `(ARRAY_AGG(${column} ORDER BY at.attempt_number DESC NULLS LAST, ${rank} DESC, at.timestamp DESC, at.id DESC) FILTER (WHERE at.id IS NOT NULL))[1]`;
@@ -434,6 +579,7 @@ export class MessagesQueryService {
       .addSelect('COALESCE(SUM(at.input_tokens + at.output_tokens), 0)', 'total_tokens')
       .addSelect(`COALESCE(SUM(${safeCost}), 0)`, 'cost')
       .addSelect('r.status', 'status')
+      .addSelect('r.api_mode', 'api_mode')
       .addSelect('r.error_message', 'error_message')
       .addSelect('r.error_code', 'error_code')
       .addSelect('r.error_origin', 'error_origin')
@@ -477,8 +623,7 @@ export class MessagesQueryService {
     // Count the grouped request rows after cost HAVING has been applied. A
     // window count on the page query would disappear on an empty page, making
     // an exact non-zero total look like zero after the last cursor.
-    let requestCountQuery: { sql: string; parameters: unknown[] } | null = null;
-    if (includeTotal) {
+    if (needsCount && !canPageFirst) {
       const countSource = qb.clone().select('r.id', 'id').orderBy();
       const [countSql, countParameters] = countSource.getQueryAndParameters();
       requestCountQuery = {
@@ -516,6 +661,7 @@ export class MessagesQueryService {
       .addSelect('at.cache_read_tokens', 'cache_read_tokens')
       .addSelect('at.cache_creation_tokens', 'cache_creation_tokens')
       .addSelect('at.duration_ms', 'duration_ms')
+      .addSelect('NULL', 'api_mode')
       .addSelect('1', 'attempt_count');
     this.applyCursor(legacyDataQb, params.cursor);
 
@@ -537,7 +683,7 @@ export class MessagesQueryService {
       // issuing concurrent client.query calls (deprecated in pg); all four
       // statements still share this transaction snapshot.
       const requestCountRows = await requestCountPromise;
-      const legacyCount = includeTotal ? await legacyCountQb.getRawOne() : null;
+      const legacyCount = needsCount ? await legacyCountQb.getRawOne() : null;
       const requestRows = await qb
         .orderBy('r.timestamp', 'DESC')
         .addOrderBy('r.id', 'DESC')
@@ -555,7 +701,7 @@ export class MessagesQueryService {
         this.withCompatibilitySnapshot(readRows),
         params.include_filter_options !== false
           ? this.getMessageFilterOptions(params)
-          : Promise.resolve({ providers: [] as string[], provider_labels: {} }),
+          : Promise.resolve(emptyFilterOptions()),
       ]);
     const rows = [...requestRows, ...legacyRows].sort((a, b) => {
       const byTime = new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
@@ -568,11 +714,17 @@ export class MessagesQueryService {
       items,
       next_cursor: hasMore && last ? this.encodeCursor(last) : null,
       total_count: includeTotal
-        ? Number(requestCountRows[0]?.total ?? 0) + Number(legacyCount?.total ?? 0)
+        ? (cachedCount ??
+          this.cacheAndReturnCount(
+            countCacheKey,
+            Number(requestCountRows[0]?.total ?? 0) + Number(legacyCount?.total ?? 0),
+          ))
         : items.length + (hasMore ? 1 : 0),
       total_count_exact: includeTotal,
       providers: filterOptions.providers,
       provider_labels: filterOptions.provider_labels,
+      header_tiers: filterOptions.header_tiers,
+      models: filterOptions.models,
     };
   }
 
@@ -630,15 +782,66 @@ export class MessagesQueryService {
   async getMessageFilterOptions(params: MessageFilterParams): Promise<{
     providers: string[];
     provider_labels: Record<string, string>;
+    header_tiers: HeaderTierFilterOption[];
+    models: string[];
   }> {
-    const distinctRows = await this.getDistinctModels(
-      params.tenantId,
-      params.range,
-      params.agent_name,
-    );
+    params = {
+      ...params,
+      agentScope:
+        params.agentScope ??
+        (await this.analyticsScope.resolve(params.tenantId, params.agent_name)),
+    };
+    const [distinctRows, headerTiers] = await Promise.all([
+      this.getDistinctModels(params.tenantId, params.range, params.agentScope),
+      this.getHeaderTierOptions(params.tenantId, params.agentScope),
+    ]);
     const providers = this.deriveProviders(distinctRows.models, distinctRows.providers);
     const providerLabels = await this.resolveCustomProviderLabels(providers, params.tenantId);
-    return { providers, provider_labels: providerLabels };
+    // The distinct-model scan already ran to derive providers, so the Model
+    // filter reuses it. It only sees `agent_messages`, though: a request Manifest
+    // blocked before any provider call has no attempt, and the log renders its
+    // `requested_model` in the Model column. Those models must be selectable too,
+    // or the column shows a value the dropdown cannot offer.
+    const blockedModels = await this.getAttemptlessRequestedModels(params);
+    const models = [...new Set([...distinctRows.models, ...blockedModels])].sort();
+    return {
+      providers,
+      provider_labels: providerLabels,
+      header_tiers: headerTiers,
+      models,
+    };
+  }
+
+  /**
+   * Custom (header) tiers the Tier filter can offer. The Requests log spans the
+   * whole tenant unless a harness is picked, so with no `agent_name` this lists
+   * every harness's tiers — otherwise the filter would be empty exactly where
+   * the log shows every harness's requests. Same-named tiers on different
+   * harnesses collapse into one option carrying all their ids, because there
+   * "Premium" can only mean "any harness's Premium tier".
+   *
+   * Disabled tiers stay listed: requests routed through them before they were
+   * turned off are still in the log.
+   */
+  private async getHeaderTierOptions(
+    tenantId: string | null,
+    agentScope?: AgentScope,
+  ): Promise<HeaderTierFilterOption[]> {
+    if (!tenantId || !this.headerTierRepo) return [];
+    const qb = this.headerTierRepo
+      .createQueryBuilder('ht')
+      .select('ht.id', 'id')
+      .addSelect('ht.name', 'name')
+      .orderBy('LOWER(ht.name)', 'ASC');
+    addTenantFilter(qb, tenantId, agentScope, 'ht');
+    const rows = await qb.getRawMany<{ id: string; name: string }>();
+    const byName = new Map<string, HeaderTierFilterOption>();
+    for (const row of rows) {
+      const existing = byName.get(row.name.toLowerCase());
+      if (existing) existing.ids.push(row.id);
+      else byName.set(row.name.toLowerCase(), { name: row.name, ids: [row.id] });
+    }
+    return [...byName.values()];
   }
 
   /**
@@ -666,10 +869,12 @@ export class MessagesQueryService {
     range?: string;
     tenantId: string | null;
     provider?: string;
+    models?: string[];
     service_type?: string;
     cost_min?: number;
     cost_max?: number;
     agent_name?: string;
+    agentScope?: AgentScope;
     status?: MessageStatusFilter;
     triggers?: MessageTriggerFilter[];
     origin?: MessageOriginFilter;
@@ -682,27 +887,16 @@ export class MessagesQueryService {
     const qb = this.turnRepo.createQueryBuilder('at');
     if (cutoff) qb.where('at.timestamp >= :cutoff', { cutoff });
 
-    addTenantFilter(qb, params.tenantId);
+    addTenantFilter(qb, params.tenantId, params.agentScope);
 
+    if (params.models?.length)
+      qb.andWhere('at.model IN (:...legacyModels)', { legacyModels: params.models });
     if (params.service_type)
       qb.andWhere('at.service_type = :serviceType', { serviceType: params.service_type });
     if (params.cost_min !== undefined)
       qb.andWhere('at.cost_usd >= :costMin', { costMin: params.cost_min });
     if (params.cost_max !== undefined)
       qb.andWhere('at.cost_usd <= :costMax', { costMax: params.cost_max });
-    if (params.agent_name) {
-      qb.andWhere(
-        `at.agent_id = (
-          SELECT id FROM agents
-          WHERE tenant_id = at.tenant_id
-            AND name = :filterAgent
-            AND deleted_at IS NULL
-          LIMIT 1
-        )`,
-        { filterAgent: params.agent_name },
-      );
-    }
-
     if (params.status === 'failed') {
       qb.andWhere('at.status IN (:...failedStatuses)', { failedStatuses: FAILED_STATUSES });
     } else if (params.status === 'errors') {
@@ -739,9 +933,10 @@ export class MessagesQueryService {
       });
     }
 
-    if (params.header_tier_id) {
-      qb.andWhere('at.header_tier_id = :headerTierFilter', {
-        headerTierFilter: params.header_tier_id,
+    const headerTierIds = params.header_tier_id ? parseHeaderTierIds(params.header_tier_id) : [];
+    if (headerTierIds.length) {
+      qb.andWhere('at.header_tier_id IN (:...headerTierFilter)', {
+        headerTierFilter: headerTierIds,
       });
     }
 
@@ -749,7 +944,7 @@ export class MessagesQueryService {
       await this.applyProviderFilter(qb, params.provider, {
         tenantId: params.tenantId,
         range: params.range,
-        agentName: params.agent_name,
+        agentScope: params.agentScope,
       });
     }
 
@@ -795,12 +990,12 @@ export class MessagesQueryService {
   private async applyProviderFilter(
     qb: SelectQueryBuilder<AgentMessage>,
     provider: string,
-    ctx: { tenantId: string | null; range?: string; agentName?: string },
+    ctx: { tenantId: string | null; range?: string; agentScope?: AgentScope },
   ): Promise<void> {
     // Prefer the stored provider column (populated by the proxy from routing
     // resolution), and fall back to inference for legacy rows that pre-date
     // the column.
-    const distinct = await this.getDistinctModels(ctx.tenantId, ctx.range, ctx.agentName);
+    const distinct = await this.getDistinctModels(ctx.tenantId, ctx.range, ctx.agentScope);
     const matching = distinct.models.filter((m) => inferProviderFromModel(m) === provider);
     qb.andWhere(
       new Brackets((sub) => {
@@ -867,12 +1062,48 @@ export class MessagesQueryService {
     return [...seen].sort();
   }
 
+  /**
+   * Models named only by requests that never reached a provider. Cached on the
+   * same key shape and TTL as the distinct-model scan, so a tenant pays for it
+   * once per window rather than on every log load.
+   */
+  private async getAttemptlessRequestedModels(params: MessageFilterParams): Promise<string[]> {
+    // No tenant resolves to no rows, matching addTenantFilter's own contract.
+    if (!this.requestRepo || params.tenantId === null) return [];
+    const cacheKey = `blocked:${params.tenantId ?? 'no-tenant'}:${agentScopeCacheKey(params.agentScope)}:${params.range ?? 'all'}`;
+    const cached = this.attemptlessModelsCache.get(cacheKey);
+    if (cached) return cached;
+
+    const cutoff = params.range
+      ? computeCutoff(rangeToInterval(params.range))
+      : computeCutoff(DISTINCT_MODELS_DEFAULT_INTERVAL);
+    const qb = this.requestRepo
+      .createQueryBuilder('r')
+      .select('DISTINCT r.requested_model', 'model')
+      .where('r.timestamp >= :cutoff', { cutoff })
+      .andWhere("r.requested_model IS NOT NULL AND r.requested_model <> ''")
+      // The attempt window turns a per-request probe (40 s cold on a 23k-request
+      // week, for an answer that is almost always empty) into one hash anti-join.
+      .andWhere(
+        `NOT EXISTS (
+          SELECT 1 FROM agent_messages blocked_attempt
+          WHERE blocked_attempt.request_id = r.id
+            AND ${attemptWindow('blocked_attempt', 'tenantId', 'cutoff')}
+        )`,
+      );
+    addTenantFilter(qb, params.tenantId, params.agentScope, 'r');
+    const rows = (await qb.getRawMany()) as { model: string }[];
+    const models = rows.map((row) => String(row.model)).filter(Boolean);
+    this.attemptlessModelsCache.set(cacheKey, models);
+    return models;
+  }
+
   private async getDistinctModels(
     tenantId: string | null,
     range?: string,
-    agentName?: string,
+    agentScope?: AgentScope,
   ): Promise<{ models: string[]; providers: string[] }> {
-    const cacheKey = `${tenantId ?? 'no-tenant'}:${agentName ?? ''}:${range ?? 'all'}`;
+    const cacheKey = `${tenantId ?? 'no-tenant'}:${agentScopeCacheKey(agentScope)}:${range ?? 'all'}`;
     const cached = this.modelsCache.get(cacheKey);
     if (cached) return cached;
 
@@ -886,9 +1117,9 @@ export class MessagesQueryService {
     // The per-agent / no-tenant cases stay on the bounded scan below — they touch
     // far fewer rows (or lack a supporting index for the skip scan).
     const result =
-      tenantId && !agentName
+      tenantId && !agentScope
         ? await this.getDistinctModelsViaSkipScan(tenantId)
-        : await this.getDistinctModelsViaScan(tenantId, range, agentName);
+        : await this.getDistinctModelsViaScan(tenantId, range, agentScope);
 
     this.modelsCache.set(cacheKey, result);
     return result;
@@ -910,7 +1141,7 @@ export class MessagesQueryService {
   private async getDistinctModelsViaScan(
     tenantId: string | null,
     range: string | undefined,
-    agentName: string | undefined,
+    agentScope: AgentScope | undefined,
   ): Promise<{ models: string[]; providers: string[] }> {
     // Bound the scan: when the caller doesn't constrain the range, default to
     // the last 90 days. The DISTINCT covers the entire agent_messages table
@@ -926,7 +1157,7 @@ export class MessagesQueryService {
       .where('at.model IS NOT NULL')
       .andWhere("at.model != ''")
       .andWhere('at.timestamp >= :cutoff', { cutoff });
-    addTenantFilter(modelsQb, tenantId, agentName);
+    addTenantFilter(modelsQb, tenantId, agentScope);
     const modelsResult = await modelsQb.orderBy('at.model', 'ASC').getRawMany();
 
     const modelSet = new Set<string>();
@@ -948,8 +1179,12 @@ export class MessagesQueryService {
     tenantId: string | null;
     range?: string;
     provider?: string;
+    connections?: string[];
+    models?: string[];
+    attemptStatus?: ('has_failed' | 'has_succeeded')[];
     service_type?: string;
     agent_name?: string;
+    agentScope?: AgentScope;
     cost_min?: number;
     cost_max?: number;
     status?: MessageStatusFilter;
@@ -959,13 +1194,18 @@ export class MessagesQueryService {
     routing_tier?: string;
     specificity_category?: string;
     header_tier_id?: string;
+    exclude_playground?: boolean;
+    exclude_direct?: boolean;
   }): string {
     return [
       params.tenantId ?? 'no-tenant',
       params.range ?? '',
       params.provider ?? '',
+      params.connections?.join(',') ?? '',
+      params.models?.join(',') ?? '',
+      params.attemptStatus?.join(',') ?? '',
       params.service_type ?? '',
-      params.agent_name ?? '',
+      agentScopeCacheKey(params.agentScope),
       params.cost_min ?? '',
       params.cost_max ?? '',
       params.status ?? '',
@@ -975,6 +1215,8 @@ export class MessagesQueryService {
       params.routing_tier ?? '',
       params.specificity_category ?? '',
       params.header_tier_id ?? '',
+      params.exclude_playground ? 'exclude-playground' : '',
+      params.exclude_direct ? 'exclude-direct' : '',
     ].join(':');
   }
 }

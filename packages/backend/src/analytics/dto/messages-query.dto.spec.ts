@@ -107,14 +107,16 @@ describe('MessagesQueryDto', () => {
     expect(errors).toHaveLength(0);
   });
 
-  it('coerces include_total and include_filter_options flags', async () => {
+  it('coerces total and filter-option flags', async () => {
     const dto = plainToInstance(MessagesQueryDto, {
       include_total: 'false',
+      cache_total: 'true',
       include_filter_options: '1',
     });
     const errors = await validate(dto);
     expect(errors).toHaveLength(0);
     expect(dto.include_total).toBe(false);
+    expect(dto.cache_total).toBe(true);
     expect(dto.include_filter_options).toBe(true);
   });
 

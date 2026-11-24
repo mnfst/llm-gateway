@@ -3,10 +3,7 @@ import { TRANSPORT_NETWORK_HTTP_STATUS, TRANSPORT_TIMEOUT_HTTP_STATUS } from 'ma
 import type { ProviderWireFormat } from './proxy-types';
 
 export type StreamFailureReason =
-  | 'upstream_error'
-  | 'stream_interrupted'
-  | 'stream_idle_timeout'
-  | 'incomplete_stream';
+  'upstream_error' | 'stream_interrupted' | 'stream_idle_timeout' | 'incomplete_stream';
 
 export class StreamFailure extends Error {
   constructor(
@@ -145,7 +142,10 @@ export class StreamProtocolObserver {
     }
 
     // Google streams have no portable terminal event; clean EOF is terminal.
-    this.completed = true;
+  }
+
+  isComplete(): boolean {
+    return this.completed;
   }
 
   assertComplete(): void {

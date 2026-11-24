@@ -84,14 +84,6 @@
   flex-shrink: 0;
 }
 
-.dark .setup-modal__platform-icon[src*='openai'],
-.dark .setup-modal__platform-icon[src*='anthropic'],
-.dark .setup-modal__platform-icon[src*='vercel'],
-.dark .setup-modal__platform-icon[src*='opencode'],
-.dark .setup-modal__platform-icon[src*='other'] {
-  filter: invert(1);
-}
-
 .setup-modal__nav {
   display: flex;
   justify-content: flex-end;
@@ -152,6 +144,13 @@
   animation: fadeIn 150ms ease-out;
 }
 
+/* Safari can miscompose a dynamically mounted backdrop filter. */
+@supports (hanging-punctuation: first) and (font: -apple-system-body) and (-webkit-appearance: none) {
+  .modal-overlay {
+    backdrop-filter: none;
+  }
+}
+
 .dark .modal-overlay {
   background: rgb(0 0 0 / 0.7);
 }
@@ -184,6 +183,85 @@
 .modal-card__desc strong {
   color: hsl(var(--chart-1));
   font-weight: 600;
+}
+
+.autofix-consent__legal {
+  color: hsl(var(--muted-foreground));
+  font-size: var(--font-size-xs);
+  line-height: 1.5;
+}
+
+.autofix-consent__agents-label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  margin-bottom: 6px;
+}
+
+.autofix-consent__agents {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--gap-lg);
+  max-height: min(280px, 40vh);
+  overflow-y: auto;
+}
+
+/* Flat list rows split by hairlines (the model-picker idiom), not one card
+   per agent — the list must stay compact with 10-20 agents. */
+.autofix-consent__agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-sm);
+  padding: var(--gap-sm) 4px;
+  border-top: 1px solid hsl(var(--border) / 0.5);
+}
+
+.autofix-consent__agent-row:first-child {
+  border-top: none;
+}
+
+/* aria-disabled replaces disabled on the saving switch (focus-trap safety);
+   mirror the .settings-switch:disabled look. */
+.autofix-consent__agent-row .settings-switch[aria-disabled='true'] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.autofix-consent__agent-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.dark .autofix-consent__agent-icon[src*='openai'],
+.dark .autofix-consent__agent-icon[src*='anthropic'],
+.dark .autofix-consent__agent-icon[src*='vercel'],
+.dark .autofix-consent__agent-icon[src*='opencode'],
+.dark .autofix-consent__agent-icon[src*='codex'],
+.dark .autofix-consent__agent-icon[src*='other'] {
+  filter: invert(1);
+}
+
+.autofix-consent__agent-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--foreground));
+}
+
+.autofix-consent__legal a,
+.modal-card__desc a {
+  color: hsl(var(--foreground));
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.modal-card__desc a:hover {
+  color: hsl(var(--primary));
 }
 
 .modal-card__note {
@@ -504,294 +582,6 @@
   min-width: 24px;
 }
 
-/* ── Auto-fix Modal ──────────────────────────────── */
-.autofix-modal {
-  position: relative;
-  background: hsl(var(--card));
-  border: 1px solid hsl(var(--border));
-  border-radius: 16px;
-  box-shadow:
-    0 0 25px 0 rgb(0 0 0 / 0.08),
-    0 25px 50px -12px rgb(0 0 0 / 0.2);
-  width: 100%;
-  max-width: 720px;
-  animation: fadeInUp 200ms ease-out;
-  overflow: hidden;
-}
-
-.autofix-modal__close {
-  position: absolute;
-  top: 16px;
-  right: 16px;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius);
-  border: none;
-  background: transparent;
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.autofix-modal__close:hover {
-  background: hsl(var(--muted));
-  color: hsl(var(--foreground));
-}
-
-.autofix-modal__body {
-  display: flex;
-}
-
-.autofix-modal__left {
-  flex: 2;
-  padding: 36px 32px;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  min-height: 320px;
-}
-
-.autofix-modal__right {
-  flex: 1;
-  padding: 36px 28px;
-  background: hsl(var(--muted) / 0.5);
-  border-left: 1px solid hsl(var(--border));
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.dark .autofix-modal__right {
-  background: hsl(0 0% 7%);
-}
-
-.autofix-modal__brand {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  margin-bottom: 14px;
-}
-
-.autofix-modal__logo {
-  width: auto;
-  height: 31px;
-  object-fit: contain;
-}
-
-.autofix-modal__logo--light {
-  display: block;
-}
-
-.autofix-modal__logo--dark {
-  display: none;
-}
-
-.dark .autofix-modal__logo--light {
-  display: none;
-}
-
-.dark .autofix-modal__logo--dark {
-  display: block;
-}
-
-.autofix-modal__brand-name {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: hsl(var(--foreground));
-  letter-spacing: -0.01em;
-}
-
-.autofix-modal__badge {
-  display: inline-block;
-  align-self: flex-start;
-  padding: 3px 10px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #fff;
-  background: hsl(var(--foreground));
-  border-radius: 20px;
-  margin-top: 45px;
-  margin-bottom: 16px;
-}
-
-.autofix-modal__title {
-  font-size: 22px;
-  font-weight: 700;
-  color: hsl(var(--foreground));
-  line-height: 1.3;
-  margin-bottom: 10px;
-}
-
-.autofix-modal__desc {
-  font-size: var(--font-size-sm);
-  color: hsl(var(--muted-foreground));
-  line-height: 1.6;
-  margin-bottom: 28px;
-}
-
-.autofix-modal__ctas {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-top: auto;
-}
-
-.autofix-modal__cta-book {
-  padding: 0 14px;
-  height: 28px;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  border-radius: var(--radius);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  line-height: 28px;
-}
-
-.autofix-modal__cta-waitlist {
-  padding: 0 14px;
-  height: 28px;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  line-height: 28px;
-}
-
-.autofix-modal__joined {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: hsl(var(--success));
-}
-
-.autofix-modal__features {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.autofix-modal__feature {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.autofix-modal__feature-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: hsl(var(--muted-foreground));
-}
-
-.autofix-modal__feature-label {
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-  color: hsl(var(--foreground));
-}
-
-.autofix-modal__learn-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--font-size-xs);
-  color: hsl(var(--muted-foreground));
-  text-decoration: none;
-  transition: color var(--transition-fast);
-}
-
-.autofix-modal__learn-more svg {
-  position: relative;
-  top: -0.5px;
-}
-
-.autofix-modal__learn-more:hover {
-  color: hsl(var(--foreground));
-}
-
-/* ── Auto-fix Sidebar Card ───────────────────────── */
-.sidebar-autofix {
-  margin: var(--gap-sm);
-  padding: 14px;
-  background: hsl(var(--background));
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--radius);
-  cursor: default;
-}
-
-.dark .sidebar-autofix {
-  background: hsl(0 0% 11%);
-}
-
-.sidebar-autofix__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-}
-
-.sidebar-autofix__new-badge {
-  display: inline-block;
-  padding: 1px 7px 2px;
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #fff;
-  background: #2631f0;
-  border-radius: 20px;
-  line-height: 1.5;
-}
-
-.sidebar-autofix__title {
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  color: hsl(var(--foreground));
-}
-
-.sidebar-autofix__desc {
-  font-size: 14px;
-  color: hsl(var(--muted-foreground));
-  line-height: 1.45;
-  margin-bottom: 10px;
-}
-
-.sidebar-autofix__btn {
-  display: block;
-  width: 100%;
-  padding: 6px 0;
-  font-size: var(--font-size-xs);
-  font-weight: 600;
-  font-family: var(--font-family);
-  color: hsl(var(--primary-foreground));
-  background: hsl(var(--primary));
-  border: none;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: opacity var(--transition-fast);
-  text-align: center;
-}
-
-.sidebar-autofix__btn {
-  text-decoration: none;
-}
-
-.sidebar-autofix__btn:hover {
-  opacity: 0.9;
-}
-
 /* ── Upgrade Success Modal ────────────────────────── */
 .modal.upgrade-success-modal {
   max-width: 420px;
@@ -856,6 +646,61 @@
   float: right;
 }
 
+/* ── Subscription required (Cloud workspace without a subscription) ── */
+.modal.subscription-required-modal {
+  max-width: 460px;
+}
+
+.subscription-required-modal__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: var(--gap-xl);
+}
+
+.subscription-required-modal__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+  letter-spacing: -0.025em;
+}
+
+.subscription-required-modal__text {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  line-height: 1.5;
+}
+
+.subscription-required-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-sm);
+  margin-top: var(--gap-sm);
+}
+
+.subscription-required-modal__actions .btn {
+  flex: 1 1 180px;
+  justify-content: center;
+  text-decoration: none;
+}
+
+.subscription-required-modal__later {
+  align-self: center;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--font-size-sm);
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.subscription-required-modal__later:hover {
+  color: hsl(var(--foreground));
+  text-decoration: underline;
+}
+
 .sidebar-usage {
   margin: 0 var(--gap-md) 10px;
 }
@@ -887,16 +732,32 @@
   margin-bottom: 6px;
 }
 
+/* ── Top banners (usage limit) ── */
+.plan-banners {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-md);
+  margin-bottom: var(--gap-lg);
+}
+
+.plan-banners:empty {
+  display: none;
+}
+
+.plan-banners > * {
+  flex: 1 1 320px;
+}
+
 /* ── Global Usage Limit Banner ────────────────────── */
 .usage-limit-banner {
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: var(--gap-md);
-  padding: var(--gap-sm) var(--gap-lg);
-  margin: calc(-1 * var(--gap-xl)) calc(-1 * var(--gap-xl)) var(--gap-lg);
+  padding: var(--gap-md) var(--gap-lg);
   background: hsl(var(--destructive) / 0.06);
-  border-bottom: 1px solid hsl(var(--destructive) / 0.2);
+  border: 1px solid hsl(var(--destructive) / 0.2);
+  border-radius: var(--radius);
   font-size: var(--font-size-xs);
   color: hsl(var(--destructive));
 }
@@ -978,157 +839,179 @@
   border-color: hsl(var(--foreground) / 0.3);
 }
 
-@media (max-width: 768px) {
-  .autofix-modal {
-    max-width: 100%;
-  }
-
-  .autofix-modal__body {
-    flex-direction: column;
-  }
-
-  .autofix-modal__right {
-    border-left: none;
-    border-top: 1px solid hsl(var(--border));
-  }
-
-  .autofix-modal__left,
-  .autofix-modal__right {
-    padding: 24px;
-  }
+/* Create-harness toggles (Connect Harness modal + Welcome first-harness form):
+   they reuse the Model-parameters group-card design (.model-params__* from
+   routing.css); this wrapper only spaces the group from the fields above. */
+.add-agent-toggles {
+  margin-top: var(--gap-md);
 }
 
-/* ── User discovery modal ─────────────────────────── */
-.modal.user-discovery-modal {
-  max-width: 460px;
-  position: relative;
+/* The wrapper already spaces the group; the field-label's own top margin
+   would double it. */
+.add-agent-toggles__header {
+  margin-top: 0;
 }
 
-.user-discovery-modal__banner {
-  position: relative;
-  height: 104px;
-  margin: var(--gap-md) var(--gap-md) 0;
-  border-radius: var(--radius);
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.user-discovery-modal__banner-img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  object-position: center;
-  border-radius: var(--radius);
-}
-
-.user-discovery-modal__close {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: 50%;
-  background: rgb(0 0 0 / 0.22);
-  color: #fff;
-  cursor: pointer;
-  backdrop-filter: blur(4px);
-  transition: background var(--transition-fast);
-}
-
-.user-discovery-modal__close:hover,
-.user-discovery-modal__close:focus-visible {
-  background: rgb(0 0 0 / 0.4);
-}
-
-.user-discovery-modal__body {
-  padding: var(--gap-xl);
-  text-align: left;
-}
-
-.user-discovery-modal__title-logo {
-  display: inline-block;
-  height: 0.91em;
-  width: auto;
-  vertical-align: -0.02em;
-  position: relative;
-  top: 2px;
-}
-
-.user-discovery-modal__title {
-  margin: 0;
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: hsl(var(--foreground));
-  letter-spacing: -0.02em;
-  line-height: 1.3;
-}
-
-.user-discovery-modal__highlight {
-  background: #b6f13c;
-  color: #10240a;
-  font-weight: 700;
-  padding: 0 5px;
-  border-radius: 5px;
-  white-space: nowrap;
-}
-
-.user-discovery-modal__subtitle {
-  margin: var(--gap-sm) 0 0;
-  font-size: var(--font-size-sm);
-  color: hsl(var(--muted-foreground));
-  line-height: 1.5;
-}
-
-.user-discovery-modal__features {
-  display: flex;
-  flex-direction: column;
-  gap: var(--gap-sm);
-  margin: var(--gap-lg) 0;
-  padding: 0;
-  list-style: none;
-  text-align: left;
-}
-
-.user-discovery-modal__features li {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: var(--font-size-sm);
-  color: hsl(var(--foreground));
-  line-height: 1.45;
-}
-
-.user-discovery-modal__features svg {
-  flex: 0 0 auto;
-  margin-top: 2px;
-}
-
-.user-discovery-modal__cta {
-  width: 100%;
+.add-agent-legal {
   margin-top: var(--gap-sm);
 }
 
-.user-discovery-modal__later {
-  display: block;
-  margin: var(--gap-md) auto 0;
-  padding: 4px 8px;
-  background: transparent;
-  border: none;
-  font-size: var(--font-size-sm);
-  color: hsl(var(--muted-foreground));
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  transition: color var(--transition-fast);
+/* Legal line under a Settings card (Autofix section). The card drops its
+   own bottom margin so the mention reads as attached to it. */
+.settings-card--flush {
+  margin-bottom: 0;
 }
 
-.user-discovery-modal__later:hover,
-.user-discovery-modal__later:focus-visible {
+.settings-card__legal {
+  margin-top: var(--gap-sm);
+  margin-bottom: var(--gap-lg);
+}
+
+/* ── Services contact modal (header "Custom development") ── */
+.modal-card.services-modal {
+  max-width: 820px;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 1.3fr;
+  overflow: hidden;
+}
+
+.services-modal__offer {
+  padding: 32px;
+  background: hsl(var(--muted));
+}
+
+.services-modal__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  font-size: var(--font-size-sm);
   color: hsl(var(--foreground));
+}
+
+.services-modal__list li {
+  padding-left: 18px;
+  position: relative;
+  line-height: 1.4;
+}
+
+.services-modal__list li::before {
+  content: '→';
+  position: absolute;
+  left: 0;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Contact side in inverted colors: dark in light mode, light in dark mode,
+   like the form block of manifest.build/services/. */
+.services-modal__contact {
+  padding: 32px;
+  max-height: 85vh;
+  overflow-y: auto;
+  background: hsl(var(--foreground));
+  color: hsl(var(--background));
+}
+
+.services-modal__contact .modal-card__field-label,
+.services-modal__contact .services-modal__sent {
+  color: hsl(var(--background));
+}
+
+.services-modal__contact .modal-card__input {
+  background: hsl(var(--background) / 0.08);
+  border-color: hsl(var(--background) / 0.2);
+  color: hsl(var(--background));
+}
+
+.services-modal__contact .modal-card__input::placeholder {
+  color: hsl(var(--background) / 0.45);
+}
+
+.services-modal__contact .modal-card__input:focus {
+  border-color: hsl(var(--background) / 0.6);
+  box-shadow: 0 0 0 2px hsl(var(--background) / 0.15);
+}
+
+.services-modal__contact .modal-card__input--error {
+  border-color: hsl(var(--destructive));
+}
+
+.services-modal__contact .btn--primary {
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-color: hsl(var(--background));
+}
+
+.services-modal__contact .btn--ghost {
+  color: hsl(var(--background));
+}
+
+.services-modal__textarea {
+  height: auto;
+  padding: 8px 12px;
+  resize: vertical;
+}
+
+.services-modal__sent {
+  font-size: var(--font-size-base);
+  color: hsl(var(--foreground));
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .modal-card.services-modal {
+    grid-template-columns: 1fr;
+    max-height: 90vh;
+    overflow-y: auto;
+  }
+
+  .services-modal__offer,
+  .services-modal__contact {
+    padding: 24px;
+  }
+
+  .services-modal__contact {
+    max-height: none;
+  }
+}
+
+/* Sidebar "Custom development" button: inverted colors so it stands out in
+   both themes. Opens ServicesContactModal. */
+.sidebar-services {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0 var(--gap-md) var(--gap-md);
+  width: calc(100% - var(--gap-md) * 2);
+  padding: 10px 0;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  font-family: var(--font-family);
+  color: hsl(var(--background));
+  background: hsl(var(--foreground));
+  border: 1px solid hsl(var(--foreground));
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: opacity var(--transition-fast);
+}
+
+.sidebar-services:hover {
+  opacity: 0.85;
+}
+
+.services-modal .btn--primary {
+  gap: 6px;
+}
+
+.services-modal__contact .btn--primary:hover:not(:disabled) {
+  background: hsl(var(--background) / 0.85);
+  color: hsl(var(--foreground));
+}
+
+.services-modal__contact .btn--ghost:hover {
+  background: hsl(var(--background) / 0.12);
+  color: hsl(var(--background));
 }

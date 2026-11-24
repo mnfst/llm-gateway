@@ -11,6 +11,7 @@ import type {
 	JsonObject,
 } from 'n8n-workflow';
 import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
+import { MANIFEST_ATTRIBUTION_HEADERS } from '../shared/attribution';
 
 type ManifestOperation = 'chatCompletion' | 'createResponse' | 'listModels';
 type ManifestHttpMethod = 'GET' | 'POST';
@@ -225,6 +226,7 @@ async function requestManifest(
 		url: `${baseUrl}${path}`,
 		headers: {
 			Authorization: `Bearer ${String(credentials.apiKey)}`,
+			...MANIFEST_ATTRIBUTION_HEADERS,
 		},
 		encoding: 'text',
 		returnFullResponse: true,
@@ -239,9 +241,6 @@ async function requestManifest(
 	return parseManifestResponse(response);
 }
 
-// usableAsTool is intentionally omitted: Manifest is a model router, not an
-// agent tool. Agents should connect through the Manifest Chat Model sub-node.
-// eslint-disable-next-line @n8n/community-nodes/node-usable-as-tool
 export class Manifest implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Manifest',
@@ -256,6 +255,7 @@ export class Manifest implements INodeType {
 		},
 		inputs: [NodeConnectionTypes.Main],
 		outputs: [NodeConnectionTypes.Main],
+		usableAsTool: true,
 		credentials: [
 			{
 				name: 'manifestApi',

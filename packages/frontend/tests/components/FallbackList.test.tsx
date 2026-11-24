@@ -700,15 +700,41 @@ describe('FallbackList', () => {
       });
     });
 
-    // Create a drop indicator
-    fireEvent.dragOver(list, {
-      clientY: 50,
-      dataTransfer: { dropEffect: '' },
-      preventDefault: vi.fn(),
+    vi.spyOn(list, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 100,
+      height: 100,
+      left: 0,
+      right: 200,
+      width: 200,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
     });
 
-    // DragLeave with relatedTarget outside the list
-    fireEvent.dragLeave(list, { relatedTarget: null });
+    // Create a drop indicator after the final card
+    list.dispatchEvent(
+      new MouseEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 100,
+        clientY: 90,
+      }),
+    );
+
+    expect(
+      container.querySelectorAll('.fallback-list__drop-indicator--active').length,
+    ).toBeGreaterThan(0);
+
+    // DragLeave with no related target and a cursor outside the list
+    list.dispatchEvent(
+      new MouseEvent('dragleave', {
+        bubbles: true,
+        clientX: 100,
+        clientY: 120,
+        relatedTarget: null,
+      }),
+    );
 
     // No active indicators
     const activeIndicators = container.querySelectorAll('.fallback-list__drop-indicator--active');
@@ -745,6 +771,78 @@ describe('FallbackList', () => {
     // Indicator should still be active
     const activeIndicators = container.querySelectorAll('.fallback-list__drop-indicator--active');
     expect(activeIndicators.length).toBeGreaterThan(0);
+  });
+
+  it('reorders the second fallback after a null-related dragLeave inside the list', async () => {
+    mockSetFallbacks.mockResolvedValueOnce(undefined);
+    const onUpdate = vi.fn();
+    const { container } = render(() => (
+      <FallbackList
+        {...defaultProps}
+        fallbacks={['model-a', 'model-b', 'model-c', 'model-d']}
+        onUpdate={onUpdate}
+      />
+    ));
+
+    const list = container.querySelector<HTMLElement>('.fallback-list__items')!;
+    const cards = list.querySelectorAll<HTMLElement>('.fallback-list__card');
+
+    fireEvent.dragStart(cards[1]!, {
+      dataTransfer: { effectAllowed: '', setData: vi.fn() },
+    });
+
+    cards.forEach((card, i) => {
+      vi.spyOn(card, 'getBoundingClientRect').mockReturnValue({
+        top: i * 40,
+        bottom: (i + 1) * 40,
+        height: 40,
+        left: 0,
+        right: 200,
+        width: 200,
+        x: 0,
+        y: i * 40,
+        toJSON: () => {},
+      });
+    });
+    vi.spyOn(list, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      bottom: 160,
+      height: 160,
+      left: 0,
+      right: 200,
+      width: 200,
+      x: 0,
+      y: 0,
+      toJSON: () => {},
+    });
+
+    list.dispatchEvent(
+      new MouseEvent('dragover', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 100,
+        clientY: 110,
+      }),
+    );
+    list.dispatchEvent(
+      new MouseEvent('dragleave', {
+        bubbles: true,
+        clientX: 100,
+        clientY: 110,
+        relatedTarget: null,
+      }),
+    );
+    fireEvent.drop(list, { preventDefault: vi.fn() });
+
+    await waitFor(() => {
+      expect(onUpdate).toHaveBeenCalledWith(['model-a', 'model-c', 'model-b', 'model-d'], null);
+      expect(mockSetFallbacks).toHaveBeenCalledWith(
+        'test-agent',
+        'tier-1',
+        ['model-a', 'model-c', 'model-b', 'model-d'],
+        undefined,
+      );
+    });
   });
 
   it('reorders fallbacks on drop and calls setFallbacks', async () => {
@@ -1304,6 +1402,222 @@ describe('FallbackList', () => {
         b.getAttribute('aria-label')?.startsWith('Configure model parameters'),
       );
       expect(btn).toBeDefined();
+    });
+  });
+
+  // ── Reorder in-flight state (issue #1876) ──
+  describe('reorder in-flight state', () => {
+    /**
+     * Drags the first card past the last one and drops it. In jsdom every
+     * getBoundingClientRect is zeroed, so clientY=0 puts the drop slot after
+     * the last card — the same trick the existing drag/drop specs use.
+     */
+    const dropFirstCardLast = (container: HTMLElement) => {
+      const list = container.querySelector<HTMLElement>('.fallback-list__items')!;
+      const cards = list.querySelectorAll<HTMLElement>('.fallback-list__card');
+      fireEvent.dragStart(cards[0]!, { dataTransfer: { effectAllowed: '', setData: vi.fn() } });
+      fireEvent.dragOver(list, {
+        clientY: 0,
+        dataTransfer: { dropEffect: '' },
+        preventDefault: vi.fn(),
+      });
+      fireEvent.drop(list, { preventDefault: vi.fn() });
+    };
+
+    it('shows a skeleton on the moved row and locks dragging until the reorder persists', async () => {
+      let resolvePersist!: () => void;
+      mockSetFallbacks.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          resolvePersist = resolve;
+        }),
+      );
+      const onReorderingChange = vi.fn();
+      const { container } = render(() => (
+        <FallbackList
+          {...defaultProps}
+          fallbacks={['model-a', 'model-b']}
+          onReorderingChange={onReorderingChange}
+        />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(1);
+      });
+      const cards = container.querySelectorAll<HTMLElement>('.fallback-list__card');
+      expect(Array.from(cards).every((c) => c.draggable === false)).toBe(true);
+      expect(onReorderingChange).toHaveBeenCalledWith(true);
+
+      resolvePersist();
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(0);
+      });
+      expect(onReorderingChange).toHaveBeenLastCalledWith(false);
+      expect(
+        Array.from(container.querySelectorAll<HTMLElement>('.fallback-list__card')).every(
+          (c) => c.draggable === true,
+        ),
+      ).toBe(true);
+    });
+
+    it('clears the in-flight state when the reorder fails to persist', async () => {
+      mockSetFallbacks.mockRejectedValueOnce(new Error('nope'));
+      const onReorderingChange = vi.fn();
+      const onUpdate = vi.fn();
+      const { container } = render(() => (
+        <FallbackList
+          {...defaultProps}
+          fallbacks={['model-a', 'model-b']}
+          onUpdate={onUpdate}
+          onReorderingChange={onReorderingChange}
+        />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(onReorderingChange).toHaveBeenLastCalledWith(false);
+      });
+      expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(0);
+      // Optimistic move reverted, then the drag lock released.
+      expect(onUpdate).toHaveBeenLastCalledWith(['model-a', 'model-b'], null);
+    });
+
+    it('reorders without a parent listener when onReorderingChange is omitted', async () => {
+      const { container } = render(() => (
+        <FallbackList {...defaultProps} fallbacks={['model-a', 'model-b']} />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(mockSetFallbacks).toHaveBeenCalledWith(
+          'test-agent',
+          'tier-1',
+          ['model-b', 'model-a'],
+          undefined,
+        );
+      });
+      expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(0);
+    });
+
+    it('locks every row while the parent reports a primary swap in flight', () => {
+      const { container } = render(() => (
+        <FallbackList {...defaultProps} fallbacks={['model-a', 'model-b']} swappingIndex={0} />
+      ));
+
+      const cards = container.querySelectorAll<HTMLElement>('.fallback-list__card');
+      expect(cards.length).toBe(2);
+      expect(Array.from(cards).every((c) => c.draggable === false)).toBe(true);
+    });
+
+    // cubic-dev-ai flagged (PR #2841): while a reorder is pending, the lock
+    // above disabled only `draggable`. The remove button, key-pin chip, and
+    // Add fallback button on the *other* (non-moved) rows stayed clickable,
+    // so each could fire its own independent `persistSet`/`persistClear`
+    // call concurrently with the reorder's still-in-flight one. Whichever
+    // response lands last wins and silently clobbers the other write. These
+    // three specs pin the fix: every fallback-mutating control is disabled
+    // for the duration of a pending reorder, not just dragging.
+    it('disables the remove button on other rows while a reorder is pending', async () => {
+      mockSetFallbacks.mockReturnValueOnce(new Promise(() => {})); // never resolves
+      const { container } = render(() => (
+        <FallbackList {...defaultProps} fallbacks={['model-a', 'model-b', 'model-c']} />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(1);
+      });
+
+      // model-b (index 1) never moves and isn't the pending row, so absent a
+      // fix its remove button would still be enabled.
+      const removeButtons = container.querySelectorAll<HTMLButtonElement>('.fallback-list__remove');
+      expect(removeButtons.length).toBeGreaterThan(0);
+      removeButtons.forEach((btn) => {
+        expect(btn.disabled).toBe(true);
+        fireEvent.click(btn);
+      });
+
+      // No remove-triggered persistSet/persistClear fired while locked; the
+      // only in-flight call is the reorder's own (still-unresolved) one.
+      expect(mockSetFallbacks).toHaveBeenCalledTimes(1);
+      expect(mockClearFallbacks).not.toHaveBeenCalled();
+    });
+
+    it('disables the Add fallback button while a reorder is pending', async () => {
+      mockSetFallbacks.mockReturnValueOnce(new Promise(() => {}));
+      const onAddFallback = vi.fn();
+      const { container } = render(() => (
+        <FallbackList
+          {...defaultProps}
+          fallbacks={['model-a', 'model-b']}
+          onAddFallback={onAddFallback}
+        />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(1);
+      });
+
+      const addButton = container.querySelector<HTMLButtonElement>('.fallback-list__add')!;
+      expect(addButton.disabled).toBe(true);
+      fireEvent.click(addButton);
+      expect(onAddFallback).not.toHaveBeenCalled();
+    });
+
+    it('disables the key-pin chip on other rows while a reorder is pending', async () => {
+      mockSetFallbacks.mockReturnValueOnce(new Promise(() => {}));
+      const multiKeyConnectedProviders = [
+        {
+          id: 'p1',
+          provider: 'openai',
+          auth_type: 'api_key',
+          is_active: true,
+          has_api_key: true,
+          label: 'Personal',
+          priority: 0,
+          key_prefix: 'sk-pers-',
+        },
+        {
+          id: 'p2',
+          provider: 'openai',
+          auth_type: 'api_key',
+          is_active: true,
+          has_api_key: true,
+          label: 'Work',
+          priority: 1,
+          key_prefix: 'sk-work-',
+        },
+      ] as any[];
+      // The test double for `onUpdate` doesn't feed the reorder back into
+      // props (unlike the real parent), so the list keeps its original DOM
+      // order and only `reorderingIndex` (always the last slot here, index 1
+      // for a 2-row list) flags a row pending. Put the multi-key model
+      // ('model-a', OpenAI) at index 0 so it stays a *non-pending* row,
+      // exactly the row the bug left clickable mid-reorder.
+      const { container } = render(() => (
+        <FallbackList
+          {...defaultProps}
+          fallbacks={['model-a', 'model-b']}
+          connectedProviders={multiKeyConnectedProviders}
+        />
+      ));
+
+      dropFirstCardLast(container);
+
+      await waitFor(() => {
+        expect(container.querySelectorAll('.fallback-list__card--swapping').length).toBe(1);
+      });
+
+      const chip = container.querySelector<HTMLButtonElement>('.fallback-list__key-chip');
+      expect(chip).not.toBeNull();
+      expect(chip!.disabled).toBe(true);
     });
   });
 });

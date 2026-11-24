@@ -16,7 +16,12 @@
 import { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import request from 'supertest';
-import { createTestApp, TEST_API_KEY, TEST_TENANT_ID } from './helpers';
+import {
+  createTestApp,
+  stubProviderDiscoveryFetch,
+  TEST_API_KEY,
+  TEST_TENANT_ID,
+} from './helpers';
 import { AgentEnabledProvider } from '../src/entities/agent-enabled-provider.entity';
 import { TenantProvider } from '../src/entities/tenant-provider.entity';
 
@@ -38,8 +43,11 @@ let agentBId: string;
 let agentCId: string;
 let providerId: string;
 
+let restoreDiscoveryFetch: () => void;
+
 beforeAll(async () => {
   app = await createTestApp();
+  restoreDiscoveryFetch = stubProviderDiscoveryFetch();
   ds = app.get(DataSource);
 
   const res = await auth(api().post('/api/v1/agents')).send({ name: AGENT_B_NAME }).expect(201);
@@ -47,6 +55,7 @@ beforeAll(async () => {
 }, 30000);
 
 afterAll(async () => {
+  restoreDiscoveryFetch?.();
   await app?.close();
 });
 

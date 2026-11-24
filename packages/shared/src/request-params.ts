@@ -23,18 +23,34 @@ export function applyRequestParamDefaults<T extends Record<string, unknown>>(
   defaults: RequestParamDefaults | null | undefined,
   specs: readonly ProviderParamSpec[],
 ): T {
+  return applyRequestParamDefaultsWithOverrides(body, defaults, specs).body;
+}
+
+/** Keep the saved overrides separate from caller input for protocol adapters. */
+export function applyRequestParamDefaultsWithOverrides<T extends Record<string, unknown>>(
+  body: T,
+  defaults: RequestParamDefaults | null | undefined,
+  specs: readonly ProviderParamSpec[],
+): { body: T; overrides?: RequestParamDefaults } {
   const orderedSpecs = [...specs].sort(compareProviderParamSpecs);
-  if (!defaults) return omitProviderInapplicableParams(body, orderedSpecs);
+  if (!defaults) return { body: omitProviderInapplicableParams(body, orderedSpecs) };
 
   const expanded = expandConfiguredParamDefaults(defaults, orderedSpecs);
-  let merged: Record<string, unknown> = {};
+  let overrides: RequestParamDefaults = {};
   for (const spec of orderedSpecs) {
     if (!providerParamIsApplicable(spec, expanded)) continue;
     if (!hasPath(expanded, spec.path)) continue;
-    merged = setProviderParamValue(merged, spec.path, getPath(expanded, spec.path) as JsonValue);
+    overrides = setProviderParamValue(
+      overrides,
+      spec.path,
+      getPath(expanded, spec.path) as JsonValue,
+    );
   }
 
-  return omitProviderInapplicableParams(deepMerge(body, merged), orderedSpecs) as T;
+  return {
+    body: omitProviderInapplicableParams(deepMerge(body, overrides), orderedSpecs) as T,
+    overrides,
+  };
 }
 
 function deepMerge(

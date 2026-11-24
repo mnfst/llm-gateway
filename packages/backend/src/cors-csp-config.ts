@@ -182,3 +182,39 @@ export function applyPrivateNetworkAllow(
   if (typeof origin !== 'string' || !allowedOrigins.includes(origin)) return;
   setHeader('Access-Control-Allow-Private-Network', 'true');
 }
+
+/** Route path of the public pivot waiting-list claim. */
+export const PIVOT_CLAIM_PATH = '/api/v1/waitlist/pivot/claim';
+
+export interface PivotCorsRequest {
+  method: string;
+  path: string;
+}
+
+/**
+ * Open CORS for the pivot waiting-list claim only. Self-hosted dashboards on
+ * versions that still ship the waiting-list card post the claim straight
+ * from the browser, so any origin must be allowed on
+ * this one route. Safe because no credentials ride along (`fetch` sends none
+ * cross-origin by default and the allow-list CORS runs with
+ * `credentials: false`) and the route only accepts an email. Returns true
+ * when it fully answered a preflight, so the caller ends the response.
+ */
+export function applyPivotClaimCors(
+  req: PivotCorsRequest,
+  setHeader: (name: string, value: string) => void,
+): boolean {
+  if (req.path !== PIVOT_CLAIM_PATH) return false;
+  setHeader('Access-Control-Allow-Origin', '*');
+  setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  setHeader('Access-Control-Max-Age', '600');
+  return req.method === 'OPTIONS';
+}
+
+/**
+ * Origin of the cloud pivot claim endpoint. Production self-hosted dashboards
+ * post the claim cross-origin from the browser, so the CSP `connect-src`
+ * must allow it — CORS alone is not enough, the CSP blocks the fetch first.
+ */
+export const PIVOT_CLAIM_CLOUD_ORIGIN = 'https://app.manifest.build';

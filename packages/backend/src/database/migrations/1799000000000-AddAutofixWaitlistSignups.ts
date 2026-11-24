@@ -2,7 +2,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Creates the `autofix_waitlist_signups` table to store emails from
- * self-hosted instances that join the Auto-fix waitlist. The cloud
+ * self-hosted instances that join the Autofix waitlist. The cloud
  * instance receives these signups via a public endpoint.
  */
 export class AddAutofixWaitlistSignups1799000000000 implements MigrationInterface {

@@ -3,13 +3,16 @@ jest.mock('./billing.config', () => ({
 }));
 
 import { DataSource } from 'typeorm';
-import { FREE_PLAN_REQUESTS_PER_MONTH } from 'manifest-shared';
 import { BillingUsageEmailService } from './billing-usage-email.service';
 import { isBillingEnabled } from './billing.config';
 import { PlanService } from './plan.service';
 import { BillingEmailLogService } from './billing-email-log.service';
 import { BillingEmailService } from './billing-email.service';
 import { IngestEventBusService } from '../common/services/ingest-event-bus.service';
+
+// A positive allowance, as a per-tenant override grants one; the default Free
+// allowance is 0 since the Cloud Free plan ended and sends no usage email.
+const MONTHLY_ALLOWANCE = 10_000;
 
 describe('BillingUsageEmailService', () => {
   let service: BillingUsageEmailService;
@@ -25,7 +28,7 @@ describe('BillingUsageEmailService', () => {
     (isBillingEnabled as jest.Mock).mockReturnValue(true);
     getLimits = jest.fn().mockResolvedValue({
       agents: 1,
-      requestsPerMonth: FREE_PLAN_REQUESTS_PER_MONTH,
+      requestsPerMonth: MONTHLY_ALLOWANCE,
     });
     countRequestsSince = jest.fn().mockResolvedValue(8_000);
     hasDedupeKey = jest.fn().mockResolvedValue(false);
@@ -74,7 +77,7 @@ describe('BillingUsageEmailService', () => {
           kind: 'requests_warning',
           userName: 'Ada',
           used: 8000,
-          limit: FREE_PLAN_REQUESTS_PER_MONTH,
+          limit: MONTHLY_ALLOWANCE,
           periodEnd: '2026-08-01T00:00:00.000Z',
         }),
       );
@@ -86,7 +89,7 @@ describe('BillingUsageEmailService', () => {
           userId: 'u1',
           periodStart: '2026-07-01T00:00:00.000Z',
           periodEnd: '2026-08-01T00:00:00.000Z',
-          metadata: { used: 8000, limit: FREE_PLAN_REQUESTS_PER_MONTH },
+          metadata: { used: 8000, limit: MONTHLY_ALLOWANCE },
         }),
       );
     } finally {
@@ -132,7 +135,7 @@ describe('BillingUsageEmailService', () => {
   });
 
   it('sends the limit-reached email instead of the warning when usage is at the cap', async () => {
-    countRequestsSince.mockResolvedValue(FREE_PLAN_REQUESTS_PER_MONTH);
+    countRequestsSince.mockResolvedValue(MONTHLY_ALLOWANCE);
 
     await service.checkTenantUsage('t1');
 
@@ -140,7 +143,7 @@ describe('BillingUsageEmailService', () => {
       'owner@example.com',
       expect.objectContaining({
         kind: 'requests_limit_reached',
-        used: FREE_PLAN_REQUESTS_PER_MONTH,
+        used: MONTHLY_ALLOWANCE,
       }),
     );
   });

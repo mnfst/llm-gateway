@@ -1,4 +1,4 @@
-import { MANIFEST_ERRORS_DOCS_BASE } from 'manifest-shared';
+import { MANIFEST_ERRORS_DOCS_BASE, manifestErrorDocsUrl } from 'manifest-shared';
 
 export { MANIFEST_ERRORS_DOCS_BASE };
 
@@ -32,8 +32,9 @@ export const MANIFEST_ERRORS = {
     template: 'No {provider} API key yet. Add one here: {dashboardUrl}',
   },
   M101: {
-    title: 'No providers configured',
-    template: "You're connected, but no providers are set up yet. Add one here: {dashboardUrl}",
+    title: 'No model to route to',
+    template:
+      'This harness has no model to route to yet. Pick a default model here: {dashboardUrl}',
   },
   M102: {
     title: 'Provider subscription credentials unusable',
@@ -58,10 +59,9 @@ export const MANIFEST_ERRORS = {
     template: 'Too many concurrent requests. Give it a moment.',
   },
   M204: {
-    title: 'Monthly request limit reached',
+    title: 'Subscription required',
     template:
-      "You've used all {threshold} requests included this month on the Free plan. " +
-      'Upgrade to Pro for unlimited requests: {upgradeUrl}',
+      'Manifest Cloud needs a Pro subscription to route requests. Subscribe here: {upgradeUrl}',
   },
   M300: {
     title: 'Missing messages array',
@@ -100,7 +100,7 @@ export function formatManifestError(
     const value = vars[key];
     return value === undefined ? match : String(value);
   });
-  return `[${PEACOCK} Manifest ${code}] ${interpolated} See ${MANIFEST_ERRORS_DOCS_BASE}/${code}`;
+  return `[${PEACOCK} Manifest ${code}] ${interpolated} See ${manifestErrorDocsUrl(code)}`;
 }
 
 /**

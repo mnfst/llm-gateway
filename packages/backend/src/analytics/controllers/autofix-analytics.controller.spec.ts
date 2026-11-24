@@ -1,20 +1,32 @@
+import { mockScopeResolver, selectedAgent } from '../__tests__/scope.fixture';
 import { AutofixAnalyticsController } from './autofix-analytics.controller';
 
 describe('AutofixAnalyticsController', () => {
   const service = {
     getWorkspaceStatus: jest.fn(),
+    enableAll: jest.fn(),
     getStats: jest.fn(),
     getTimeseries: jest.fn(),
     getPerAgentStats: jest.fn(),
     getPerProviderStats: jest.fn(),
   };
-  const controller = new AutofixAnalyticsController(service as never);
+  const cache = { del: jest.fn().mockResolvedValue(undefined) };
+  const controller = new AutofixAnalyticsController(
+    mockScopeResolver(),
+    service as never,
+    cache as never,
+  );
   const ctx = { tenantId: 'tenant' } as never;
 
   beforeEach(() => jest.clearAllMocks());
 
-  it('delegates every Auto-fix analytics route with tenant scope', async () => {
-    service.getWorkspaceStatus.mockResolvedValue({ available: true });
+  it('delegates every Autofix analytics route with tenant scope', async () => {
+    service.getWorkspaceStatus.mockResolvedValue({
+      any_enabled: true,
+      enabled_agents: ['demo'],
+      needs_enable_all: false,
+      consented: true,
+    });
     service.getStats.mockResolvedValue({ autofix_saves: { value: 1 } });
     service.getTimeseries.mockResolvedValue({ buckets: [] });
     service.getPerAgentStats.mockResolvedValue([]);
@@ -33,20 +45,20 @@ describe('AutofixAnalyticsController', () => {
     expect(service.getStats).toHaveBeenCalledWith({
       tenantId: 'tenant',
       range: '30d',
-      agentName: 'demo',
+      agentScope: selectedAgent('tenant', 'demo'),
     });
     expect(service.getTimeseries).toHaveBeenCalledWith({
       tenantId: 'tenant',
       range: '24h',
       by: 'autofix',
-      agentName: 'demo',
+      agentScope: selectedAgent('tenant', 'demo'),
       failedOnly: true,
     });
     expect(service.getPerAgentStats).toHaveBeenCalledWith({ tenantId: 'tenant', range: '7d' });
     expect(service.getPerProviderStats).toHaveBeenCalledWith({
       tenantId: 'tenant',
       range: '90d',
-      agentName: 'demo',
+      agentScope: selectedAgent('tenant', 'demo'),
     });
   });
 
@@ -56,8 +68,32 @@ describe('AutofixAnalyticsController', () => {
       tenantId: 'tenant',
       range: undefined,
       by: undefined,
-      agentName: undefined,
+      agentScope: undefined,
       failedOnly: false,
     });
+  });
+
+  it('delegates enable-all to the stats service and busts the status cache', async () => {
+    service.enableAll.mockResolvedValue({
+      any_enabled: true,
+      enabled_agents: ['demo'],
+      needs_enable_all: false,
+      consented: true,
+    });
+    await expect(controller.enableAll(ctx)).resolves.toEqual({
+      any_enabled: true,
+      enabled_agents: ['demo'],
+      needs_enable_all: false,
+      consented: true,
+    });
+    expect(service.enableAll).toHaveBeenCalledWith('tenant');
+    expect(cache.del).toHaveBeenCalledWith('tenant:/api/v1/autofix/status');
+  });
+
+  it('rejects enable-all without a resolved tenant', async () => {
+    await expect(controller.enableAll({ tenantId: null } as never)).rejects.toThrow(
+      'No workspace resolved',
+    );
+    expect(service.enableAll).not.toHaveBeenCalled();
   });
 });

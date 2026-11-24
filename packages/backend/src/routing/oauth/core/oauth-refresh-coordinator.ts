@@ -36,6 +36,12 @@ export interface RefreshableBlob {
   e: number;
 }
 
+/**
+ * Expiry a caller puts on a token the provider rejected (a 401 before its
+ * stored expiry), asking the coordinator to refresh it anyway.
+ */
+export const REJECTED_TOKEN_EXPIRY = 0;
+
 /** Skew applied to expiry so a token about to expire is refreshed early. */
 export const REFRESH_EXPIRY_SKEW_MS = 60_000;
 
@@ -56,8 +62,10 @@ export interface CoordinatedRefreshParams<T extends RefreshableBlob> {
   readonly logger: Logger;
   /**
    * Blob the caller already parsed from the value it was handed. May be stale
-   * (read before a concurrent refresh) — used only as a fallback when the
-   * fresh DB read returns nothing.
+   * (read before a concurrent refresh), so the fresh DB copy wins, with one
+   * exception: a caller whose provider just rejected this token sets its
+   * expiry to `REJECTED_TOKEN_EXPIRY`, and the coordinator then refreshes even
+   * though the DB copy has not expired yet.
    */
   readonly callerBlob: T;
   /** Parse a raw stored value into the provider's blob type. */
@@ -153,8 +161,12 @@ async function refreshOnce<T extends RefreshableBlob>(
       if (fresh) current = fresh;
     }
 
-    // Already valid — either it never really expired, or someone just refreshed.
-    if (Date.now() < current.e - REFRESH_EXPIRY_SKEW_MS) return current;
+    // Already valid: it never really expired, or someone just refreshed. The
+    // one exception is the exact token the provider rejected, which is dead
+    // whatever its stored expiry says.
+    const rejectedToken =
+      params.callerBlob.e === REJECTED_TOKEN_EXPIRY && current.t === params.callerBlob.t;
+    if (!rejectedToken && Date.now() < current.e - REFRESH_EXPIRY_SKEW_MS) return current;
 
     const refreshed = await params.refresh(current);
     await persistWithRetry(params, ops.persist, refreshed);

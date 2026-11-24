@@ -1,16 +1,17 @@
 import { createSignal } from 'solid-js';
 import { invalidateCustomProvidersCache } from './api/routing.js';
-import { invalidateGroup } from './api/cache.js';
+import { DEFAULT_TTL_MS, invalidateGroup } from './api/cache.js';
 
 // pingCount counts ANY event from the bus (legacy back-compat for callers that
 // don't care which kind fired). New code should depend on the targeted
 // signals so a routing-only change doesn't refetch the message log etc.
 const [pingCount, setPingCount] = createSignal(0);
 const [messagePing, setMessagePing] = createSignal(0);
+const [analyticsPing, setAnalyticsPing] = createSignal(0);
 const [agentPing, setAgentPing] = createSignal(0);
 const [routingPing, setRoutingPing] = createSignal(0);
 
-export { pingCount, messagePing, agentPing, routingPing };
+export { pingCount, messagePing, analyticsPing, agentPing, routingPing };
 
 /** Refresh views derived from the harness list after a local mutation. */
 export function refreshAgents(): void {
@@ -24,16 +25,26 @@ export function connectSse(): () => void {
   const bumpPing = () => setPingCount((n) => n + 1);
 
   // Coalesce message-class bumps. A chatty agent emits one SSE `message` event
-  // per ingested record, and every bump refetches the Overview/MessageLog
-  // resources. Collapsing a burst into a single bump every 500ms keeps backend
-  // QPS sane at the cost of a small refresh delay on the dashboard.
+  // per ingested record. The recent-message feed refreshes every 500ms while
+  // aggregate dashboard resources use the slower analytics bump below.
   let messageBumpTimer: ReturnType<typeof setTimeout> | null = null;
+  let analyticsBumpTimer: ReturnType<typeof setTimeout> | null = null;
   const bumpMessagePing = () => {
+    // Aggregate charts and 30-day summaries are much heavier than the recent
+    // message feed. Match their server/client cache TTL so sustained ingest
+    // cannot force every open dashboard to poll the analytics API every 5s.
+    if (!analyticsBumpTimer) {
+      analyticsBumpTimer = setTimeout(() => {
+        analyticsBumpTimer = null;
+        invalidateGroup('analytics');
+        setAnalyticsPing((n) => n + 1);
+      }, DEFAULT_TTL_MS);
+    }
     if (messageBumpTimer) return;
     messageBumpTimer = setTimeout(() => {
       messageBumpTimer = null;
       // Invalidate the SWR cache BEFORE bumping the ping. The ping drives the
-      // resource refetch; if the stale message/overview/usage entries were still
+      // resource refetch; if stale message entries were still
       // cached, that refetch would read them and the dashboard wouldn't update
       // live. Dropping them first guarantees the refetch hits the network.
       invalidateGroup('message');
@@ -73,7 +84,9 @@ export function connectSse(): () => void {
 
   return () => {
     if (messageBumpTimer) clearTimeout(messageBumpTimer);
+    if (analyticsBumpTimer) clearTimeout(analyticsBumpTimer);
     messageBumpTimer = null;
+    analyticsBumpTimer = null;
     es.close();
   };
 }

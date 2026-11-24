@@ -4,6 +4,7 @@ import { CreateAdminDto } from './dto/create-admin.dto';
 import { OLLAMA_HOST } from '../common/constants/ollama';
 import { getContainerHostAlias, isSelfHosted } from '../common/utils/detect-self-hosted';
 import { isEmailConfigured } from '../notifications/services/email-providers/send-email';
+import { mcpAvailability } from '../auth/mcp-availability';
 
 /**
  * Postgres advisory lock key reserved for the first-run setup wizard.
@@ -59,6 +60,17 @@ export class SetupService {
    */
   isEmailConfigured(): boolean {
     return isEmailConfigured();
+  }
+
+  /**
+   * Returns true when MCP is enabled for this install — the same decision the
+   * boot made, not a liveness probe. MCP is left unregistered on installs
+   * served over plain HTTP from a non-loopback host (the OAuth resource must
+   * be HTTPS) and on installs that set `MCP_ENABLED=false`, so the dashboard
+   * hides its setup page rather than handing out an endpoint that answers 404.
+   */
+  isMcpEnabled(): boolean {
+    return mcpAvailability().enabled;
   }
 
   /**

@@ -56,7 +56,7 @@ describe('billing plan emails', () => {
         kind: 'requests_warning',
         userName: 'Ada',
         used: 8000,
-        limit: FREE_PLAN_REQUESTS_PER_MONTH,
+        limit: 10_000,
         periodEnd: '2026-08-01T00:00:00.000Z',
         appUrl: 'https://app.manifest.build',
       }),

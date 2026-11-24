@@ -1,3 +1,4 @@
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
 import { Controller, Get, Query, UseInterceptors } from '@nestjs/common';
 import { CacheTTL } from '@nestjs/cache-manager';
 import { RangeQueryDto } from '../../common/dto/range-query.dto';
@@ -13,6 +14,7 @@ import { computeTrend } from '../services/query-helpers';
 @CacheTTL(DASHBOARD_CACHE_TTL_MS)
 export class TokensController {
   constructor(
+    private readonly analyticsScope: AnalyticsScopeService,
     private readonly aggregation: AggregationService,
     private readonly timeseries: TimeseriesQueriesService,
   ) {}
@@ -20,12 +22,12 @@ export class TokensController {
   @Get('tokens')
   async getTokens(@Query() query: RangeQueryDto, @TenantCtx() ctx: TenantContext) {
     const range = query.range ?? '24h';
-    const agentName = query.agent_name;
+    const agentScope = await this.analyticsScope.resolve(ctx.tenantId, query.agent_name);
 
     const [{ tokenUsage: hourly }, { tokenUsage: daily }, prevTokens] = await Promise.all([
-      this.timeseries.getTimeseries(range, ctx.tenantId, true, agentName),
-      this.timeseries.getTimeseries(range, ctx.tenantId, false, agentName),
-      this.aggregation.getPreviousTokenTotal(range, ctx.tenantId, agentName),
+      this.timeseries.getTimeseries(range, ctx.tenantId, true, agentScope),
+      this.timeseries.getTimeseries(range, ctx.tenantId, false, agentScope),
+      this.aggregation.getPreviousTokenTotal(range, ctx.tenantId, agentScope),
     ]);
 
     // Derive summary from hourly timeseries data (avoids separate aggregation query)

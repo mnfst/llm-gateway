@@ -5,9 +5,20 @@ export {
   PLATFORM_LABELS,
   PLATFORMS_BY_CATEGORY,
   PLATFORM_ICONS,
+  coerceAgentPlatform,
   platformIcon,
+  API_SURFACES,
+  PLATFORM_API_SURFACES,
 } from './agent-type';
-export type { AgentCategory, AgentPlatform } from './agent-type';
+export type { AgentCategory, AgentPlatform, ApiSurface } from './agent-type';
+export {
+  getOpenClawSnippet,
+  getClaudeCodeSettingsSnippet,
+  getNanobotConfigSnippet,
+  getCodexConfigSnippet,
+  getCodexKeyExportSnippet,
+  PLATFORM_SETUP_SNIPPETS,
+} from './setup-snippets';
 export {
   TIERS,
   TIER_SLOTS,
@@ -57,6 +68,8 @@ export type {
   RequestStatus,
   AttemptStatus,
 } from './error-taxonomy';
+export { isAnthropicExtraUsageError } from './provider-error-semantics';
+export type { ProviderErrorSignals } from './provider-error-semantics';
 export { MANIFEST_ERRORS_DOCS_BASE, manifestErrorDocsUrl } from './manifest-error-docs';
 export { DEFAULT_RESPONSE_MODE, RESPONSE_MODES, isResponseMode } from './response-mode';
 export type { ResponseMode } from './response-mode';
@@ -70,7 +83,10 @@ export {
   routeToLegacy,
 } from './model-route';
 export type { ModelRoute, LegacyOverrideTriple } from './model-route';
-export { applyRequestParamDefaults } from './request-params';
+export {
+  applyRequestParamDefaults,
+  applyRequestParamDefaultsWithOverrides,
+} from './request-params';
 export type { JsonValue, RequestParamDefaults } from './request-params';
 export { snapshotRequestParams } from './request-params-snapshot';
 export type { RequestParamsSnapshotInput } from './request-params-snapshot';
@@ -112,6 +128,7 @@ export {
   modelParamsScopeForTier,
 } from './model-params-scope';
 export type { ModelParamsRoutingScopeInput } from './model-params-scope';
+export { minimaxTextModelRank, currentMinimaxModelChoices } from './minimax-model-choices';
 export { API_KEY_PREFIX } from './api-key';
 export { MAX_KEYS_PER_PROVIDER } from './provider-limits';
 export {
@@ -134,9 +151,12 @@ export {
   SHARED_PROVIDER_BY_ID_OR_ALIAS,
   CANONICAL_LOCAL_IDS,
   LOCAL_SERVER_HINTS,
+  META_MODEL_API_CONTEXT_WINDOW,
+  META_MODEL_API_MODELS,
+  META_MODEL_API_MODEL_BY_ID,
   normalizeProviderName,
 } from './providers';
-export type { SharedProviderEntry, LocalServerHint } from './providers';
+export type { SharedProviderEntry, LocalServerHint, MetaModelApiModel } from './providers';
 export type { ResolveResponse } from './resolve-response';
 export {
   SUBSCRIPTION_PROVIDER_CONFIGS,
@@ -145,7 +165,6 @@ export {
   supportsSubscriptionProvider,
   getSubscriptionKnownModels,
   getSubscriptionKnownModelsMatch,
-  getSubscriptionExcludedModels,
   getSubscriptionCapabilities,
 } from './subscription';
 export type { SubscriptionCapabilities, SubscriptionProviderConfig } from './subscription';
@@ -165,6 +184,7 @@ export {
 } from './plan-limits';
 export type {
   BillingEmailPreferences,
+  BillingPlanStatus,
   BillingPrice,
   BillingStatus,
   Plan,
@@ -182,3 +202,12 @@ export {
   normalizeRole,
 } from './chat-message';
 export type { ChatMessage, ChatTool, RecordedResponseBody, Role, ToolCall } from './chat-message';
+export { resolveToolCallIndex } from './tool-call-index';
+export {
+  CUSTOM_PROVIDER_ALIAS_MAX_LENGTH,
+  CUSTOM_PROVIDER_ALIAS_MESSAGE,
+  CUSTOM_PROVIDER_ALIAS_PATTERN,
+  deriveCustomProviderAlias,
+  isReservedCustomProviderAlias,
+  normalizeCustomProviderAlias,
+} from './custom-provider-alias';

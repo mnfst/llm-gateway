@@ -1,10 +1,11 @@
 import { scrubSecrets } from '../../common/utils/secret-scrub';
+import { providerDetailMessage } from '../proxy/proxy-error-sanitizer';
 import type { PhoenixProviderError } from './phoenix.types';
 
 const MAX_MESSAGE_LENGTH = 2000;
 
 function coerceString(value: unknown): string | null {
-  return typeof value === 'string' && value.length > 0 ? value : null;
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
 /**
@@ -23,8 +24,9 @@ function coerceScrubbed(value: unknown): string | null {
  * normalised `{ message, type, param, code }` shape Phoenix fingerprints on.
  *
  * Handles the OpenAI-compatible envelope (`{ error: { message, type, param,
- * code } }`), a flat `{ message, ... }` body, and non-JSON bodies (the raw text
- * becomes the message). Secrets are scrubbed and the message is length-capped so
+ * code } }`), a flat `{ message, ... }` body, a bare `{ error: "…" }` string, a
+ * FastAPI-style `{ detail }`, and non-JSON bodies (the raw text becomes the
+ * message). Secrets are scrubbed and the message is length-capped so
  * we never ship a key or an unbounded blob to the healing service.
  */
 export function normalizeProviderError(rawBody: string): PhoenixProviderError {
@@ -41,7 +43,12 @@ export function normalizeProviderError(rawBody: string): PhoenixProviderError {
       ? (parsed.error as Record<string, unknown>)
       : parsed;
 
-  const rawMessage = coerceString(errorObj?.message) ?? coerceString(parsed?.message) ?? rawBody;
+  const rawMessage =
+    coerceString(errorObj?.message) ??
+    coerceString(parsed?.message) ??
+    coerceString(parsed?.error) ??
+    providerDetailMessage(parsed?.detail) ??
+    rawBody;
   const message = scrubSecrets(rawMessage).slice(0, MAX_MESSAGE_LENGTH);
 
   return {
@@ -77,7 +84,7 @@ function envelopeOf(error: PhoenixProviderError, message: string): string {
  * the inverse of {@link normalizeProviderError}, and the shape every other
  * `agent_messages.error_message` already holds.
  *
- * Auto-fix rows used to persist `error.message` alone, silently dropping `type`, `param`
+ * Autofix rows used to persist `error.message` alone, silently dropping `type`, `param`
  * and `code`. Those are exactly the dimensions Phoenix fingerprints on, so a downstream
  * re-ingest of such a row (Peacock's historical scrape) landed on a *different* issue than
  * the live `/heal` that had already reported the same failure — one error, two issues,

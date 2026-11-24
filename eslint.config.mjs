@@ -12,6 +12,7 @@ export default [
       'packages/backend/src/**/*.ts',
       'packages/frontend/src/**/*.ts',
       'packages/frontend/src/**/*.tsx',
+      'packages/cli/src/**/*.ts',
     ],
     languageOptions: {
       parser: tsParser,

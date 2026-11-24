@@ -6,6 +6,7 @@ import {
   Matches,
   IsOptional,
   IsIn,
+  IsBoolean,
 } from 'class-validator';
 import { AGENT_CATEGORIES, AGENT_PLATFORMS } from 'manifest-shared';
 
@@ -28,4 +29,14 @@ export class CreateAgentDto {
   @IsString()
   @IsIn([...AGENT_PLATFORMS])
   agent_platform?: string;
+
+  /** Explicit Autofix choice at creation. Omit to inherit the mode default. */
+  @IsOptional()
+  @IsBoolean()
+  autofix_enabled?: boolean;
+
+  /** Explicit recording choice at creation. Omit to keep the column default. */
+  @IsOptional()
+  @IsBoolean()
+  record_messages?: boolean;
 }

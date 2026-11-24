@@ -1,3 +1,4 @@
+import { underlyingGatewayModel } from 'manifest-shared';
 import { getModelPrices } from './api.js';
 import { getModelLabel } from './provider-utils.js';
 import { inferProviderFromModel, stripCustomPrefix } from './routing-utils.js';
@@ -42,6 +43,16 @@ export function getModelDisplayName(slug: string): string {
   if (cache) {
     const cached = cache.get(slug);
     if (cached) return cached;
+    // A gateway id (`opencode-go/deepseek-flash`) is the gateway's transport
+    // name for another catalog's model; the pricing catalogue keys it bare.
+    // Without this the id fell through to slug formatting and the Requests log
+    // printed "Deepseek Flash" for the model the routing page calls
+    // "DeepSeek V4.1 Flash".
+    const bare = underlyingGatewayModel(slug);
+    if (bare !== null) {
+      const gatewayCached = cache.get(bare);
+      if (gatewayCached) return gatewayCached;
+    }
   }
   const provId = inferProviderFromModel(slug);
   if (provId) return getModelLabel(provId, slug);

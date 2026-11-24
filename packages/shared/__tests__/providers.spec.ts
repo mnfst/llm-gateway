@@ -3,6 +3,9 @@ import {
   SHARED_PROVIDER_BY_ID,
   SHARED_PROVIDER_BY_ID_OR_ALIAS,
   LOCAL_SERVER_HINTS,
+  META_MODEL_API_CONTEXT_WINDOW,
+  META_MODEL_API_MODELS,
+  META_MODEL_API_MODEL_BY_ID,
   normalizeProviderName,
 } from '../src/providers';
 
@@ -250,6 +253,25 @@ describe('SHARED_PROVIDER_BY_ID', () => {
     expect(xiaomi!.keyPrefix).toBe('sk-');
     expect(xiaomi!.minKeyLength).toBe(50);
     expect(xiaomi!.keyPlaceholder).toBe('sk-xxxxx');
+  });
+
+  it('meta exposes Model API credentials and the current Muse Spark catalog', () => {
+    const meta = SHARED_PROVIDER_BY_ID.get('meta');
+    expect(meta).toBeDefined();
+    expect(meta!.displayName).toBe('Meta');
+    expect(meta!.openRouterPrefixes).toEqual(['meta']);
+    expect(meta!.keyPrefix).toBe('LLM_');
+    expect(meta!.minKeyLength).toBe(20);
+    expect(meta!.keyPlaceholder).toBe('LLM_...');
+    expect(META_MODEL_API_CONTEXT_WINDOW).toBe(1_048_576);
+    expect(META_MODEL_API_MODELS.map((model) => model.id)).toEqual([
+      'muse-spark-1.2',
+      'muse-spark-1.2-contributor',
+      'muse-spark-1.1',
+    ]);
+    expect(META_MODEL_API_MODEL_BY_ID.get('muse-spark-1.2-contributor')?.displayName).toMatch(
+      /may train Meta/,
+    );
   });
 });
 

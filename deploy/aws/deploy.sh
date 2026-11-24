@@ -48,5 +48,5 @@ aws cloudformation deploy \
 aws cloudformation describe-stacks \
   --region "$REGION" \
   --stack-name "$STACK_NAME" \
-  --query "Stacks[0].Outputs[?OutputKey=='ServiceUrl' || OutputKey=='HealthCheckUrl'].[OutputKey,OutputValue]" \
+  --query "Stacks[0].Outputs[?OutputKey=='ServiceUrl' || OutputKey=='HealthCheckUrl' || OutputKey=='RecordingBucketName'].[OutputKey,OutputValue]" \
   --output table

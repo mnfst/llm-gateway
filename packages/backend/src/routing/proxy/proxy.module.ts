@@ -25,6 +25,7 @@ import { CopilotTokenService } from './copilot-token.service';
 import { ThoughtSignatureCache } from './thought-signature-cache';
 import { ThinkingBlockCache } from './thinking-block-cache';
 import { ReasoningContentCache } from './reasoning-content-cache';
+import { ModelsDevReasoningCatalog } from './reasoning-model-catalog';
 import { CodexSessionAffinity } from './codex-session-affinity';
 import { ProxyExceptionFilter } from './proxy-exception.filter';
 import { AttemptRecordingService } from './attempt-recording.service';
@@ -56,6 +57,7 @@ import { AttemptRecordingService } from './attempt-recording.service';
     ThoughtSignatureCache,
     ThinkingBlockCache,
     ReasoningContentCache,
+    ModelsDevReasoningCatalog,
     CodexSessionAffinity,
     ProxyExceptionFilter,
     AttemptRecordingService,

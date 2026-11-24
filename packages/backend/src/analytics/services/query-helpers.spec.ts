@@ -1,3 +1,4 @@
+import { selectedAgent } from '../__tests__/scope.fixture';
 import {
   computeTrend,
   downsample,
@@ -14,7 +15,6 @@ import {
   filterByKeyLabel,
   filterByTenantProviderId,
   scopeToConnection,
-  filterByLiveAgentName,
   MESSAGE_ROW_SELECT_ALIASES,
   sqlCountMessages,
   ERROR_MESSAGE_STATUSES,
@@ -150,7 +150,7 @@ describe('addTenantFilter', () => {
     addTenantFilter(qb, null);
 
     expect(mockAndWhere).toHaveBeenCalledTimes(1);
-    expect(mockAndWhere).toHaveBeenCalledWith('1 = 0');
+    expect(mockAndWhere).toHaveBeenCalledWith('1 = 0', { tenantId: null });
   });
 
   it('filters by tenant_id when tenantId is provided', () => {
@@ -163,42 +163,16 @@ describe('addTenantFilter', () => {
     });
   });
 
-  it('resolves agentName to the live agent_id via subquery so soft-deleted agents do not leak', () => {
+  it('binds the resolved live agent ID', () => {
     const { qb, mockAndWhere } = makeMockQb();
-    addTenantFilter(qb, 'tenant-456', 'my-agent');
-
-    expect(mockAndWhere).toHaveBeenCalledTimes(2);
-    const secondCall = mockAndWhere.mock.calls[1];
-    expect(secondCall[0]).toContain('at.agent_id = (');
-    expect(secondCall[0]).toContain('FROM agents');
-    expect(secondCall[0]).toContain('deleted_at IS NULL');
-    // The agent lookup is scoped via the tenant id, never `at.tenant_id`.
-    expect(secondCall[0]).toContain('a.tenant_id = :liveTenantId');
-    expect(secondCall[0]).not.toContain('at.tenant_id');
-    expect(secondCall[1]).toEqual({ liveAgentName: 'my-agent', liveTenantId: 'tenant-456' });
-  });
-
-  it('does not add agent_name filter when agentName is undefined', () => {
-    const { qb, mockAndWhere } = makeMockQb();
-    addTenantFilter(qb, 'tenant-456');
-
-    expect(mockAndWhere).toHaveBeenCalledTimes(1);
-  });
-
-  it('filterByLiveAgentName scopes by the tenant id', () => {
-    const { qb, mockAndWhere } = makeMockQb();
-    const result = filterByLiveAgentName(qb, 'my-agent', 'tenant-456');
-
-    expect(result).toBe(qb);
-    expect(mockAndWhere).toHaveBeenCalledTimes(1);
-    const call = mockAndWhere.mock.calls[0];
-    expect(call[0]).toContain('at.agent_id = (');
-    expect(call[0]).toContain('FROM agents');
-    expect(call[0]).toContain('deleted_at IS NULL');
-    expect(call[0]).toContain('a.tenant_id = :liveTenantId');
-    // Must never key the lookup off the (possibly NULL) message tenant_id.
-    expect(call[0]).not.toContain('at.tenant_id');
-    expect(call[1]).toEqual({ liveAgentName: 'my-agent', liveTenantId: 'tenant-456' });
+    addTenantFilter(qb, 'tenant-456', {
+      tenantId: 'tenant-456',
+      agentName: 'my-agent',
+      agentId: 'agent-id',
+    });
+    expect(mockAndWhere).toHaveBeenCalledWith('at.agent_id = :liveAgentId', {
+      liveAgentId: 'agent-id',
+    });
   });
 
   it('returns the query builder for chaining', () => {
@@ -209,7 +183,7 @@ describe('addTenantFilter', () => {
 
   it('accepts both agentName and tenantId together', () => {
     const { qb, mockAndWhere } = makeMockQb();
-    addTenantFilter(qb, 'tenant-456', 'my-agent');
+    addTenantFilter(qb, 'tenant-456', selectedAgent('tenant-456', 'my-agent'));
 
     expect(mockAndWhere).toHaveBeenCalledTimes(2);
   });
@@ -235,16 +209,30 @@ describe('excludePlaygroundAgents', () => {
     expect(mockAndWhere).toHaveBeenCalledWith(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE);
   });
 
-  it('matches the playground agent by id OR name and never multiplies rows', () => {
-    // The predicate is a pure existence test (cannot duplicate fact rows) and
+  it('matches the playground agent by id OR name, without correlating on agents', () => {
+    // Still a pure existence test that cannot duplicate fact rows, and still
     // matches on either agent_id OR agent_name (so a Playground row carrying
-    // only agent_name, NULL agent_id, is still excluded).
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('NOT EXISTS');
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('playag.is_playground = true');
-    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('playag.tenant_id = at.tenant_id');
+    // only agent_name, NULL agent_id, is excluded too).
+    //
+    // Both subqueries must stay UNCORRELATED. Postgres evaluates an
+    // uncorrelated `IN (subquery)` once, as a hashed SubPlan; the previous
+    // correlated NOT EXISTS was re-scanned per row whenever the planner
+    // declined to materialize it, costing 24.7s on the Overview.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('is_playground = true');
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain('at.agent_id IN (SELECT plg.id');
     expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).toContain(
-      'playag.id = at.agent_id OR playag.name = at.agent_name',
+      '(at.tenant_id, at.agent_name) IN (SELECT plg.tenant_id, plg.name',
     );
+    // No reference to the outer alias inside either subquery.
+    const subqueries = EXCLUDE_PLAYGROUND_AGENTS_PREDICATE.match(/\(SELECT plg[^)]*\)/g) ?? [];
+    expect(subqueries).toHaveLength(2);
+    for (const sub of subqueries) expect(sub).not.toContain('at.');
+    // The name arm compares the (tenant_id, name) PAIR. Agent names are unique
+    // only per tenant, so a bare name match would drop other tenants' traffic.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE).not.toMatch(/[^,]agent_name IN \(SELECT plg\.name/);
+    // COALESCE is required: `x IN (subquery)` is NULL, not false, when x is
+    // NULL and nothing matches, and NOT NULL is NULL — the row would vanish.
+    expect(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE.match(/COALESCE\(/g)).toHaveLength(2);
   });
 
   it('returns the query builder for chaining', () => {
@@ -518,7 +506,7 @@ describe('selectMessageRowColumns', () => {
     expect(nameCall).toEqual(['cp.name', 'custom_provider_name']);
   });
 
-  it('projects autofix_applied and autofix_role for Auto-fix rendering', () => {
+  it('projects autofix_applied and autofix_role for Autofix rendering', () => {
     const { qb, addSelectCalls } = makeMockQb();
     selectMessageRowColumns(qb, 'cost');
 

@@ -23,14 +23,14 @@ vi.mock('../../src/services/model-display.js', () => ({
 
 import MessageDetails from '../../src/components/MessageDetails';
 
-// The Auto-fix model is two linked rows: a failed `original` and its
+// The Autofix model is two linked rows: a failed `original` and its
 // successful `retry`. Each row carries `autofix_role`, the Phoenix
 // `autofix_operations`, and an `autofix_sibling` pointer to the paired row.
 //
-// The redesigned MessageDetails renders these as an "error + auto-fix" row of
+// The redesigned MessageDetails renders these as an "error + autofix" row of
 // colored cards rather than a titled section:
 //   • the failed ORIGINAL (has an error_message) → an error card paired with a
-//     "auto-fix" next-card ("Auto-fix was attempted after this error." + a
+//     "autofix" next-card ("Autofix was attempted after this error." + a
 //     "View autofix retry" link).
 //   • the successful RETRY (no error_message) → the rich `AutofixSection` card:
 //     a success phrase, the Phoenix operation table, the Phoenix ids, and a
@@ -109,7 +109,7 @@ const retryResponse = {
   },
 };
 
-describe('MessageDetails Auto-fix section', () => {
+describe('MessageDetails Autofix section', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
@@ -132,7 +132,7 @@ describe('MessageDetails Auto-fix section', () => {
     await vi.waitFor(() => expect(container.textContent).toContain(label));
   });
 
-  it('renders the original-side panel: error, the "auto-fix attempted" card, and the retry link', async () => {
+  it('renders the original-side panel: error, the "autofix attempted" card, and the retry link', async () => {
     mockGetMessageDetails.mockResolvedValue(originalResponse);
     const onOpenMessage = vi.fn();
     const { container } = render(() => (
@@ -140,10 +140,10 @@ describe('MessageDetails Auto-fix section', () => {
     ));
 
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Auto-fix was attempted after this error.');
+      expect(container.textContent).toContain('Autofix was attempted after this error.');
     });
 
-    // The failed original shows its error inline alongside the auto-fix card.
+    // The failed original shows its error inline alongside the autofix card.
     expect(container.querySelector('.msg-detail__error-inline')!.textContent).toBe(
       'Unknown parameter: max_tokens',
     );
@@ -151,7 +151,7 @@ describe('MessageDetails Auto-fix section', () => {
     // The forward link to the successful retry.
     const link = container.querySelector('.error-autofix-row__autofix-btn');
     expect(link).not.toBeNull();
-    expect(link!.textContent).toContain('View Auto-fix retry');
+    expect(link!.textContent).toContain('View Autofix retry');
 
     // Clicking it opens the sibling (retry) row.
     fireEvent.click(link!);
@@ -180,7 +180,7 @@ describe('MessageDetails Auto-fix section', () => {
     expect(onOpenMessage).toHaveBeenCalledWith('orig-1');
   });
 
-  it('does not render the Auto-fix section when autofix_applied is false', async () => {
+  it('does not render the Autofix section when autofix_applied is false', async () => {
     mockGetMessageDetails.mockResolvedValue({ message: { ...baseMessage } });
     const onOpenMessage = vi.fn();
     const { container } = render(() => (
@@ -192,7 +192,7 @@ describe('MessageDetails Auto-fix section', () => {
       expect(container.textContent).toContain('Request');
     });
 
-    // No error/auto-fix row and no auto-fix cards render.
+    // No error/autofix row and no autofix cards render.
     expect(container.querySelector('.error-autofix-row')).toBeNull();
     expect(container.querySelector('.autofix-card')).toBeNull();
     expect(container.querySelector('.error-autofix-row__autofix-btn')).toBeNull();
@@ -200,19 +200,19 @@ describe('MessageDetails Auto-fix section', () => {
 
   it('omits the sibling link when onOpenMessage is not provided', async () => {
     // A sibling exists, but with no handler the link can go nowhere — so it is
-    // not rendered. The "auto-fix attempted" card still appears.
+    // not rendered. The "autofix attempted" card still appears.
     mockGetMessageDetails.mockResolvedValue(originalResponse);
     const { container } = render(() => <MessageDetails messageId="orig-1" />);
 
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Auto-fix was attempted after this error.');
+      expect(container.textContent).toContain('Autofix was attempted after this error.');
     });
 
     expect(container.querySelector('.error-autofix-row__autofix-btn')).toBeNull();
   });
 
-  it('shows the "auto-fix attempted" card with no link when autofix_sibling is null', async () => {
-    // An `original` row with no retry sibling means Auto-fix ran but never
+  it('shows the "autofix attempted" card with no link when autofix_sibling is null', async () => {
+    // An `original` row with no retry sibling means Autofix ran but never
     // produced a working request — the card still explains an attempt was made,
     // but there is no sibling to link to.
     const noSibling = {
@@ -228,7 +228,7 @@ describe('MessageDetails Auto-fix section', () => {
     ));
 
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('Auto-fix was attempted after this error.');
+      expect(container.textContent).toContain('Autofix was attempted after this error.');
     });
 
     // The error is still surfaced, but with no sibling there is no link.
@@ -447,9 +447,9 @@ describe('MessageDetails Auto-fix section', () => {
     expect(text).toContain('clamp_param');
   });
 
-  it('renders a triple layout: auto-fix retry trigger → error → fallback next', async () => {
+  it('renders a triple layout: autofix retry trigger → error → fallback next', async () => {
     // A retry that itself failed and was recovered by a fallback: the request
-    // was triggered by an auto-fix (left), it errored (middle), and a fallback
+    // was triggered by an autofix (left), it errored (middle), and a fallback
     // fired after (right) — the 3-column `--triple` layout.
     mockGetMessageDetails.mockResolvedValue({
       message: {
@@ -468,17 +468,17 @@ describe('MessageDetails Auto-fix section', () => {
     });
 
     const text = container.textContent!;
-    // Trigger card (left): this request came from an auto-fix.
-    expect(text).toContain('This request was triggered by an auto-fix.');
+    // Trigger card (left): this request came from an autofix.
+    expect(text).toContain('This request was triggered by an autofix.');
     // Error card (middle).
     expect(container.querySelector('.msg-detail__error-inline')!.textContent).toBe('Overloaded');
     // Next card (right): a fallback fired after the error.
     expect(text).toContain('A fallback was triggered after this error.');
   });
 
-  it('renders a triple layout: fallback trigger → error → auto-fix next, with the retry link', async () => {
+  it('renders a triple layout: fallback trigger → error → autofix next, with the retry link', async () => {
     // A request reached via fallback that also failed and then triggered an
-    // auto-fix: fallback trigger (left), error (middle), auto-fix next (right)
+    // autofix: fallback trigger (left), error (middle), autofix next (right)
     // carrying the forward link to the retry sibling.
     const onOpenMessage = vi.fn();
     mockGetMessageDetails.mockResolvedValue({
@@ -508,17 +508,17 @@ describe('MessageDetails Auto-fix section', () => {
     expect(text).toContain('gemini-flash');
     // Error card (middle).
     expect(container.querySelector('.msg-detail__error-inline')!.textContent).toBe('Bad param');
-    // Auto-fix next card (right) with the forward link.
-    expect(text).toContain('Auto-fix was attempted after this error.');
+    // Autofix next card (right) with the forward link.
+    expect(text).toContain('Autofix was attempted after this error.');
     const link = container.querySelector('.error-autofix-row__autofix-btn');
     expect(link).not.toBeNull();
     fireEvent.click(link!);
     expect(onOpenMessage).toHaveBeenCalledWith('retry-2');
   });
 
-  it('renders a 50/50 trigger+error layout when an auto-fix retry itself errors with nothing after', async () => {
+  it('renders a 50/50 trigger+error layout when an autofix retry itself errors with nothing after', async () => {
     // A retry that failed and was NOT recovered: trigger card (this came from an
-    // auto-fix) + the error, but no next-action card and no triple layout.
+    // autofix) + the error, but no next-action card and no triple layout.
     mockGetMessageDetails.mockResolvedValue({
       message: {
         ...baseMessage,
@@ -532,7 +532,7 @@ describe('MessageDetails Auto-fix section', () => {
     const { container } = render(() => <MessageDetails messageId="retry-fail-1" />);
 
     await vi.waitFor(() => {
-      expect(container.textContent).toContain('This request was triggered by an auto-fix.');
+      expect(container.textContent).toContain('This request was triggered by an autofix.');
     });
 
     // Error present, but no triple layout and no next-action cards.
@@ -541,6 +541,6 @@ describe('MessageDetails Auto-fix section', () => {
     );
     expect(container.querySelector('.error-autofix-row--triple')).toBeNull();
     expect(container.textContent).not.toContain('A fallback was triggered after this error.');
-    expect(container.textContent).not.toContain('Auto-fix was attempted after this error.');
+    expect(container.textContent).not.toContain('Autofix was attempted after this error.');
   });
 });

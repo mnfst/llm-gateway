@@ -646,9 +646,12 @@ describe('ProviderSelectModal', () => {
         url: 'https://claude.ai/oauth/authorize?state=abc',
         state: 'abc',
       });
-      const windowOpenSpy = vi
-        .spyOn(window, 'open')
-        .mockReturnValue({ closed: false } as unknown as Window);
+      const windowOpenSpy = vi.spyOn(window, 'open').mockReturnValue({
+        closed: false,
+        close: vi.fn(),
+        opener: {},
+        location: { replace: vi.fn() },
+      } as unknown as Window);
 
       openSubscription('anthropic');
       fireEvent.click(screen.getByText('Sign in with Claude'));
@@ -668,9 +671,12 @@ describe('ProviderSelectModal', () => {
         state: 'xyz',
       });
       mockSubmitAnthropicOAuth.mockResolvedValue({ ok: true });
-      const windowOpenSpy = vi
-        .spyOn(window, 'open')
-        .mockReturnValue({ closed: false } as unknown as Window);
+      const windowOpenSpy = vi.spyOn(window, 'open').mockReturnValue({
+        closed: false,
+        close: vi.fn(),
+        opener: {},
+        location: { replace: vi.fn() },
+      } as unknown as Window);
 
       openSubscription('anthropic');
       fireEvent.click(screen.getByText('Sign in with Claude'));

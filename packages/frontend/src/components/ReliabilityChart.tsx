@@ -26,7 +26,7 @@ import type { AutofixTimeseries } from '../services/api/analytics.js';
 // ---------------------------------------------------------------------------
 const OUTCOME_COLORS: Record<string, string> = {
   success: '#1cc4bf', // --success teal — direct success
-  healed: '#2632ef', // blue — recovered by Auto-fix (must not read as success)
+  healed: '#2632ef', // blue — recovered by Autofix (must not read as success)
   autofix: '#2632ef', // blue — recovered by autofix
   fallback: '#f2c79c', // warm yellow — recovered by fallback
   error: '#EF4444', // --destructive red
@@ -65,10 +65,11 @@ function colorFor(key: string, mode: string, idx: number): string {
 function keyLabel(key: string): string {
   if (key === 'none') return 'No error';
   if (key === 'success') return 'Success';
-  if (key === 'healed') return 'Success - recovered by Auto-fix';
+  if (key === 'healed') return 'Success - recovered by Autofix';
   if (key === 'error') return 'Error';
   if (key === 'no_fix_found') return 'No fix found';
-  if (key === 'autofix') return 'Success - recovered by Auto-fix';
+  if (key === 'autofix') return 'Success - recovered by Autofix';
+  if (key === 'auto-fixed') return 'Autofixed';
   if (key === 'fallback') return 'Success - recovered by Fallback';
   return key.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }
@@ -84,7 +85,7 @@ export interface ReliabilityChartProps {
 
 /**
  * Fixed reading order for the disposition series — legend AND bar stacking
- * (bottom to top): Success, then healed via Auto-fix, then healed via
+ * (bottom to top): Success, then healed via Autofix, then healed via
  * Fallback, then Error. Unknown keys keep their incoming order, after these.
  */
 const SERIES_ORDER: Record<string, number> = {
@@ -204,7 +205,7 @@ const ReliabilityChart: Component<ReliabilityChartProps> = (props) => {
                   return;
                 }
                 // One row per series, in the fixed legend/stacking order
-                // (Success, healed via Auto-fix, via Fallback, Error) — NOT
+                // (Success, healed via Autofix, via Fallback, Error) — NOT
                 // value-sorted like the per-agent charts.
                 const entries: HoverTooltipState['entries'] = [];
                 let total = 0;

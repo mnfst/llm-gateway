@@ -36,7 +36,7 @@ const timeouts = { lockTimeoutMs: 5_000, statementTimeoutMs: 60_000 };
 const before = '2026-01-01 00:00:00';
 
 describe('TypeOrmRequestBackfillGateway', () => {
-  it('derives every request-level Auto-fix status during historical backfill', () => {
+  it('derives every request-level Autofix status during historical backfill', () => {
     const sql = `${INSERT_ATTEMPT_REQUESTS_SQL}\n${REFRESH_ATTEMPT_REQUESTS_SQL}`;
     for (const status of [
       'no_patch',
@@ -57,7 +57,7 @@ describe('TypeOrmRequestBackfillGateway', () => {
     expect(sql).toContain("WHEN status IN ('pending', 'cancelled') THEN status");
   });
 
-  it('precomputes legacy Auto-fix group sizes once per window', () => {
+  it('precomputes legacy Autofix group sizes once per window', () => {
     expect(LINK_ATTEMPTS_SQL).toContain('target_autofix_groups AS MATERIALIZED');
     expect(LINK_ATTEMPTS_SQL).toContain('autofix_group_stats AS MATERIALIZED');
     expect(LINK_ATTEMPTS_SQL).toContain('LEFT JOIN autofix_group_stats stats');

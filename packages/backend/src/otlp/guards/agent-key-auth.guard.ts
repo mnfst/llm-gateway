@@ -27,6 +27,7 @@ function cacheKey(token: string): string {
 }
 
 interface CachedKey {
+  keyId: string;
   tenantId: string;
   agentId: string;
   agentName: string;
@@ -44,11 +45,17 @@ interface CachedKey {
 @Injectable()
 export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AgentKeyAuthGuard.name);
-  private cache = new Map<string, CachedKey>();
+  // STATIC on purpose: Nest instantiates class-referenced @UseGuards enhancers
+  // per host module, so the proxy controllers and the OtlpModule export are
+  // DIFFERENT guard instances. Instance-level maps let a rotated key keep
+  // authenticating from another instance's warm cache for up to CACHE_TTL_MS;
+  // sharing the maps process-wide makes invalidateCache()/clearCache() reach
+  // every instance.
+  private static cache = new Map<string, CachedKey>();
   private devContext: { context: IngestionContext; expiresAt: number } | null = null;
-  // 5 min TTL keeps revoked-key staleness bounded while still amortizing the
-  // DB lookup across hot ingest bursts. Mutations call invalidateCache()
-  // directly when keys rotate or deactivate.
+  // 5 min TTL amortizes the expensive prefix lookup and hash verification.
+  // Cache hits still verify the key row is active, so rotation and deletion
+  // take effect across replicas without waiting for this TTL.
   private readonly CACHE_TTL_MS = 5 * 60 * 1000;
   private readonly MAX_CACHE_SIZE = 10_000;
   // Maps a rejected token's hash to when its rejection stops being trusted.
@@ -58,7 +65,7 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
   // The TTL is deliberately much shorter than CACHE_TTL_MS so a key that gets
   // created or reactivated starts working quickly; key mutations also clear
   // this via clearCache()/invalidateCache(), so a created key is never stuck.
-  private negativeCache = new Map<string, number>();
+  private static negativeCache = new Map<string, number>();
   private readonly NEGATIVE_CACHE_TTL_MS = 30 * 1000;
   private readonly MAX_NEGATIVE_CACHE_SIZE = 10_000;
   private readonly cleanupTimer: ReturnType<typeof setInterval>;
@@ -101,6 +108,10 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
 
   onModuleDestroy(): void {
     clearInterval(this.cleanupTimer);
+    // The caches are static, so they outlive the instance and leak across
+    // application contexts (test isolation, and any repeated Nest bootstrap in
+    // one process). Tearing the module down clears them.
+    this.clearCache();
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -138,16 +149,16 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
 
   invalidateCache(key: string) {
     const hashed = cacheKey(key);
-    this.cache.delete(hashed);
+    AgentKeyAuthGuard.cache.delete(hashed);
     // Drop any negative entry too, so re-creating or rotating a key that was
     // briefly rejected (e.g. a client raced ahead of key creation) takes
     // effect immediately instead of waiting out the negative TTL.
-    this.negativeCache.delete(hashed);
+    AgentKeyAuthGuard.negativeCache.delete(hashed);
   }
 
   clearCache() {
-    this.cache.clear();
-    this.negativeCache.clear();
+    AgentKeyAuthGuard.cache.clear();
+    AgentKeyAuthGuard.negativeCache.clear();
   }
 
   private setContext(request: Request, ctx: IngestionContext): void {
@@ -169,30 +180,45 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
     // Negative cache first: a recently-rejected token short-circuits here
     // without touching the DB or emitting a log line. This is what collapses
     // a wrong/revoked-key storm to one DB lookup + one warn per TTL window.
-    const negativeExpiry = this.negativeCache.get(hashed);
+    const negativeExpiry = AgentKeyAuthGuard.negativeCache.get(hashed);
     if (negativeExpiry !== undefined && negativeExpiry > now) {
       // LRU touch — re-insert to move to tail of insertion order.
-      this.negativeCache.delete(hashed);
-      this.negativeCache.set(hashed, negativeExpiry);
+      AgentKeyAuthGuard.negativeCache.delete(hashed);
+      AgentKeyAuthGuard.negativeCache.set(hashed, negativeExpiry);
       throw new UnauthorizedException('Invalid API key');
     }
     if (negativeExpiry !== undefined) {
       // Stale negative entry — drop it and re-check against the DB so a key
       // that has since been created/reactivated can authenticate again.
-      this.negativeCache.delete(hashed);
+      AgentKeyAuthGuard.negativeCache.delete(hashed);
     }
 
-    const cached = this.cache.get(hashed);
+    const cached = AgentKeyAuthGuard.cache.get(hashed);
     // A key whose own expiry has passed must stop authenticating immediately,
     // even if its cache entry is still inside the 5-min TTL. Drop the stale
     // entry and fall through to the DB path (which re-checks expiry and rejects
     // with "API key expired") rather than honoring it here.
     if (cached && cached.keyExpiresAt !== null && cached.keyExpiresAt <= now) {
-      this.cache.delete(hashed);
+      AgentKeyAuthGuard.cache.delete(hashed);
     } else if (cached && cached.expiresAt > now) {
+      let stillActive: boolean;
+      try {
+        stillActive = await this.keyRepo.existsBy({
+          id: cached.keyId,
+          is_active: true,
+        });
+      } catch (err) {
+        this.logger.warn(`Agent-key activity recheck failed: ${(err as Error).message}`);
+        throw new UnauthorizedException('Invalid API key');
+      }
+      if (!stillActive) {
+        AgentKeyAuthGuard.cache.delete(hashed);
+        this.rememberInvalid(hashed);
+        throw new UnauthorizedException('Invalid API key');
+      }
       // LRU touch — re-insert to move to tail of insertion order
-      this.cache.delete(hashed);
-      this.cache.set(hashed, cached);
+      AgentKeyAuthGuard.cache.delete(hashed);
+      AgentKeyAuthGuard.cache.set(hashed, cached);
       this.setContext(request, {
         tenantId: cached.tenantId,
         agentId: cached.agentId,
@@ -272,13 +298,14 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
       .catch((err: Error) => this.logger.warn(`Failed to update last_used_at: ${err.message}`));
 
     this.evictExpired();
-    while (this.cache.size >= this.MAX_CACHE_SIZE) {
-      const firstKey = this.cache.keys().next().value;
+    while (AgentKeyAuthGuard.cache.size >= this.MAX_CACHE_SIZE) {
+      const firstKey = AgentKeyAuthGuard.cache.keys().next().value;
       if (firstKey === undefined) break;
-      this.cache.delete(firstKey);
+      AgentKeyAuthGuard.cache.delete(firstKey);
     }
 
-    this.cache.set(hashed, {
+    AgentKeyAuthGuard.cache.set(hashed, {
+      keyId: keyRecord.id,
       tenantId: keyRecord.tenant_id,
       agentId: keyRecord.agent_id,
       agentName: keyRecord.agent.name,
@@ -335,21 +362,21 @@ export class AgentKeyAuthGuard implements CanActivate, OnModuleInit, OnModuleDes
 
   private rememberInvalid(hashed: string): void {
     this.evictExpired();
-    while (this.negativeCache.size >= this.MAX_NEGATIVE_CACHE_SIZE) {
-      const firstKey = this.negativeCache.keys().next().value;
+    while (AgentKeyAuthGuard.negativeCache.size >= this.MAX_NEGATIVE_CACHE_SIZE) {
+      const firstKey = AgentKeyAuthGuard.negativeCache.keys().next().value;
       if (firstKey === undefined) break;
-      this.negativeCache.delete(firstKey);
+      AgentKeyAuthGuard.negativeCache.delete(firstKey);
     }
-    this.negativeCache.set(hashed, Date.now() + this.NEGATIVE_CACHE_TTL_MS);
+    AgentKeyAuthGuard.negativeCache.set(hashed, Date.now() + this.NEGATIVE_CACHE_TTL_MS);
   }
 
   private evictExpired() {
     const now = Date.now();
-    for (const [key, entry] of this.cache) {
-      if (entry.expiresAt <= now) this.cache.delete(key);
+    for (const [key, entry] of AgentKeyAuthGuard.cache) {
+      if (entry.expiresAt <= now) AgentKeyAuthGuard.cache.delete(key);
     }
-    for (const [key, expiresAt] of this.negativeCache) {
-      if (expiresAt <= now) this.negativeCache.delete(key);
+    for (const [key, expiresAt] of AgentKeyAuthGuard.negativeCache) {
+      if (expiresAt <= now) AgentKeyAuthGuard.negativeCache.delete(key);
     }
   }
 }

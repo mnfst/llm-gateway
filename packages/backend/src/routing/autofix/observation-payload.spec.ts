@@ -98,6 +98,40 @@ describe('scrubBody', () => {
     const huge = { messages: [{ role: 'user', content: 'x'.repeat(MAX_BODY_BYTES) }] };
     expect(scrubBody(huge)).toBeNull();
   });
+
+  it('replaces an inline base64 image with a marker', () => {
+    const base64 = 'A'.repeat(2048);
+    const body = {
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } }],
+        },
+      ],
+    };
+    const scrubbed = JSON.stringify(scrubBody(body));
+
+    expect(scrubbed).not.toContain(base64);
+    expect(scrubbed).toContain('[inline image: image/png,');
+    expect(JSON.stringify(body)).toContain(base64);
+  });
+
+  it('ships a body that only exceeded the cap because of its images', () => {
+    const body = {
+      messages: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:image/jpeg;base64,${'B'.repeat(MAX_BODY_BYTES)}` },
+            },
+          ],
+        },
+      ],
+    };
+    expect(JSON.stringify(scrubBody(body))).toContain('[inline image: image/jpeg,');
+  });
 });
 
 describe('scrubProviderUrl', () => {
@@ -224,8 +258,42 @@ describe('toObservation', () => {
     expect(toObservation({ ...baseInput, status: 429 })).toBeNull();
   });
 
+  it('does not report Anthropic subscription extra-usage exhaustion', () => {
+    expect(
+      toObservation({
+        ...baseInput,
+        provider: 'anthropic',
+        status: 400,
+        errorBody: JSON.stringify({
+          type: 'error',
+          error: {
+            type: 'invalid_request_error',
+            message: 'You are out of extra usage. Add more at claude.ai to keep going.',
+          },
+        }),
+      }),
+    ).toBeNull();
+  });
+
   it('returns null when the body is too large to ship', () => {
     const requestBody = { messages: [{ content: 'x'.repeat(MAX_BODY_BYTES) }] };
     expect(toObservation({ ...baseInput, requestBody })).toBeNull();
+  });
+
+  it('sends no inline image bytes to Phoenix', () => {
+    const base64 = 'A'.repeat(4096);
+    const requestBody = {
+      model: 'gpt-5.1',
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'image_url', image_url: { url: `data:image/webp;base64,${base64}` } }],
+        },
+      ],
+    };
+    const observation = toObservation({ ...baseInput, requestBody });
+
+    expect(JSON.stringify(observation)).not.toContain(base64);
+    expect(JSON.stringify(observation?.request)).toContain('[inline image: image/webp,');
   });
 });

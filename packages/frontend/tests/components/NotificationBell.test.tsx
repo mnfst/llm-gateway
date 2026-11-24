@@ -1,8 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@solidjs/testing-library';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-let cohortEligible = false;
-const mockGetCohort = vi.fn();
 const mockGetStatus = vi.fn();
 const mockGetAgents = vi.fn();
 
@@ -14,17 +12,13 @@ vi.mock('@solidjs/router', () => ({
   ),
 }));
 
-vi.mock('../../src/services/api/autofix.js', () => ({
-  getAutofixCohort: (...args: unknown[]) => mockGetCohort(...args),
-}));
-
 vi.mock('../../src/services/api/analytics.js', () => ({
-  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Auto-fix or fallback.',
+  RECOVERED_REQUESTS_TOOLTIP: 'Successful requests that were recovered by Autofix or fallback.',
   REQUEST_SUCCESS_RATE_TOOLTIP:
     'Successful requests over all requests. Recovered requests count as successful.',
   totalAttemptsTooltip: (doctor: boolean) =>
     doctor
-      ? 'Every provider call counts here, including fallback retries and auto-fixed attempts. One request can produce several attempts.'
+      ? 'Every provider call counts here, including fallback retries and autofixed attempts. One request can produce several attempts.'
       : 'Every provider call counts here, including fallback retries. One request can produce several attempts.',
   MODEL_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this model.',
   PROVIDER_SUCCESS_RATE_TOOLTIP: 'Successful attempts over all attempts for this provider.',
@@ -46,22 +40,28 @@ vi.mock('../../src/services/api.js', () => ({
   getAgents: (...args: unknown[]) => mockGetAgents(...args),
 }));
 
-vi.mock('../../src/services/sse.js', () => ({
-  messagePing: () => 0,
-  agentPing: () => 0,
-  routingPing: () => 0,
-}));
+vi.mock('../../src/services/sse.js', async () => {
+  const { createSignal } = await import('solid-js');
+  const [messagePing, setMessagePing] = createSignal(0);
+  return {
+    messagePing,
+    agentPing: () => 0,
+    routingPing: () => 0,
+    __setMessagePing: setMessagePing,
+  };
+});
 
 import NotificationBell from '../../src/components/NotificationBell';
+import * as sse from '../../src/services/sse.js';
+
+const setMessagePing = (sse as unknown as { __setMessagePing: (n: number) => void })
+  .__setMessagePing;
 
 describe('NotificationBell', () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     localStorage.clear();
-    cohortEligible = false;
-    mockGetCohort.mockImplementation(() => Promise.resolve({ eligible: cohortEligible }));
     mockGetStatus.mockResolvedValue({
-      available: true,
       any_enabled: false,
       enabled_agents: [],
     });
@@ -74,76 +74,70 @@ describe('NotificationBell', () => {
     vi.useRealTimers();
   });
 
-  it('does not load workspace Auto-fix status outside the cohort', async () => {
-    render(() => <NotificationBell />);
-    await waitFor(() => expect(mockGetAgents).toHaveBeenCalled());
-    expect(screen.queryByLabelText('Notifications')).toBeNull();
-    expect(mockGetStatus).not.toHaveBeenCalled();
-  });
-
-  it('shows disabled cohort agents, marks them read, and closes outside', async () => {
-    cohortEligible = true;
+  it('shows disabled agents, marks them read, and closes outside', async () => {
     render(() => <NotificationBell />);
 
     await waitFor(() => expect(screen.getByLabelText('Notifications')).toBeDefined());
     fireEvent.click(screen.getByLabelText('Notifications'));
-    const link = screen.getByText(/Auto-fix is inactive on/).closest('a')!;
+    const link = screen.getByText(/Autofix is inactive on/).closest('a')!;
     expect(link.getAttribute('href')).toBe('/harnesses/demo/settings?highlight=autofix');
     fireEvent.click(link);
     expect(localStorage.getItem('manifest_notif_read')).toContain('demo');
-    expect(screen.queryByText(/Auto-fix is inactive on/)).toBeNull();
+    expect(screen.queryByText(/Autofix is inactive on/)).toBeNull();
 
     fireEvent.click(screen.getByLabelText('Notifications'));
-    expect(screen.getByText(/Auto-fix is inactive on/)).toBeDefined();
+    expect(screen.getByText(/Autofix is inactive on/)).toBeDefined();
     fireEvent.mouseDown(document.body);
-    expect(screen.queryByText(/Auto-fix is inactive on/)).toBeNull();
+    expect(screen.queryByText(/Autofix is inactive on/)).toBeNull();
   });
 
   it('clears read state after an agent is enabled and accepts array agent responses', async () => {
-    cohortEligible = true;
     localStorage.setItem('manifest_notif_read', JSON.stringify(['demo']));
     mockGetAgents.mockResolvedValue([{ agent_name: 'demo', display_name: '' }]);
     mockGetStatus
-      .mockResolvedValueOnce({ available: true, any_enabled: false, enabled_agents: [] })
-      .mockResolvedValue({ available: true, any_enabled: true, enabled_agents: ['demo'] });
+      .mockResolvedValueOnce({ any_enabled: false, enabled_agents: [], consented: true })
+      .mockResolvedValue({ any_enabled: true, enabled_agents: ['demo'], consented: true });
     render(() => <NotificationBell />);
 
     await waitFor(() => expect(screen.getByLabelText('Notifications')).toBeDefined());
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await waitFor(() => expect(screen.queryByLabelText('Notifications')).toBeNull());
     expect(localStorage.getItem('manifest_notif_read')).toBe('[]');
   });
 
+  it('does not refetch the workspace Autofix status when a new message arrives', async () => {
+    // Every gateway request emits a message ping. Refetching the status on each
+    // one made this bell the busiest dashboard endpoint in production, and the
+    // status only changes on an Autofix toggle, never on traffic.
+    render(() => <NotificationBell />);
+    await waitFor(() => expect(mockGetStatus).toHaveBeenCalledTimes(1));
+
+    setMessagePing(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls the workspace Autofix status once a minute, not every 15 seconds', async () => {
+    render(() => <NotificationBell />);
+    await waitFor(() => expect(mockGetStatus).toHaveBeenCalledTimes(1));
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(mockGetStatus).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(45_000);
+    await waitFor(() => expect(mockGetStatus).toHaveBeenCalledTimes(2));
+  });
+
   it('hides itself when loading agents fails', async () => {
-    cohortEligible = true;
     mockGetAgents.mockRejectedValue(new Error('offline'));
     render(() => <NotificationBell />);
     await waitFor(() => expect(mockGetAgents).toHaveBeenCalled());
     expect(screen.queryByLabelText('Notifications')).toBeNull();
   });
 
-  it('hides itself when loading cohort eligibility fails', async () => {
-    mockGetCohort.mockRejectedValue(new Error('offline'));
-    render(() => <NotificationBell />);
-    await waitFor(() => expect(mockGetCohort).toHaveBeenCalled());
-    expect(screen.queryByLabelText('Notifications')).toBeNull();
-  });
-
-  it('hides itself when loading workspace Auto-fix status fails', async () => {
-    cohortEligible = true;
+  it('hides itself when loading workspace Autofix status fails', async () => {
     mockGetStatus.mockRejectedValue(new Error('offline'));
-    render(() => <NotificationBell />);
-    await waitFor(() => expect(mockGetStatus).toHaveBeenCalled());
-    expect(screen.queryByLabelText('Notifications')).toBeNull();
-  });
-
-  it('hides itself when status reports unavailable despite a stale eligible response', async () => {
-    cohortEligible = true;
-    mockGetStatus.mockResolvedValue({
-      available: false,
-      any_enabled: false,
-      enabled_agents: [],
-    });
     render(() => <NotificationBell />);
     await waitFor(() => expect(mockGetStatus).toHaveBeenCalled());
     expect(screen.queryByLabelText('Notifications')).toBeNull();
@@ -160,30 +154,28 @@ describe('NotificationBell', () => {
   });
 
   it('keeps working when marking a notification read cannot persist', async () => {
-    cohortEligible = true;
     render(() => <NotificationBell />);
     await waitFor(() => expect(screen.getByLabelText('Notifications')).toBeDefined());
     fireEvent.click(screen.getByLabelText('Notifications'));
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('blocked');
     });
-    fireEvent.click(screen.getByText(/Auto-fix is inactive on/).closest('a')!);
-    expect(screen.queryByText(/Auto-fix is inactive on/)).toBeNull();
+    fireEvent.click(screen.getByText(/Autofix is inactive on/).closest('a')!);
+    expect(screen.queryByText(/Autofix is inactive on/)).toBeNull();
     setItem.mockRestore();
   });
 
   it('keeps working when clearing enabled-agent read state cannot persist', async () => {
-    cohortEligible = true;
     localStorage.setItem('manifest_notif_read', JSON.stringify(['demo']));
     mockGetStatus
-      .mockResolvedValueOnce({ available: true, any_enabled: false, enabled_agents: [] })
-      .mockResolvedValue({ available: true, any_enabled: true, enabled_agents: ['demo'] });
+      .mockResolvedValueOnce({ any_enabled: false, enabled_agents: [], consented: true })
+      .mockResolvedValue({ any_enabled: true, enabled_agents: ['demo'], consented: true });
     render(() => <NotificationBell />);
     await waitFor(() => expect(screen.getByLabelText('Notifications')).toBeDefined());
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new Error('blocked');
     });
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(60_000);
     await waitFor(() => expect(screen.queryByLabelText('Notifications')).toBeNull());
     setItem.mockRestore();
   });

@@ -8,9 +8,11 @@ function makeConfig(values: Record<string, string> = {}): ConfigService {
   return { get: (key: string) => values[key] } as unknown as ConfigService;
 }
 
-/** Auto-fix consent gate. Active by default; each test overrides what it needs. */
-function makeAutofix(isActiveFor: jest.Mock = jest.fn().mockResolvedValue(true)): AutofixService {
-  return { isActiveFor } as unknown as AutofixService;
+/** Autofix consent gate. Active by default; each test overrides what it needs. */
+function makeAutofix(
+  getHealingContext: jest.Mock = jest.fn().mockResolvedValue({ harness: 'other' }),
+): AutofixService {
+  return { getHealingContext } as unknown as AutofixService;
 }
 
 function makeClient(): jest.Mocked<HealingClient> {
@@ -75,10 +77,10 @@ describe('ObservationReporter', () => {
       await reporter.flush();
 
       expect(client.observe).not.toHaveBeenCalled();
-      expect(autofix.isActiveFor).not.toHaveBeenCalled();
+      expect(autofix.getHealingContext).not.toHaveBeenCalled();
     });
 
-    it('does not ship a body for an agent without Auto-fix on', async () => {
+    it('does not ship a body for an agent without Autofix on', async () => {
       const client = makeClient();
       const reporter = enabledReporter(client, makeAutofix(jest.fn().mockResolvedValue(false)));
 
@@ -91,13 +93,13 @@ describe('ObservationReporter', () => {
 
     it("resolves the gate against the request's own tenant and agent", async () => {
       const client = makeClient();
-      const isActiveFor = jest.fn().mockResolvedValue(true);
-      const reporter = enabledReporter(client, makeAutofix(isActiveFor));
+      const getHealingContext = jest.fn().mockResolvedValue({ harness: 'other' });
+      const reporter = enabledReporter(client, makeAutofix(getHealingContext));
 
       reporter.report(input);
       await settle();
 
-      expect(isActiveFor).toHaveBeenCalledWith('tenant-1', 'agent-1');
+      expect(getHealingContext).toHaveBeenCalledWith('tenant-1', 'agent-1');
     });
 
     it('fails closed when the gate itself throws', async () => {
@@ -151,7 +153,7 @@ describe('ObservationReporter', () => {
       await settle();
 
       // Rejecting on status first keeps a 4xx storm off the gate's DB read.
-      expect(autofix.isActiveFor).not.toHaveBeenCalled();
+      expect(autofix.getHealingContext).not.toHaveBeenCalled();
       expect(client.observe).not.toHaveBeenCalled();
     });
   });
@@ -168,6 +170,28 @@ describe('ObservationReporter', () => {
     const [batch] = client.observe.mock.calls[0];
     expect(batch).toHaveLength(1);
     expect(batch[0].request.messages).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(client.observe.mock.calls[0][1]).toEqual({ harness: 'other' });
+  });
+
+  it('keeps different harnesses in separate authenticated batches', async () => {
+    const client = makeClient();
+    const contexts = jest
+      .fn()
+      .mockResolvedValueOnce({ harness: 'claude-code' })
+      .mockResolvedValueOnce({ harness: 'openclaw' });
+    const reporter = enabledReporter(client, makeAutofix(contexts));
+
+    reporter.report({ ...input, traceId: 'coding' });
+    reporter.report({ ...input, traceId: 'personal' });
+    await settle();
+    await reporter.flush();
+    await reporter.flush();
+
+    expect(client.observe).toHaveBeenCalledTimes(2);
+    expect(client.observe.mock.calls[0][0][0].traceId).toBe('coding');
+    expect(client.observe.mock.calls[0][1]).toEqual({ harness: 'claude-code' });
+    expect(client.observe.mock.calls[1][0][0].traceId).toBe('personal');
+    expect(client.observe.mock.calls[1][1]).toEqual({ harness: 'openclaw' });
   });
 
   it('flushes automatically once a full batch accumulates', async () => {
@@ -205,8 +229,8 @@ describe('ObservationReporter', () => {
     const queue = reporter['queue'];
     expect(queue).toHaveLength(500);
     // 101 dropped off the front; the newest is still there.
-    expect(queue[0].traceId).toBe('trace-101');
-    expect(queue[queue.length - 1].traceId).toBe('trace-600');
+    expect(queue[0].observation.traceId).toBe('trace-101');
+    expect(queue[queue.length - 1].observation.traceId).toBe('trace-600');
   });
 
   it('keeps flushing while more than one batch is queued', async () => {

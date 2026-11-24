@@ -115,23 +115,19 @@ describe('routing API client (additional coverage)', () => {
     await expect(routing.copilotPollToken('demo', 'dc-1')).rejects.toThrow(/Poll failed/);
   });
 
-  describe('auto-fix config', () => {
+  describe('autofix config', () => {
     it('getAutofix GETs the autofix endpoint', async () => {
-      // The config now carries the early-access `available` flag alongside
-      // `enabled`; the client returns whatever the server sends verbatim.
-      const fetchMock = setupFetch({ enabled: true, available: true });
+      const fetchMock = setupFetch({ enabled: true });
       const out = await routing.getAutofix('demo');
-      expect(out).toEqual({ enabled: true, available: true });
+      expect(out).toEqual({ enabled: true });
       const url = fetchMock.mock.calls[0][0] as string;
       expect(url).toContain('/api/v1/routing/demo/autofix');
     });
 
     it('updateAutofix PATCHes the autofix endpoint with a JSON body', async () => {
-      // Server echoes the full config back (here with early access NOT granted)
-      // — the client passes `available` through untouched, only sending `enabled`.
-      const fetchMock = setupFetch({ enabled: true, available: false });
+      const fetchMock = setupFetch({ enabled: true });
       const out = await routing.updateAutofix('demo', { enabled: true });
-      expect(out).toEqual({ enabled: true, available: false });
+      expect(out).toEqual({ enabled: true });
       const [url, init] = fetchMock.mock.calls[0];
       expect(url).toContain('/api/v1/routing/demo/autofix');
       expect((init as RequestInit).method).toBe('PATCH');
@@ -454,5 +450,43 @@ describe('routing API client (additional coverage)', () => {
     });
     vi.stubGlobal('fetch', fetchMock);
     await expect(routing.probeCustomProvider('demo', 'http://x')).rejects.toThrow('bad URL');
+  });
+
+  it('disconnectConnection DELETEs the tenant-level provider with auth type and label', async () => {
+    const fetchMock = setupFetch({ ok: true, notifications: [] });
+    await routing.disconnectConnection('custom:a b', 'api_key', 'Work key');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/api/v1/providers/custom%3Aa%20b?authType=api_key&label=Work+key');
+    expect(url).not.toContain('/routing/');
+    expect(init.method).toBe('DELETE');
+  });
+
+  it('disconnectConnection omits the query string when no filters are given', async () => {
+    const fetchMock = setupFetch({ ok: true, notifications: [] });
+    await routing.disconnectConnection('openai');
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/api\/v1\/providers\/openai$/);
+  });
+
+  it('renameConnection PATCHes the tenant-level key label', async () => {
+    const fetchMock = setupFetch({ id: 'p1', label: 'New', priority: 0 });
+    await routing.renameConnection('openai', 'Old key', 'New', 'subscription');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/api/v1/providers/openai/keys/Old%20key');
+    expect(init.method).toBe('PATCH');
+    expect(JSON.parse(init.body)).toEqual({ newLabel: 'New', authType: 'subscription' });
+  });
+
+  it('renameConnection leaves authType out of the body when not given', async () => {
+    const fetchMock = setupFetch({ id: 'p1', label: 'New', priority: 0 });
+    await routing.renameConnection('openai', 'Old', 'New');
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ newLabel: 'New' });
+  });
+
+  it('refreshConnectionModels POSTs the tenant-level refresh', async () => {
+    const fetchMock = setupFetch({ ok: true });
+    await routing.refreshConnectionModels();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain('/api/v1/providers/refresh-models');
+    expect(init.method).toBe('POST');
   });
 });

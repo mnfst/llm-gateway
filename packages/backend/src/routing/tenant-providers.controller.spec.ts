@@ -49,6 +49,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -79,6 +83,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -99,6 +107,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -122,6 +134,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([{ id: 'runtime-id', name: 'LM Studio' }]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -136,6 +152,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       customProviderService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders({ tenantId: null, userId: 'user-1' });
@@ -173,6 +193,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -201,6 +225,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -219,6 +247,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -241,6 +273,10 @@ describe('TenantProvidersController', () => {
         ]),
       } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -261,6 +297,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       customProviderService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -285,6 +325,10 @@ describe('TenantProvidersController', () => {
       providerRepo as never,
       { getAll: jest.fn().mockReturnValue([]) } as never,
       { list: jest.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
     );
 
     const result = await controller.listProviders(ctx);
@@ -296,5 +340,140 @@ describe('TenantProvidersController', () => {
       result.providers.find((p: { provider: string }) => p.provider === 'custom:gone')!
         .display_name,
     ).toBeNull();
+  });
+});
+
+describe('TenantProvidersController mutations (no harness required)', () => {
+  const ctx: TenantContext = { tenantId: 'tenant-1', userId: 'user-1' };
+
+  const setup = () => {
+    const providerService = {
+      removeProvider: jest.fn().mockResolvedValue({ notifications: [] }),
+      renameKey: jest.fn().mockResolvedValue({
+        id: 'p1',
+        provider: 'openai',
+        auth_type: 'api_key',
+        label: 'Renamed',
+        priority: 0,
+      }),
+      listOwnedAgentIds: jest.fn().mockResolvedValue(['agent-a', 'agent-b']),
+    };
+    const discoveryService = { discoverAllForAgent: jest.fn().mockResolvedValue(undefined) };
+    const routingCache = { invalidateAgent: jest.fn(), invalidateTenant: jest.fn() };
+    const cacheManager = { clear: jest.fn().mockResolvedValue(undefined) };
+    const controller = new TenantProvidersController(
+      {} as never,
+      {} as never,
+      {} as never,
+      providerService as never,
+      discoveryService as never,
+      routingCache as never,
+      cacheManager as never,
+    );
+    return { controller, providerService, discoveryService, routingCache, cacheManager };
+  };
+
+  const expectTenantInvalidated = (routingCache: {
+    invalidateAgent: jest.Mock;
+    invalidateTenant: jest.Mock;
+  }) => {
+    expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-a');
+    expect(routingCache.invalidateAgent).toHaveBeenCalledWith('agent-b');
+    expect(routingCache.invalidateTenant).toHaveBeenCalledWith('tenant-1');
+  };
+
+  it('removes a provider at tenant scope without an agent', async () => {
+    const { controller, providerService, routingCache, cacheManager } = setup();
+
+    const result = await controller.removeProvider(
+      ctx,
+      { provider: 'openai' },
+      { authType: 'api_key', label: 'Default' },
+    );
+
+    expect(providerService.removeProvider).toHaveBeenCalledWith(
+      null,
+      'tenant-1',
+      'openai',
+      'api_key',
+      'Default',
+    );
+    expectTenantInvalidated(routingCache);
+    expect(cacheManager.clear).toHaveBeenCalled();
+    expect(result).toEqual({ ok: true, notifications: [] });
+  });
+
+  it('renames a key at tenant scope, defaulting authType to api_key', async () => {
+    const { controller, providerService, routingCache } = setup();
+
+    const result = await controller.renameProviderKey(
+      ctx,
+      { provider: 'openai', label: 'Default' },
+      { newLabel: 'Renamed' },
+    );
+
+    expect(providerService.renameKey).toHaveBeenCalledWith(
+      null,
+      'tenant-1',
+      'openai',
+      'api_key',
+      'Default',
+      'Renamed',
+    );
+    expectTenantInvalidated(routingCache);
+    expect(result).toEqual({
+      id: 'p1',
+      provider: 'openai',
+      auth_type: 'api_key',
+      label: 'Renamed',
+      priority: 0,
+    });
+  });
+
+  it('passes an explicit authType through on rename', async () => {
+    const { controller, providerService } = setup();
+
+    await controller.renameProviderKey(
+      ctx,
+      { provider: 'anthropic', label: 'Default' },
+      { newLabel: 'Work', authType: 'subscription' },
+    );
+
+    expect(providerService.renameKey).toHaveBeenCalledWith(
+      null,
+      'tenant-1',
+      'anthropic',
+      'subscription',
+      'Default',
+      'Work',
+    );
+  });
+
+  it('refreshes every connection for the tenant', async () => {
+    const { controller, discoveryService, routingCache } = setup();
+
+    const result = await controller.refreshModels(ctx);
+
+    expect(discoveryService.discoverAllForAgent).toHaveBeenCalledWith('tenant-1', {
+      forceRefresh: true,
+    });
+    expectTenantInvalidated(routingCache);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('answers 404 when the caller has no tenant yet', async () => {
+    const { controller, providerService, discoveryService } = setup();
+    const noTenant: TenantContext = { tenantId: null, userId: 'user-1' } as never;
+
+    await expect(controller.refreshModels(noTenant)).rejects.toThrow('Provider not found');
+    await expect(controller.removeProvider(noTenant, { provider: 'openai' }, {})).rejects.toThrow(
+      'Provider not found',
+    );
+    await expect(
+      controller.renameProviderKey(noTenant, { provider: 'openai', label: 'a' }, { newLabel: 'b' }),
+    ).rejects.toThrow('Provider not found');
+    expect(providerService.removeProvider).not.toHaveBeenCalled();
+    expect(providerService.renameKey).not.toHaveBeenCalled();
+    expect(discoveryService.discoverAllForAgent).not.toHaveBeenCalled();
   });
 });

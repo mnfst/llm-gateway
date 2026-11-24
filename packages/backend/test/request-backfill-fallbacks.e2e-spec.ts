@@ -625,7 +625,7 @@ describe('request backfill legacy fallback reconstruction (e2e)', () => {
     expect(request).toEqual({ status: 'failed' });
   });
 
-  it('preserves ordinary and Auto-fix grouping behavior', async () => {
+  it('preserves ordinary and Autofix grouping behavior', async () => {
     await insertAttempt({
       id: 'plain',
       timestamp: '2026-01-01 00:03:00.000',
@@ -665,7 +665,7 @@ describe('request backfill legacy fallback reconstruction (e2e)', () => {
     });
   });
 
-  it('backfills each recorded Auto-fix outcome onto its request', async () => {
+  it('backfills each recorded Autofix outcome onto its request', async () => {
     const base = {
       timestamp: '2026-01-01 00:03:00.000',
       status: 'error',

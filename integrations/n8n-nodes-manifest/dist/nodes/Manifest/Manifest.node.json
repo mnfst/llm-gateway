@@ -6,12 +6,12 @@
     "resources": {
         "credentialDocumentation": [
             {
-                "url": "https://github.com/mnfst/manifest/tree/main/integrations/n8n-nodes-manifest#credentials"
+                "url": "https://github.com/mnfst/llm-gateway/tree/main/integrations/n8n-nodes-manifest#credentials"
             }
         ],
         "primaryDocumentation": [
             {
-                "url": "https://github.com/mnfst/manifest/tree/main/integrations/n8n-nodes-manifest"
+                "url": "https://github.com/mnfst/llm-gateway/tree/main/integrations/n8n-nodes-manifest"
             }
         ]
     }

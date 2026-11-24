@@ -3,9 +3,11 @@ import { render, screen, fireEvent } from '@solidjs/testing-library';
 
 const mockSignInSocial = vi.fn();
 let mockSearchParams: Record<string, string> = {};
+let mockLocationSearch = '';
 
 vi.mock('@solidjs/router', () => ({
   useSearchParams: () => [mockSearchParams],
+  useLocation: () => ({ search: mockLocationSearch }),
 }));
 
 vi.mock('../../src/services/auth-client.js', () => ({
@@ -21,6 +23,7 @@ describe('SocialButtons', () => {
   beforeEach(() => {
     mockSignInSocial.mockClear();
     mockSearchParams = {};
+    mockLocationSearch = '';
     localStorage.clear();
   });
 
@@ -87,7 +90,7 @@ describe('SocialButtons', () => {
     expect(mockSignInSocial).toHaveBeenCalledWith({
       provider: 'google',
       callbackURL: '/upgrade',
-      errorCallbackURL: '/login?plan=pro&error=oauth_failed',
+      errorCallbackURL: '/login?plan=pro&oauth=failed',
     });
   });
 
@@ -98,7 +101,29 @@ describe('SocialButtons', () => {
     expect(mockSignInSocial).toHaveBeenCalledWith({
       provider: 'github',
       callbackURL: '/upgrade?reason=requests',
-      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&error=oauth_failed',
+      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&oauth=failed',
+    });
+  });
+
+  it('resumes signed MCP authorization after social sign-in', async () => {
+    mockLocationSearch =
+      '?client_id=client&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&ba_param=client_id&ba_param=redirect_uri&sig=abc';
+    render(() => <SocialButtons />);
+    await fireEvent.click(screen.getByText('Continue with Google'));
+    expect(mockSignInSocial).toHaveBeenCalledWith({
+      provider: 'google',
+      callbackURL: `/api/auth/oauth2/authorize${mockLocationSearch}`,
+      errorCallbackURL: `/login?${mockLocationSearch.slice(1)}&oauth=failed`,
+    });
+  });
+
+  it('accepts a signup-specific callback override', async () => {
+    render(() => <SocialButtons callbackURL="/discovery?next=%2Fwelcome&signup=1" />);
+    await fireEvent.click(screen.getByText('Continue with GitHub'));
+    expect(mockSignInSocial).toHaveBeenCalledWith({
+      provider: 'github',
+      callbackURL: '/discovery?next=%2Fwelcome&signup=1',
+      errorCallbackURL: '/login?oauth=failed',
     });
   });
 });

@@ -8,6 +8,13 @@ import { DiscoveredModel } from './model-fetcher';
 jest.mock('../common/utils/crypto.util', () => ({
   decrypt: jest.fn(),
   getEncryptionSecret: jest.fn(),
+  getDecryptionSecrets: jest.fn(() => ['test-secret-32-chars-long-enough!!']),
+  decryptWithAny: jest.fn((ciphertext: string, secrets: string[]) => {
+    const mod = jest.requireMock('../common/utils/crypto.util') as {
+      decrypt: (c: string, s: string) => string;
+    };
+    return { plaintext: mod.decrypt(ciphertext, secrets[0]), secretIndex: 0 };
+  }),
 }));
 
 jest.mock('../database/quality-score.util', () => ({
@@ -86,6 +93,7 @@ describe('ModelDiscoveryService — boundary conditions', () => {
   let mockModelRegistry: { registerModels: jest.Mock; getConfirmedModels: jest.Mock };
   let mockModelsDevSync: {
     lookupModel: jest.Mock;
+    lookupModelCapabilities: jest.Mock;
     getModelsForProvider: jest.Mock;
     refreshCache: jest.Mock;
   };
@@ -99,8 +107,14 @@ describe('ModelDiscoveryService — boundary conditions', () => {
       lookupPricing: jest.fn().mockReturnValue(null),
       getAll: jest.fn().mockReturnValue(new Map()),
     };
+    const lookupModel = jest.fn().mockReturnValue(null);
     mockModelsDevSync = {
-      lookupModel: jest.fn().mockReturnValue(null),
+      lookupModel,
+      // The real service tries the priced catalog first. Tests that exercise
+      // the capability-only catalog override this directly.
+      lookupModelCapabilities: jest.fn((providerId: string, modelId: string) =>
+        lookupModel(providerId, modelId),
+      ),
       getModelsForProvider: jest.fn().mockReturnValue([]),
       refreshCache: jest.fn().mockResolvedValue(0),
     };

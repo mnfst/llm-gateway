@@ -2,7 +2,6 @@ import {
   DASHBOARD_CACHE_TTL_MS,
   AGENT_LIST_CACHE_TTL_MS,
   MODEL_PRICES_CACHE_TTL_MS,
-  PUBLIC_STATS_CACHE_TTL_MS,
 } from './cache.constants';
 
 describe('Cache constants', () => {
@@ -16,9 +15,5 @@ describe('Cache constants', () => {
 
   it('MODEL_PRICES_CACHE_TTL_MS is 5 minutes', () => {
     expect(MODEL_PRICES_CACHE_TTL_MS).toBe(300_000);
-  });
-
-  it('PUBLIC_STATS_CACHE_TTL_MS is 24 hours', () => {
-    expect(PUBLIC_STATS_CACHE_TTL_MS).toBe(86_400_000);
   });
 });

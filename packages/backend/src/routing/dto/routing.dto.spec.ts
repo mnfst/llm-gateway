@@ -120,6 +120,20 @@ describe('ConnectProviderDto', () => {
     expect(flat.join('\n')).toMatch(/provider must be one of/);
   });
 
+  it('accepts a custom provider connection key', async () => {
+    const dto = toConnectDto({ provider: 'custom:0B6F1F2E-6A47-4C43-9F55-0F7A4B6F1C2D' });
+    const errors = await validate(dto);
+    expect(errors).toHaveLength(0);
+    expect(dto.provider).toBe('custom:0b6f1f2e-6a47-4c43-9f55-0f7a4b6f1c2d');
+  });
+
+  it('rejects a custom provider key that is not a UUID', async () => {
+    const dto = toConnectDto({ provider: 'custom:not-a-uuid' });
+    const errors = await validate(dto);
+    const flat = errors.flatMap((e) => Object.values(e.constraints ?? {}));
+    expect(flat.join('\n')).toMatch(/provider must be one of/);
+  });
+
   it('rejects an empty provider', async () => {
     const dto = toConnectDto({ provider: '' });
     const errors = await validate(dto);

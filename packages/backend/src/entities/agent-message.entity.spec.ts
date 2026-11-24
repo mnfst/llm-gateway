@@ -2,7 +2,7 @@ import { getMetadataArgsStorage } from 'typeorm';
 import { AgentMessage } from './agent-message.entity';
 
 describe('AgentMessage schema mapping', () => {
-  it('keeps the legacy physical table and Auto-fix column names', () => {
+  it('keeps the legacy physical table and Autofix column names', () => {
     const metadata = getMetadataArgsStorage();
     const table = metadata.tables.find((entry) => entry.target === AgentMessage);
     const autofixDecision = metadata.columns.find(

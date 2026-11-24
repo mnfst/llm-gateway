@@ -321,7 +321,16 @@ export function AgentCell(
     <td style="white-space: nowrap; font-weight: 500; font-size: var(--font-size-xs);">
       <span style="display: inline-flex; align-items: center; gap: 5px;">
         <Show when={icon()}>
-          {(src) => <img src={src()} alt="" width="14" height="14" style="flex-shrink: 0;" />}
+          {(src) => (
+            <img
+              src={src()}
+              alt=""
+              width="14"
+              height="14"
+              class="platform-icon"
+              style="flex-shrink: 0;"
+            />
+          )}
         </Show>
         {item.agent_name ?? '\u2014'}
       </span>
@@ -345,11 +354,11 @@ export function SelfHealCell(item: MessageRow): JSX.Element {
         {hasAutofix && (
           <span
             class="trigger-badge trigger-badge--autofix"
-            title="Auto-fix"
+            title="Autofix"
             style="padding: 1px 3px;"
           >
             <AutofixIcon />
-            auto-fix
+            autofix
           </span>
         )}
         {hasFallback && (

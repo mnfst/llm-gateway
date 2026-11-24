@@ -17,6 +17,16 @@ import { MessageFeedbackService } from '../services/message-feedback.service';
 import { SpecificityFeedbackService } from '../services/specificity-feedback.service';
 import { TenantCtx, TenantContext } from '../../common/decorators/tenant-context.decorator';
 
+/** Comma-separated query value → a bounded list of trimmed, non-empty entries. */
+function splitCsv(value: string | undefined, max = 50): string[] | undefined {
+  if (!value) return undefined;
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, max);
+}
+
 @Controller('api/v1')
 export class MessagesController {
   constructor(
@@ -32,13 +42,8 @@ export class MessagesController {
       range: query.range,
       tenantId: ctx.tenantId,
       provider: query.provider,
-      connections: query.connections
-        ? query.connections
-            .split(',')
-            .map((id) => id.trim())
-            .filter(Boolean)
-            .slice(0, 50)
-        : undefined,
+      connections: splitCsv(query.connections),
+      models: splitCsv(query.model),
       service_type: query.service_type,
       cost_min: query.cost_min,
       cost_max: query.cost_max,
@@ -58,7 +63,9 @@ export class MessagesController {
       specificity_category: query.specificity_category,
       header_tier_id: query.header_tier_id,
       include_total: query.include_total,
+      cache_total: query.cache_total,
       include_filter_options: query.include_filter_options,
+      exclude_playground: query.exclude_playground,
     });
   }
 

@@ -42,6 +42,36 @@ describe('analytics API client', () => {
     expect(url).toContain('agent_name=demo');
   });
 
+  it('getOverview supports the fast response and loads details separately', async () => {
+    let fetchMock = setupFetch({});
+    await analytics.getOverview('365d', 'demo', true);
+    let url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview');
+    expect(url).toContain('fast=true');
+
+    fetchMock = setupFetch({});
+    await analytics.getOverviewDetails('365d', 'demo');
+    url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview/details');
+    expect(url).toContain('range=365d');
+    expect(url).toContain('agent_name=demo');
+  });
+
+  it('getModelUsage uses its own route with an optional agent scope', async () => {
+    const fetchMock = setupFetch([]);
+    await analytics.getModelUsage();
+    let url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('/api/v1/overview/model-usage');
+    expect(url).toContain('range=24h');
+    expect(url).not.toContain('agent_name');
+
+    fetchMock.mockClear();
+    await analytics.getModelUsage('30d', 'demo');
+    url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain('range=30d');
+    expect(url).toContain('agent_name=demo');
+  });
+
   it('getAttemptStats uses the stats route and optional agent scope', async () => {
     const fetchMock = setupFetch({});
     await analytics.getAttemptStats('30d', 'demo');
@@ -74,7 +104,7 @@ describe('analytics API client', () => {
     expect(url).toContain('agent_name=demo');
   });
 
-  it('calls the Auto-fix analytics routes with their optional scopes', async () => {
+  it('calls the Autofix analytics routes with their optional scopes', async () => {
     let fetchMock = setupFetch({});
     await analytics.getWorkspaceAutofixStatus();
     expect(fetchMock.mock.calls[0][0]).toContain('/api/v1/autofix/status');
@@ -104,7 +134,7 @@ describe('analytics API client', () => {
     expect(fetchMock.mock.calls[0][0]).toContain('agent_name=demo');
   });
 
-  it('uses Auto-fix analytics defaults without optional filters', async () => {
+  it('uses Autofix analytics defaults without optional filters', async () => {
     const calls = [
       () => analytics.getAutofixStats(),
       () => analytics.getAutofixTimeseries(),

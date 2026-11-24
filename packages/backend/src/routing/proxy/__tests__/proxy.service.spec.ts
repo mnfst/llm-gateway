@@ -1,6 +1,7 @@
 import { ManifestError } from '../../../common/errors/manifest-error';
 import { ConfigService } from '@nestjs/config';
 import {
+  deriveAutofixStatus,
   getProviderParamSpecs,
   type AuthType,
   type ModelRoute,
@@ -20,10 +21,10 @@ import type { LimitCheckService } from '../../../notifications/services/limit-ch
 import type { ProxyFallbackService } from '../proxy-fallback.service';
 import type { ThoughtSignatureCache } from '../thought-signature-cache';
 import type { ThinkingBlockCache } from '../thinking-block-cache';
-import type { ReasoningContentCache } from '../reasoning-content-cache';
 import { AgentModelParamsService } from '../../routing-core/agent-model-params.service';
 import type { ProviderParamSpecService } from '../../routing-core/provider-param-spec.service';
-import type { AutofixService } from '../../autofix/autofix.service';
+import { AutofixService } from '../../autofix/autofix.service';
+import type { HealingClient } from '../../autofix/healing-client';
 import type { ModelDiscoveryService } from '../../../model-discovery/model-discovery.service';
 import type { DiscoveredModel } from '../../../model-discovery/model-fetcher';
 
@@ -85,12 +86,19 @@ const specCatalog: ProviderParamSpecCatalog = [
 
 describe('ProxyService — orchestration', () => {
   let resolveService: jest.Mocked<
-    Pick<ResolveService, 'resolve' | 'resolveLazy' | 'resolveForTier' | 'resolveHeaderTier'>
+    Pick<
+      ResolveService,
+      'resolve' | 'resolveLazy' | 'resolveForTier' | 'resolveHeaderTier' | 'pinRouteKeyLabel'
+    >
   >;
   let providerKeyService: jest.Mocked<
     Pick<
       ProviderKeyService,
-      'getProviderApiKey' | 'getProviderRegion' | 'getProviderKeyId' | 'selectProviderKey'
+      | 'getProviderApiKey'
+      | 'getProviderRegion'
+      | 'getProviderKeyId'
+      | 'selectProviderKey'
+      | 'hasRouteCredentials'
     >
   >;
   let openaiOauth: jest.Mocked<Pick<OpenaiOauthService, 'unwrapToken'>>;
@@ -112,7 +120,6 @@ describe('ProxyService — orchestration', () => {
   let configService: ConfigService;
   let signatureCache: ThoughtSignatureCache;
   let thinkingCache: ThinkingBlockCache;
-  let reasoningCache: ReasoningContentCache;
   let modelParamsService: { get: jest.Mock; list: jest.Mock; set: jest.Mock; delete: jest.Mock };
   let providerParamSpecs: { getSpecs: jest.Mock; list: jest.Mock };
   let autofixService: { maybeHeal: jest.Mock };
@@ -139,6 +146,9 @@ describe('ProxyService — orchestration', () => {
       }),
       resolveForTier: jest.fn(),
       resolveHeaderTier: jest.fn().mockResolvedValue(null),
+      // Default: no connection pin configured — the route passes through.
+      // Tests that exercise pinning override this per case.
+      pinRouteKeyLabel: jest.fn(async (_agentId, _tenantId, route: ModelRoute) => route),
     };
     modelDiscovery = {
       getModelsForAgent: jest.fn().mockResolvedValue([]),
@@ -156,6 +166,7 @@ describe('ProxyService — orchestration', () => {
         label: 'Default',
         priority: 0,
       }),
+      hasRouteCredentials: jest.fn().mockResolvedValue(false),
     };
     openaiOauth = { unwrapToken: jest.fn().mockResolvedValue(null) };
     minimaxOauth = { unwrapToken: jest.fn().mockResolvedValue(null) };
@@ -180,10 +191,6 @@ describe('ProxyService — orchestration', () => {
       retrieve: jest.fn().mockReturnValue(null),
     } as unknown as ThoughtSignatureCache;
     thinkingCache = { retrieve: jest.fn().mockReturnValue(null) } as unknown as ThinkingBlockCache;
-    reasoningCache = {
-      retrieve: jest.fn().mockReturnValue(null),
-    } as unknown as ReasoningContentCache;
-
     modelParamsService = {
       get: jest.fn().mockResolvedValue(null),
       list: jest.fn().mockResolvedValue([]),
@@ -214,7 +221,6 @@ describe('ProxyService — orchestration', () => {
       configService,
       signatureCache,
       thinkingCache,
-      reasoningCache,
       modelParamsService as unknown as AgentModelParamsService,
       providerParamSpecs as unknown as ProviderParamSpecService,
       autofixService as unknown as AutofixService,
@@ -226,6 +232,9 @@ describe('ProxyService — orchestration', () => {
     userId: 'user-1',
     body: { messages: [{ role: 'user', content: 'hi' }] },
     sessionKey: 'sess-1',
+    sessionCacheKey: 'cache-sess-1',
+    providerCacheKey: 'provider-cache-sess-1',
+    sessionMomentumKey: 'momentum-sess-1',
     tenantId: 'tenant-1',
     agentName: 'demo-agent',
     ...overrides,
@@ -304,6 +313,34 @@ describe('ProxyService — orchestration', () => {
       await expect(svc.proxyRequest(baseOpts({ body } as never))).resolves.toBeDefined();
       expect(body.messages).toHaveLength(1001);
       expect(fallbackService.tryForwardToProvider.mock.calls[0][0].body).toBe(body);
+    });
+
+    it("hands the caller's anthropic-beta header to the forward", async () => {
+      // Manifest builds upstream headers from scratch, so without this the
+      // caller's beta flags never reach Anthropic and every beta-gated body
+      // field comes back as `Extra inputs are not permitted`.
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('anthropic', 'subscription', 'claude-sonnet-4-20250514'),
+        fallback_routes: null,
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      fallbackService.tryForwardToProvider.mockResolvedValue({
+        response: okResponse(200),
+        isGoogle: false,
+        isAnthropic: true,
+        isChatGpt: false,
+      });
+
+      await svc.proxyRequest(
+        baseOpts({ headers: { 'anthropic-beta': 'structured-outputs-2025-11-13' } } as never),
+      );
+
+      expect(fallbackService.tryForwardToProvider.mock.calls[0][0].clientAnthropicBeta).toBe(
+        'structured-outputs-2025-11-13',
+      );
     });
 
     it('replaces null content with empty string', async () => {
@@ -421,7 +458,7 @@ describe('ProxyService — orchestration', () => {
       );
     });
 
-    it('reports the captured provider body and provider-facing API mode to Auto-fix', async () => {
+    it('reports the captured provider body and provider-facing API mode to Autofix', async () => {
       routableResolve();
       const wireBody = {
         model: 'claude-opus-4-8',
@@ -440,7 +477,7 @@ describe('ProxyService — orchestration', () => {
       expect(autofixService.maybeHeal.mock.calls[0][0]).not.toHaveProperty('resolvedModel');
     });
 
-    it('sends native Gemini failures to Auto-fix with the exact provider body', async () => {
+    it('sends native Gemini failures to Autofix with the exact provider body', async () => {
       resolveService.resolve.mockResolvedValue({
         tier: 'standard',
         route: route('gemini', 'api_key', 'gemini-2.5-flash'),
@@ -526,12 +563,163 @@ describe('ProxyService — orchestration', () => {
       expect(reforwardOpts.provider).toBe('openai');
     });
 
-    it('returns a synthetic 502 (without throwing) when the heal changes to a model that no longer resolves (M5 no-route)', async () => {
+    it('routes a native Autofix remap through the original subscription auth type', async () => {
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('openai', 'subscription', 'gpt-5.4'),
+        fallback_routes: null,
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      const healed = fwd(200, { model: 'gpt-5.5' });
+      fallbackService.tryForwardToProvider
+        .mockResolvedValueOnce(fwd(400, { model: 'gpt-5.4' }))
+        .mockResolvedValueOnce(healed);
+      modelDiscovery.getModelsForAgent.mockResolvedValue([
+        discoveredModel({ id: 'gpt-5.5', provider: 'openai', authType: 'api_key' }),
+        discoveredModel({ id: 'gpt-5.5', provider: 'openai', authType: 'subscription' }),
+      ]);
+      autofixService.maybeHeal.mockImplementation(
+        async (params: { reforward: (b: Record<string, unknown>) => Promise<unknown> }) => ({
+          forward: await params.reforward({ model: 'gpt-5.5', max_output_tokens: 5 }),
+          record: { outcome: 'healed', attempts: 1, original_http_status: 400, chain: [] },
+        }),
+      );
+
+      const result = await svc.proxyRequest(baseOpts());
+
+      expect(result.forward).toBe(healed);
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledTimes(2);
+      expect(fallbackService.tryForwardToProvider.mock.calls[1][0]).toEqual(
+        expect.objectContaining({
+          provider: 'openai',
+          authType: 'subscription',
+          model: 'gpt-5.5',
+          body: expect.objectContaining({ model: 'gpt-5.5' }),
+        }),
+      );
+    });
+
+    it('keeps a native remap body on the original subscription transport when discovery is stale', async () => {
+      const failed = fwd(400, { model: 'gpt-5.4' });
+      const healed = fwd(200, { model: 'gpt-5.5' });
+      fallbackService.tryForwardToProvider.mockResolvedValueOnce(failed);
+      fallbackService.retryWireBody.mockResolvedValueOnce(healed);
+      modelDiscovery.getModelsForAgent.mockResolvedValue([]);
+      resolveService.resolve.mockResolvedValueOnce({
+        tier: 'standard',
+        route: route('openai', 'subscription', 'gpt-5.4'),
+        fallback_routes: null,
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      autofixService.maybeHeal.mockImplementation(
+        async (params: { reforward: (b: Record<string, unknown>) => Promise<unknown> }) => ({
+          forward: await params.reforward({ model: 'gpt-5.5', max_output_tokens: 5 }),
+          record: { outcome: 'healed', attempts: 1, original_http_status: 400, chain: [] },
+        }),
+      );
+
+      const result = await svc.proxyRequest(baseOpts());
+
+      expect(result.forward).toBe(healed);
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledTimes(1);
+      expect(fallbackService.retryWireBody).toHaveBeenCalledWith(
+        failed,
+        { model: 'gpt-5.5', max_output_tokens: 5 },
+        expect.objectContaining({
+          provider: 'openai',
+          model: 'gpt-5.5',
+          authType: 'subscription',
+        }),
+      );
+    });
+
+    it('keeps legacy suffixed Autofix remaps idempotent', async () => {
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('openai', 'subscription', 'gpt-5.4'),
+        fallback_routes: null,
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      const healed = fwd(200, { model: 'gpt-5.5' });
+      fallbackService.tryForwardToProvider
+        .mockResolvedValueOnce(fwd(400, { model: 'gpt-5.4' }))
+        .mockResolvedValueOnce(healed);
+      modelDiscovery.getModelsForAgent.mockResolvedValue([
+        discoveredModel({ id: 'gpt-5.5', provider: 'openai', authType: 'subscription' }),
+      ]);
+      autofixService.maybeHeal.mockImplementation(
+        async (params: { reforward: (b: Record<string, unknown>) => Promise<unknown> }) => ({
+          forward: await params.reforward({
+            model: 'openai/gpt-5.5-subscription',
+            max_output_tokens: 5,
+          }),
+          record: { outcome: 'healed', attempts: 1, original_http_status: 400, chain: [] },
+        }),
+      );
+
+      await svc.proxyRequest(baseOpts());
+
+      expect(fallbackService.tryForwardToProvider.mock.calls[1][0]).toEqual(
+        expect.objectContaining({
+          authType: 'subscription',
+          model: 'gpt-5.5',
+          body: expect.objectContaining({ model: 'openai/gpt-5.5-subscription' }),
+        }),
+      );
+    });
+
+    it('re-resolves an uncatalogued healed model through connected-provider passthrough', async () => {
       routableResolve();
-      fallbackService.tryForwardToProvider.mockResolvedValueOnce(fwd(400));
-      // No discovered models → the healed model resolves to no route, and the
-      // configured routing it falls back to has none either, so reforwardHealed
-      // surfaces a synthetic 502 forward. The primary forward resolved first.
+      const healed = fwd(200, { model: 'gpt-new' });
+      fallbackService.tryForwardToProvider
+        .mockResolvedValueOnce(fwd(404))
+        .mockResolvedValueOnce(healed);
+      modelDiscovery.getModelsForAgent.mockResolvedValue([]);
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenantId, candidate) =>
+          candidate.provider === 'openai' && candidate.authType === 'api_key',
+      );
+      autofixService.maybeHeal.mockImplementation(
+        async (params: { reforward: (b: Record<string, unknown>) => Promise<unknown> }) => ({
+          forward: await params.reforward({ model: 'openai/gpt-new', max_output_tokens: 5 }),
+          record: { outcome: 'healed', attempts: 1, original_http_status: 404, chain: [] },
+        }),
+      );
+
+      const result = await svc.proxyRequest(baseOpts());
+
+      expect(result.forward).toBe(healed);
+      expect(providerKeyService.hasRouteCredentials).toHaveBeenCalledWith(
+        'tenant-1',
+        { provider: 'openai', authType: 'api_key', model: 'gpt-new' },
+        'agent-1',
+      );
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledTimes(2);
+      expect(fallbackService.tryForwardToProvider.mock.calls[1][0]).toEqual(
+        expect.objectContaining({
+          provider: 'openai',
+          authType: 'api_key',
+          model: 'gpt-new',
+        }),
+      );
+    });
+
+    it('retries on the original transport when the heal changes to a model that no longer resolves (M5 no-route)', async () => {
+      routableResolve();
+      const failed = fwd(400);
+      const healed = fwd(200);
+      fallbackService.tryForwardToProvider.mockResolvedValueOnce(failed);
+      fallbackService.retryWireBody.mockResolvedValueOnce(healed);
+      // No discovered models → the healed model resolves to no route (a stale
+      // per-tenant catalog, typically — the provider may still serve it). The
+      // original forward's transport is proven, so the reforward pins the healed
+      // body there instead of synthesizing a 502.
       modelDiscovery.getModelsForAgent.mockResolvedValue([]);
       resolveService.resolve.mockResolvedValue({
         tier: 'standard',
@@ -558,34 +746,101 @@ describe('ProxyService — orchestration', () => {
             model: 'ghost/unknown-model',
             max_output_tokens: 5,
           });
-          // The healing loop treats this as a failed retry and degrades to the
-          // original error; the record's outcome is exhausted.
           return {
             forward: reforwardResult,
-            record: { outcome: 'exhausted', attempts: 0, original_http_status: 400, chain: [] },
+            record: { outcome: 'healed', attempts: 1, original_http_status: 400, chain: [] },
           };
         },
       );
 
       const result = await svc.proxyRequest(baseOpts());
 
-      // The reforward itself produced the synthetic 502.
-      expect(reforwardResult!.response.status).toBe(502);
-      // Only the primary forward reached the fallback service — the re-resolve
-      // bailed before forwarding because no route was found.
+      // The healed body went out on the original provider's transport with the
+      // healed model pinned — the provider judges the model, not the cache.
+      expect(reforwardResult).toBe(healed);
+      expect(fallbackService.retryWireBody).toHaveBeenCalledWith(
+        failed,
+        { model: 'ghost/unknown-model', max_output_tokens: 5 },
+        expect.objectContaining({
+          provider: 'openai',
+          model: 'ghost/unknown-model',
+          authType: 'api_key',
+        }),
+      );
+      // Only the primary forward reached tryForwardToProvider — the re-resolve
+      // found no route and fell back to the pinned wire retry.
       expect(fallbackService.tryForwardToProvider).toHaveBeenCalledTimes(1);
-      // The caller handled the 502 without throwing and produced a result.
       expect(result.forward).toBeDefined();
-      const body = await reforwardResult!.response.text();
-      expect(body).toContain('Auto-fix');
     });
 
-    it('returns a synthetic 502 when the re-resolved model has a route but no provider key (M5 no-credentials)', async () => {
+    it('keeps the synthetic 502 when the original forward has no wire transport to pin', async () => {
+      // Unreachable via proxyRequest (the maybeHeal gate requires retryWireBody)
+      // but the fallback guards it type-level: no transport → no invented
+      // provider call, surface the synthetic 502.
+      const failed = { ...fwd(400), retryWireBody: undefined };
+      const result = await (
+        svc as unknown as {
+          retryHealedOnOriginalTransport: (
+            healedBody: Record<string, unknown>,
+            originalForward: unknown,
+            ctx: { provider: string; model: string },
+            reason: string,
+          ) => Promise<{ response: Response }>;
+        }
+      ).retryHealedOnOriginalTransport(
+        { model: 'ghost/unknown-model' },
+        failed,
+        { provider: 'openai', model: 'gpt-4o' },
+        'no route resolved for the healed model',
+      );
+
+      expect(result.response.status).toBe(502);
+      expect(fallbackService.retryWireBody).not.toHaveBeenCalled();
+      expect(await result.response.text()).toContain('Autofix');
+    });
+
+    it('uses the original model when a pinned healed retry omits the model', async () => {
+      const failed = fwd(400);
+      const healed = fwd(200);
+      fallbackService.retryWireBody.mockResolvedValueOnce(healed);
+
+      const result = await (
+        svc as unknown as {
+          retryHealedOnOriginalTransport: (
+            healedBody: Record<string, unknown>,
+            originalForward: unknown,
+            ctx: { provider: string; model: string },
+            reason: string,
+          ) => Promise<{ response: Response }>;
+        }
+      ).retryHealedOnOriginalTransport(
+        { max_output_tokens: 5 },
+        failed,
+        { provider: 'openai', model: 'gpt-4o' },
+        'no route resolved for the healed model',
+      );
+
+      expect(result).toBe(healed);
+      expect(fallbackService.retryWireBody).toHaveBeenCalledWith(
+        failed,
+        { max_output_tokens: 5 },
+        expect.objectContaining({
+          provider: 'openai',
+          model: 'gpt-4o',
+        }),
+      );
+    });
+
+    it('retries on the original transport when the re-resolved model has a route but no provider key (M5 no-credentials)', async () => {
       routableResolve();
-      fallbackService.tryForwardToProvider.mockResolvedValueOnce(fwd(400));
+      const failed = fwd(400);
+      const healed = fwd(200);
+      fallbackService.tryForwardToProvider.mockResolvedValueOnce(failed);
+      fallbackService.retryWireBody.mockResolvedValueOnce(healed);
       // The healed model DOES resolve to a route, but the connection for it is
       // gone: selectProviderKey succeeds for the primary attempt, then returns
-      // null on the re-resolve so resolveCredentials yields no key.
+      // null on the re-resolve so resolveCredentials yields no key. The original
+      // transport still holds a working credential — retry there.
       modelDiscovery.getModelsForAgent.mockResolvedValue([
         discoveredModel({ id: 'gpt-4o-mini', provider: 'openai', authType: 'api_key' }),
       ]);
@@ -609,7 +864,7 @@ describe('ProxyService — orchestration', () => {
           });
           return {
             forward: reforwardResult,
-            record: { outcome: 'exhausted', attempts: 0, original_http_status: 400, chain: [] },
+            record: { outcome: 'healed', attempts: 1, original_http_status: 400, chain: [] },
           };
         },
       );
@@ -617,14 +872,20 @@ describe('ProxyService — orchestration', () => {
       const result = await svc.proxyRequest(baseOpts());
 
       // A route was found (getModelsForAgent + a second selectProviderKey call),
-      // but the missing key short-circuits to the synthetic 502.
-      expect(reforwardResult!.response.status).toBe(502);
+      // but the missing key falls back to the pinned wire retry, not a 502.
+      expect(reforwardResult).toBe(healed);
       expect(providerKeyService.selectProviderKey).toHaveBeenCalledTimes(2);
-      // No forward for the healed model — credentials failed first.
+      expect(fallbackService.retryWireBody).toHaveBeenCalledWith(
+        failed,
+        { model: 'openai/gpt-4o-mini', max_output_tokens: 5 },
+        expect.objectContaining({
+          provider: 'openai',
+          model: 'openai/gpt-4o-mini',
+          authType: 'api_key',
+        }),
+      );
       expect(fallbackService.tryForwardToProvider).toHaveBeenCalledTimes(1);
       expect(result.forward).toBeDefined();
-      const body = await reforwardResult!.response.text();
-      expect(body).toContain('no provider key');
     });
 
     it('takes the same-model branch when the heal drops the model field entirely', async () => {
@@ -712,6 +973,139 @@ describe('ProxyService — orchestration', () => {
     });
   });
 
+  describe('autofix healed streaming retry', () => {
+    // The real AutofixService, so the request verdict and the Phoenix outcome
+    // report are the ones production derives from the retry.
+    let healingClient: { heal: jest.Mock; reportOutcome: jest.Mock };
+
+    beforeEach(() => {
+      // clearAllMocks keeps implementations; start each test from a clean peek.
+      mockedPeek.mockReset();
+      healingClient = {
+        heal: jest.fn().mockResolvedValue({
+          status: 'patched',
+          issueId: 'issue-1',
+          patchId: 'patch-1',
+          healAttemptId: 'heal-1',
+          healedBody: { model: 'gpt-4o', max_tokens: 5 },
+        }),
+        reportOutcome: jest.fn().mockResolvedValue({ healAttemptId: 'heal-1' }),
+      };
+      const realAutofix = new AutofixService(
+        healingClient as unknown as HealingClient,
+        { findOne: jest.fn().mockResolvedValue({ id: 'agent-1', autofix_enabled: true }) } as never,
+        { get: jest.fn().mockReturnValue(undefined) } as unknown as ConfigService,
+      );
+      (svc as unknown as { autofixService: AutofixService }).autofixService = realAutofix;
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('openai', 'api_key', 'gpt-4o'),
+        fallback_routes: [route('anthropic', 'api_key', 'claude')],
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      fallbackService.tryForwardToProvider.mockImplementation(
+        async () =>
+          ({
+            response: new Response('{"error":{"message":"bad param"}}', { status: 400 }),
+            wireRequestBody: { model: 'gpt-4o', max_tokens: 7 },
+            wireApiMode: 'chat_completions',
+            retryWireBody: jest.fn(),
+            isGoogle: false,
+            isAnthropic: false,
+            isChatGpt: false,
+          }) as never,
+      );
+      fallbackService.retryWireBody.mockResolvedValue({
+        response: new Response(new ReadableStream(), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      } as never);
+      fallbackService.tryFallbacks.mockResolvedValue({
+        success: {
+          forward: { response: okResponse(), isGoogle: false, isAnthropic: true, isChatGpt: false },
+          model: 'claude',
+          provider: 'anthropic',
+          fallbackIndex: 0,
+        },
+        failures: [],
+      } as never);
+    });
+
+    const streamOpts = () =>
+      baseOpts({ body: { messages: [{ role: 'user', content: 'hi' }], stream: true } });
+
+    it('does not credit Autofix when the healed stream fails warm-up and a fallback serves', async () => {
+      mockedPeek.mockResolvedValue({
+        ok: false,
+        reason: 'timeout',
+        message: 'No data within 15000ms',
+      } as never);
+
+      const result = await svc.proxyRequest(streamOpts());
+
+      expect(result.meta.fallbackFromModel).toBe('gpt-4o');
+      expect(deriveAutofixStatus(result.autofix)).toBe('retry_failed');
+      const retry = result.autofix?.chain.find((entry) => entry.origin === 'autofix');
+      expect(retry?.http_status).toBe(502);
+      expect(healingClient.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        expect.objectContaining({
+          retryStatusCode: 502,
+          error: expect.objectContaining({
+            message: expect.stringContaining('No data within 15000ms'),
+          }),
+        }),
+        expect.anything(),
+      );
+    });
+
+    it('still credits Autofix when the healed stream delivers data', async () => {
+      mockedPeek.mockImplementation(async () => ({ ok: true, stream: new ReadableStream() }));
+
+      const result = await svc.proxyRequest(streamOpts());
+
+      expect(result.meta.fallbackFromModel).toBeUndefined();
+      expect(result.forward.response.status).toBe(200);
+      expect(deriveAutofixStatus(result.autofix)).toBe('retry_succeeded');
+      expect(healingClient.reportOutcome).toHaveBeenCalledWith(
+        'heal-1',
+        { retryStatusCode: 200 },
+        expect.anything(),
+      );
+      expect(fallbackService.tryFallbacks).not.toHaveBeenCalled();
+    });
+
+    it('only warms up a healed retry that returned a streaming body', async () => {
+      fallbackService.retryWireBody
+        .mockResolvedValueOnce({
+          response: new Response('{"error":{"message":"still bad"}}', { status: 400 }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        } as never)
+        .mockResolvedValueOnce({
+          response: new Response(null, { status: 200 }),
+          isGoogle: false,
+          isAnthropic: false,
+          isChatGpt: false,
+        } as never);
+
+      const failed = await svc.proxyRequest(streamOpts());
+      expect(deriveAutofixStatus(failed.autofix)).toBe('retry_failed');
+      expect(failed.meta.fallbackFromModel).toBe('gpt-4o');
+
+      const bodiless = await svc.proxyRequest(streamOpts());
+      expect(deriveAutofixStatus(bodiless.autofix)).toBe('retry_succeeded');
+      expect(mockedPeek).not.toHaveBeenCalled();
+    });
+  });
+
   describe('limit enforcement', () => {
     it('returns a friendly limit response when checkLimits flags an excess', async () => {
       limitCheck.checkLimits.mockResolvedValue({
@@ -765,6 +1159,27 @@ describe('ProxyService — orchestration', () => {
       const result = await svc.proxyRequest(baseOpts());
       const body = await result.forward.response.text();
       expect(body).toContain('M101');
+    });
+
+    it('returns M302 when a pinned override names an unavailable model', async () => {
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: null,
+        fallback_routes: null,
+        confidence: 0,
+        score: 0,
+        reason: 'scored',
+        override_model_unavailable: 'gpt-6-astra',
+      });
+      const result = await svc.proxyRequest(baseOpts());
+      const body = await result.forward.response.text();
+      expect(body).toContain('M302');
+      expect(body).toContain('gpt-6-astra');
+      expect(body).not.toContain('M101');
+      expect(result.meta).toMatchObject({
+        reason: 'model_not_available',
+        manifest_error_code: 'M302',
+      });
     });
   });
 
@@ -1180,12 +1595,57 @@ describe('ProxyService — orchestration', () => {
         reason: 'model_not_available',
         manifest_error_code: 'M302',
       });
+      expect(autofixService.maybeHeal).not.toHaveBeenCalled();
     });
 
-    it('returns model-not-available when two connections carry the same bare name', async () => {
+    it('prefers the subscription when one provider carries a bare name on both auths', async () => {
       modelDiscovery.getModelsForAgent.mockResolvedValue([
         discoveredModel({ id: 'gpt-4o', provider: 'openai', authType: 'api_key' }),
         discoveredModel({ id: 'gpt-4o', provider: 'openai', authType: 'subscription' }),
+      ]);
+
+      const result = await svc.proxyRequest(
+        baseOpts({ body: { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] } }),
+      );
+
+      expect(resolveService.resolve).not.toHaveBeenCalled();
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+        expect.objectContaining({ provider: 'openai', authType: 'subscription', model: 'gpt-4o' }),
+      );
+      expect(result.meta.manifest_error_code).toBeUndefined();
+    });
+
+    it('surfaces a subscription failure to the caller without falling back to the api_key', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([
+        discoveredModel({ id: 'gpt-4o', provider: 'openai', authType: 'api_key' }),
+        discoveredModel({ id: 'gpt-4o', provider: 'openai', authType: 'subscription' }),
+      ]);
+      // Break the subscription credentials: the caller pinned the model, so
+      // the error is theirs to see — Manifest must not meter the key instead.
+      providerKeyService.selectProviderKey.mockResolvedValue({
+        apiKey: JSON.stringify({ t: 'access', r: 'refresh', e: 0 }),
+        id: 'up-oai',
+        region: null,
+        label: 'Default',
+        priority: 0,
+      });
+      openaiOauth.unwrapToken.mockResolvedValue(null);
+
+      const result = await svc.proxyRequest(
+        baseOpts({ body: { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] } }),
+      );
+      const body = await result.forward.response.text();
+
+      expect(fallbackService.tryForwardToProvider).not.toHaveBeenCalled();
+      expect(fallbackService.tryFallbacks).not.toHaveBeenCalled();
+      expect(body).toContain('M102');
+      expect(body).toContain('subscription credentials could not be refreshed');
+    });
+
+    it('returns model-not-available when two providers carry the same bare name', async () => {
+      modelDiscovery.getModelsForAgent.mockResolvedValue([
+        discoveredModel({ id: 'gpt-4o', provider: 'openai', authType: 'subscription' }),
+        discoveredModel({ id: 'gpt-4o', provider: 'azure', authType: 'api_key' }),
       ]);
 
       const result = await svc.proxyRequest(
@@ -1199,159 +1659,178 @@ describe('ProxyService — orchestration', () => {
       expect(body).toContain('gpt-4o');
     });
 
-    it('hands an unavailable explicit model to Auto-fix as a synthetic model-not-found 404', async () => {
+    it('forwards an uncatalogued provider-qualified model through a connected provider', async () => {
       modelDiscovery.getModelsForAgent.mockResolvedValue([
         discoveredModel({ id: 'gpt-4o-mini', provider: 'openai', authType: 'api_key' }),
       ]);
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenantId, candidate) =>
+          candidate.provider === 'openai' && candidate.authType === 'api_key',
+      );
 
       const result = await svc.proxyRequest(
         baseOpts({
-          body: { model: 'some-retired-model', messages: [{ role: 'user', content: 'hi' }] },
+          body: { model: 'openai/gpt-new', messages: [{ role: 'user', content: 'hi' }] },
         }),
       );
 
-      expect(autofixService.maybeHeal).toHaveBeenCalledTimes(1);
-      const params = autofixService.maybeHeal.mock.calls[0][0];
-      // A bare name implies no vendor — the fingerprint falls back to `manifest`.
-      expect(params.provider).toBe('manifest');
-      expect(params.requestBody).toEqual({
-        model: 'some-retired-model',
-        messages: [{ role: 'user', content: 'hi' }],
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'openai',
+          authType: 'api_key',
+          model: 'gpt-new',
+        }),
+      );
+      expect(result.meta).toMatchObject({
+        tier: 'direct',
+        provider: 'openai',
+        auth_type: 'api_key',
+        model: 'gpt-new',
       });
-      expect(params.forward.response.status).toBe(404);
-      const syntheticBody = JSON.parse(await params.forward.response.text());
-      expect(syntheticBody.error).toMatchObject({
-        message: 'Model "some-retired-model" is not available for this agent.',
-        type: 'invalid_request_error',
-        param: 'model',
-        code: 'model_not_found',
-      });
-      // maybeHeal resolved null (gates closed) → the friendly M302, no audit.
-      expect(result.meta.manifest_error_code).toBe('M302');
-      expect(result.autofix).toBeUndefined();
+      expect(result.meta.manifest_error_code).toBeUndefined();
     });
 
-    it('fingerprints the heal under the vendor a prefixed model id implies', async () => {
-      modelDiscovery.getModelsForAgent.mockResolvedValue([]);
+    it('preserves the provider-native path when passing an uncatalogued gateway model through', async () => {
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenantId, candidate) =>
+          candidate.provider === 'openrouter' && candidate.authType === 'api_key',
+      );
 
       await svc.proxyRequest(
         baseOpts({
-          body: { model: 'openrouter/elephant-alpha', messages: [{ role: 'user', content: 'hi' }] },
-        }),
-      );
-
-      expect(autofixService.maybeHeal).toHaveBeenCalledWith(
-        expect.objectContaining({ provider: 'openrouter' }),
-      );
-    });
-
-    it('returns the healed forward with the re-resolved route meta when Auto-fix repairs the model', async () => {
-      modelDiscovery.getModelsForAgent.mockResolvedValue([
-        discoveredModel({ id: 'gpt-4o-mini', provider: 'openai', authType: 'api_key' }),
-      ]);
-      const healed = {
-        response: okResponse(200),
-        isGoogle: false,
-        isAnthropic: false,
-        isChatGpt: false,
-      };
-      fallbackService.tryForwardToProvider.mockResolvedValue(healed);
-      autofixService.maybeHeal.mockImplementation(
-        async (params: { reforward: (b: Record<string, unknown>) => Promise<unknown> }) => {
-          const forward = await params.reforward({
-            model: 'gpt-4o-mini',
+          body: {
+            model: 'openrouter/anthropic/claude-new',
             messages: [{ role: 'user', content: 'hi' }],
-          });
-          return {
-            forward,
-            record: { groupId: 'g-1', outcome: 'healed', original_http_status: 404, chain: [] },
-          };
-        },
-      );
-
-      const result = await svc.proxyRequest(
-        baseOpts({
-          body: { model: 'some-retired-model', messages: [{ role: 'user', content: 'hi' }] },
+          },
         }),
       );
 
-      expect(result.forward).toBe(healed);
-      // Meta reflects the re-resolved route, not the friendly manifest stub.
-      expect(result.meta).toMatchObject({
-        tier: 'direct',
-        reason: 'direct',
-        model: 'gpt-4o-mini',
-        provider: 'openai',
-        tenantProviderId: 'up-default',
-        response_mode: 'buffered',
-      });
-      expect(result.meta.manifest_error_code).toBeUndefined();
-      // The audit marks the Manifest origin so recording does not invent an
-      // original Provider Attempt before the real healed retry.
-      expect(result.autofix).toMatchObject({
-        groupId: 'g-1',
-        outcome: 'healed',
-        manifestOrigin: { code: 'M302', model: 'some-retired-model' },
-      });
-      expect(result.autofix?.manifestOrigin?.message).toContain('M302');
-      expect(result.autofix?.manifestOrigin?.message).toContain('some-retired-model');
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'openrouter',
+          authType: 'api_key',
+          model: 'anthropic/claude-new',
+        }),
+      );
     });
 
-    it('keeps the friendly M302 and preserves the failed provider retry attempt', async () => {
-      modelDiscovery.getModelsForAgent.mockResolvedValue([]);
-      const retryAttempt = {
-        id: 'attempt-m302-retry',
-        attemptNumber: 1,
-        startedAtMs: 1_000,
-        startedAt: '1970-01-01T00:00:01.000Z',
-        pendingWrite: Promise.resolve(true),
-      };
-      autofixService.maybeHeal.mockResolvedValue({
-        forward: {
-          response: okResponse(404),
-          isGoogle: false,
-          isAnthropic: false,
-          isChatGpt: false,
-          attempt: retryAttempt,
-          providerCallStarted: true,
-        },
-        record: {
-          groupId: 'g-2',
-          outcome: 'exhausted',
-          original_http_status: 404,
-          chain: [
-            {
-              attempt: 1,
-              origin: 'autofix',
-              request: { model: 'still-unavailable' },
-              http_status: 404,
-              error: { message: 'patched model not found' },
-            },
-          ],
-        },
-      });
+    it('uses a connected subscription for an uncatalogued subscription model id', async () => {
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenantId, candidate) =>
+          candidate.provider === 'openai' && candidate.authType === 'subscription',
+      );
+
+      await svc.proxyRequest(
+        baseOpts({
+          body: {
+            model: 'openai/gpt-new-subscription',
+            messages: [{ role: 'user', content: 'hi' }],
+          },
+        }),
+      );
+
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'openai',
+          authType: 'subscription',
+          model: 'gpt-new',
+        }),
+      );
+    });
+
+    it('forwards an uncatalogued bare model only when one inferred auth route is connected', async () => {
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenantId, candidate) =>
+          candidate.provider === 'anthropic' && candidate.authType === 'subscription',
+      );
+
+      await svc.proxyRequest(
+        baseOpts({
+          apiMode: 'messages',
+          body: {
+            model: 'claude-new',
+            max_tokens: 32,
+            messages: [{ role: 'user', content: 'hi' }],
+          },
+        }),
+      );
+
+      expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+        expect.objectContaining({
+          provider: 'anthropic',
+          authType: 'subscription',
+          model: 'claude-new',
+        }),
+      );
+    });
+
+    it('keeps M302 for an uncatalogued bare model spanning multiple auth connections', async () => {
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenantId, candidate) =>
+          candidate.provider === 'openai' &&
+          (candidate.authType === 'api_key' || candidate.authType === 'subscription'),
+      );
 
       const result = await svc.proxyRequest(
         baseOpts({
-          body: { model: 'some-retired-model', messages: [{ role: 'user', content: 'hi' }] },
+          body: { model: 'gpt-new', messages: [{ role: 'user', content: 'hi' }] },
         }),
       );
       const body = await result.forward.response.text();
 
-      // The caller still sees the friendly M302 assistant message, not the 404.
-      expect(result.forward.response.status).toBe(200);
+      expect(fallbackService.tryForwardToProvider).not.toHaveBeenCalled();
       expect(body).toContain('M302');
-      expect(result.meta).toMatchObject({
-        reason: 'model_not_available',
-        manifest_error_code: 'M302',
-        attempt: retryAttempt,
+      expect(result.meta.manifest_error_code).toBe('M302');
+      expect(autofixService.maybeHeal).not.toHaveBeenCalled();
+    });
+
+    it('sends the real provider model-not-found response to Autofix', async () => {
+      providerKeyService.hasRouteCredentials.mockImplementation(
+        async (_tenantId, candidate) =>
+          candidate.provider === 'openai' && candidate.authType === 'api_key',
+      );
+      const wireRequestBody = {
+        model: 'gpt-new',
+        messages: [{ role: 'user', content: 'hi' }],
+      };
+      const providerFailure = {
+        response: new Response(
+          JSON.stringify({
+            error: {
+              message: 'The model `gpt-new` does not exist',
+              type: 'invalid_request_error',
+              code: 'model_not_found',
+            },
+          }),
+          { status: 404, headers: { 'content-type': 'application/json' } },
+        ),
+        wireRequestBody,
+        wireApiMode: 'chat_completions' as const,
+        retryWireBody: jest.fn(),
         providerCallStarted: true,
-      });
-      expect(result.autofix).toMatchObject({
-        groupId: 'g-2',
-        outcome: 'exhausted',
-        manifestOrigin: { code: 'M302', model: 'some-retired-model' },
-      });
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      };
+      fallbackService.tryForwardToProvider.mockResolvedValue(providerFailure);
+
+      const result = await svc.proxyRequest(
+        baseOpts({
+          body: { model: 'openai/gpt-new', messages: [{ role: 'user', content: 'hi' }] },
+        }),
+      );
+
+      expect(autofixService.maybeHeal).toHaveBeenCalledWith(
+        expect.objectContaining({
+          forward: providerFailure,
+          provider: 'openai',
+          model: 'gpt-new',
+          authType: 'api_key',
+          requestBody: wireRequestBody,
+        }),
+      );
+      expect(result.forward).toBe(providerFailure);
+      expect(result.meta.manifest_error_code).toBeUndefined();
     });
 
     // A header rule is an override the operator configured on purpose; the
@@ -1507,6 +1986,92 @@ describe('ProxyService — orchestration', () => {
       });
       expect(result.meta.fallbackFromModel).toBeUndefined();
     });
+
+    /**
+     * Regression (#key-label-pin): an explicit `model` bypasses tier
+     * resolution, so it used to drop the operator's connection pin and bill
+     * whichever key sorted first.
+     */
+    describe('connection pin', () => {
+      const connections = [
+        { id: 'up-default', label: 'Default', priority: 0, apiKey: 'sk-default', region: null },
+        { id: 'up-work', label: 'Work', priority: 1, apiKey: 'sk-work', region: null },
+      ];
+
+      beforeEach(() => {
+        modelDiscovery.getModelsForAgent.mockResolvedValue([
+          discoveredModel({ id: 'gpt-4o-mini', provider: 'openai', authType: 'api_key' }),
+        ]);
+        // Mirrors ProviderKeyService.selectProviderKey: case-insensitive label
+        // match, else the first (priority-ordered) key.
+        providerKeyService.selectProviderKey.mockImplementation(
+          async (_tenantId, _provider, _authType, label) =>
+            connections.find((c) => c.label.toLowerCase() === label?.toLowerCase()) ??
+            connections[0],
+        );
+      });
+
+      it("uses the default tier's pinned connection for a concrete model name", async () => {
+        resolveService.pinRouteKeyLabel.mockImplementation(async (_a, _t, route) => ({
+          ...route,
+          keyLabel: 'Work',
+        }));
+
+        const result = await svc.proxyRequest(
+          baseOpts({
+            body: { model: 'openai/gpt-4o-mini', messages: [{ role: 'user', content: 'hi' }] },
+          }),
+        );
+
+        expect(resolveService.pinRouteKeyLabel).toHaveBeenCalledWith(
+          'agent-1',
+          'tenant-1',
+          expect.objectContaining({ provider: 'openai', authType: 'api_key' }),
+        );
+        expect(providerKeyService.selectProviderKey).toHaveBeenCalledWith(
+          'tenant-1',
+          'openai',
+          'api_key',
+          'Work',
+          'agent-1',
+        );
+        expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+          expect.objectContaining({
+            apiKey: 'sk-work',
+            providerKeyLabel: 'Work',
+            tenantProviderId: 'up-work',
+          }),
+        );
+        expect(result.meta).toMatchObject({
+          provider_key_label: 'Work',
+          tenantProviderId: 'up-work',
+        });
+      });
+
+      // A pin naming a renamed/deleted connection still serves the default key
+      // (selectProviderKey's documented fallback) — the recorded label must
+      // then name the row that was really used, not the dangling pin.
+      it('records the connection actually used when the pin is stale', async () => {
+        resolveService.pinRouteKeyLabel.mockImplementation(async (_a, _t, route) => ({
+          ...route,
+          keyLabel: 'Retired',
+        }));
+
+        const result = await svc.proxyRequest(
+          baseOpts({
+            body: { model: 'openai/gpt-4o-mini', messages: [{ role: 'user', content: 'hi' }] },
+          }),
+        );
+
+        expect(fallbackService.tryForwardToProvider).toHaveBeenCalledWith(
+          expect.objectContaining({ apiKey: 'sk-default', tenantProviderId: 'up-default' }),
+        );
+        expect(result.meta).toMatchObject({
+          provider_key_label: 'Default',
+          tenantProviderId: 'up-default',
+        });
+      });
+    });
   });
 
   describe('happy path forward', () => {
@@ -1641,7 +2206,31 @@ describe('ProxyService — orchestration', () => {
       expect(result.meta.tier).toBe('standard');
       expect(result.meta.model).toBe('gpt-4o');
       expect(result.meta.provider).toBe('openai');
-      expect(momentum.recordTier).toHaveBeenCalledWith('sess-1', 'standard');
+      expect(momentum.recordTier).toHaveBeenCalledWith('momentum-sess-1', 'standard');
+    });
+
+    it('skips routing momentum when the caller did not supply a session key', async () => {
+      resolveService.resolve.mockResolvedValue({
+        tier: 'standard',
+        route: route('openai', 'api_key', 'gpt-4o'),
+        fallback_routes: null,
+        confidence: 0.9,
+        score: 5,
+        reason: 'scored',
+      });
+      fallbackService.tryForwardToProvider.mockResolvedValue({
+        response: okResponse(200),
+        isGoogle: false,
+        isAnthropic: false,
+        isChatGpt: false,
+      });
+
+      await svc.proxyRequest(baseOpts({ sessionMomentumKey: undefined }));
+
+      expect(momentum.getRecentTiers).not.toHaveBeenCalled();
+      expect(momentum.getRecentCategories).not.toHaveBeenCalled();
+      expect(momentum.recordTier).not.toHaveBeenCalled();
+      expect(momentum.recordCategory).not.toHaveBeenCalled();
     });
 
     it('passes the raw stored OpenAI OAuth blob alongside the unwrapped access token', async () => {
@@ -1761,7 +2350,7 @@ describe('ProxyService — orchestration', () => {
         isChatGpt: false,
       });
       await svc.proxyRequest(baseOpts());
-      expect(momentum.recordCategory).toHaveBeenCalledWith('sess-1', 'coding');
+      expect(momentum.recordCategory).toHaveBeenCalledWith('momentum-sess-1', 'coding');
     });
 
     it('skips category recording for unknown values', async () => {
@@ -2247,7 +2836,7 @@ describe('ProxyService — orchestration', () => {
         tier: 'standard',
         route: route('openai', 'api_key', 'gpt-4o'),
         fallback_routes: [
-          route('custom:local', 'api_key', 'local-model'),
+          route('openai', 'api_key', 'gpt-image-1'),
           route('anthropic', 'api_key', 'claude'),
         ],
         response_mode: 'stream',
@@ -2800,7 +3389,7 @@ describe('ProxyService — orchestration', () => {
       expect(resolveService.resolve).toHaveBeenCalled();
     });
 
-    it('exercises the per-request signature, thinking, and reasoning lookup closures', async () => {
+    it('exercises the per-request signature and thinking lookup closures', async () => {
       resolveService.resolve.mockResolvedValue({
         tier: 'standard',
         route: route('openai', 'api_key', 'gpt-4o'),
@@ -2813,7 +3402,6 @@ describe('ProxyService — orchestration', () => {
         // Invoke the lookups so coverage hits the closure bodies.
         opts.signatureLookup?.('tool-call-1');
         opts.thinkingLookup?.('first-use-1');
-        opts.reasoningContentLookup?.('reasoning-call-1');
         return {
           response: okResponse(),
           isGoogle: false,
@@ -2823,9 +3411,8 @@ describe('ProxyService — orchestration', () => {
       });
 
       await svc.proxyRequest(baseOpts());
-      expect(signatureCache.retrieve).toHaveBeenCalledWith('sess-1', 'tool-call-1');
-      expect(thinkingCache.retrieve).toHaveBeenCalledWith('sess-1', 'first-use-1');
-      expect(reasoningCache.retrieve).toHaveBeenCalledWith('sess-1', 'reasoning-call-1');
+      expect(signatureCache.retrieve).toHaveBeenCalledWith('cache-sess-1', 'tool-call-1');
+      expect(thinkingCache.retrieve).toHaveBeenCalledWith('cache-sess-1', 'first-use-1');
     });
 
     it('strips system / developer roles when scoring', async () => {

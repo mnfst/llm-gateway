@@ -1,0 +1,56 @@
+name: Deploy
+# Builds the Manifest Cloud image (docker/Dockerfile.cloud) and rolls it out to Cloud Run
+# (project manifest-platform-457808, us-east4). Auth is keyless: GitHub's OIDC token is exchanged
+# through Workload Identity Federation, which only accepts mnfst/* on refs/heads/main.
+# Order mirrors the old Railway preDeployCommand: migrate once (manifest-migrate job, direct
+# connection, advisory lock in migrate.js), then roll out. The service keeps its own config
+# (env, secrets, scaling, ingress); this workflow only swaps the image.
+permissions:
+  contents: read
+  id-token: write
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-manifest
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: manifest-platform-457808
+  REGION: us-east4
+  REPO: us-east4-docker.pkg.dev/manifest-platform-457808/manifest
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
+        with:
+          workload_identity_provider: projects/276338280193/locations/global/workloadIdentityPools/github/providers/mnfst-github
+          service_account: manifest-deployer@manifest-platform-457808.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
+
+      # Refuse to create the service from scratch: `gcloud run deploy --image` on a missing
+      # service would make a public, unconfigured one.
+      - name: Check the service exists
+        run: gcloud run services describe manifest --region "$REGION" --project "$PROJECT_ID" --format="value(metadata.name)" >/dev/null
+
+      - name: Build and push
+        run: |
+          gcloud auth configure-docker us-east4-docker.pkg.dev --quiet
+          tag="$REPO/manifest:${GITHUB_SHA::7}"
+          docker build -f docker/Dockerfile.cloud -t "$tag" .
+          docker push "$tag"
+          echo "IMAGE=$tag" >> "$GITHUB_ENV"
+
+      - name: Migrate the database
+        run: |
+          gcloud run jobs update manifest-migrate --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" --quiet
+          gcloud run jobs execute manifest-migrate --region "$REGION" --project "$PROJECT_ID" --wait
+
+      - name: Deploy
+        run: gcloud run deploy manifest --image "$IMAGE" --region "$REGION" --project "$PROJECT_ID" --quiet

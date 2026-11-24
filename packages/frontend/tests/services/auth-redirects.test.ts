@@ -5,6 +5,7 @@ import {
   buildSocialAuthUrls,
   getAuthDestination,
   isSafeInternalRedirect,
+  signedOAuthDestination,
 } from '../../src/services/auth-redirects';
 
 describe('auth redirect helpers', () => {
@@ -34,6 +35,26 @@ describe('auth redirect helpers', () => {
     expect(getAuthDestination({ redirect: 'https://evil.test' })).toBe('/');
   });
 
+  it('resumes a signed MCP authorization query after sign-in', () => {
+    const query =
+      '?client_id=https%3A%2F%2Fclient.test%2Fmetadata&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&ba_param=client_id&ba_param=redirect_uri&sig=abc&oauth=failed';
+    const destination = signedOAuthDestination(query);
+    expect(destination).toBe(
+      '/api/auth/oauth2/authorize?client_id=https%3A%2F%2Fclient.test%2Fmetadata&redirect_uri=http%3A%2F%2F127.0.0.1%2Fcallback&ba_param=client_id&ba_param=redirect_uri&sig=abc',
+    );
+    expect(getAuthDestination({ plan: 'pro' }, query)).toBe(destination);
+    expect(buildSocialAuthUrls({}, query)).toEqual({
+      callbackURL: destination,
+      errorCallbackURL: `/login?${new URLSearchParams(query.slice(1)).toString()}`,
+    });
+  });
+
+  it('does not treat unsigned OAuth parameters as a sign-in destination', () => {
+    expect(
+      signedOAuthDestination('?client_id=client&redirect_uri=http%3A%2F%2F127.0.0.1'),
+    ).toBeUndefined();
+  });
+
   it('builds encoded login redirects from path and search', () => {
     expect(buildLoginRedirect('/upgrade', '?reason=requests')).toBe(
       '/login?redirect=%2Fupgrade%3Freason%3Drequests',
@@ -49,14 +70,14 @@ describe('auth redirect helpers', () => {
   it('builds social callback URLs for pro intent', () => {
     expect(buildSocialAuthUrls({ plan: 'pro' })).toEqual({
       callbackURL: '/upgrade',
-      errorCallbackURL: '/login?plan=pro&error=oauth_failed',
+      errorCallbackURL: '/login?plan=pro&oauth=failed',
     });
   });
 
   it('preserves safe redirects in social error callbacks', () => {
     expect(buildSocialAuthUrls({ redirect: '/upgrade?reason=requests' })).toEqual({
       callbackURL: '/upgrade?reason=requests',
-      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&error=oauth_failed',
+      errorCallbackURL: '/login?redirect=%2Fupgrade%3Freason%3Drequests&oauth=failed',
     });
   });
 });

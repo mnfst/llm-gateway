@@ -14,8 +14,7 @@ const GONE_RESPONSE = {
   error: {
     message:
       'OTLP telemetry endpoints have been removed. ' +
-      'Use the routing proxy at /v1/chat/completions instead. ' +
-      'See https://manifest.build/docs/migration for details.',
+      'Use the routing proxy at /v1/chat/completions instead.',
     type: 'gone',
     status: 410,
   },

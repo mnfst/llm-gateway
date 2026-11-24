@@ -1,4 +1,5 @@
 import { registerAs } from '@nestjs/config';
+import { optionalPositiveInteger } from './env.util';
 
 function resolveDatabaseUrl(): string {
   const url = process.env['DATABASE_URL'];
@@ -6,12 +7,6 @@ function resolveDatabaseUrl(): string {
   if (process.env['NODE_ENV'] === 'test')
     return 'postgresql://myuser:mypassword@localhost:5432/mydatabase';
   throw new Error('DATABASE_URL is required. Set it in your .env file.');
-}
-
-function optionalPositiveInteger(value: string | undefined): number | null {
-  if (!value || !/^\d+$/.test(value)) return null;
-  const parsed = Number(value);
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 export const appConfig = registerAs('app', () => ({
@@ -37,7 +32,10 @@ export const appConfig = registerAs('app', () => ({
   mailgunApiKey: process.env['MAILGUN_API_KEY'] ?? '',
   mailgunDomain: process.env['MAILGUN_DOMAIN'] ?? '',
   notificationFromEmail: process.env['NOTIFICATION_FROM_EMAIL'] ?? 'noreply@manifest.build',
-  dbPoolMax: Number(process.env['DB_POOL_MAX'] ?? 30),
+  // Keep the per-process pool conservative by default. Multi-replica installs
+  // multiply this value, and large analytics queries can otherwise saturate a
+  // pooler and execute enough concurrent hash/sort work to exhaust DB memory.
+  dbPoolMax: optionalPositiveInteger(process.env['DB_POOL_MAX']) ?? 10,
   // Apply PgBouncer-safe planner defaults (jit off, larger work_mem, SSD-tuned
   // random_page_cost) as role-level defaults at boot. Set DB_TUNE_SESSION=false
   // to skip (e.g. a managed Postgres where the role lacks ALTER ROLE on itself).
@@ -54,12 +52,12 @@ export const appConfig = registerAs('app', () => ({
   // routing during the post-SIGTERM deregistration lag (the rolling-deploy 5xx
   // spike). Must be shorter than Railway's `drainingSeconds`. 0 disables it.
   shutdownDrainMs: Number(process.env['SHUTDOWN_DRAIN_MS'] ?? 10000),
-  // When true, /api/v1/public/* endpoints expose aggregate stats without auth.
-  // Off by default — only Manifest Cloud's marketing homepage should enable it.
-  publicStatsEnabled: process.env['MANIFEST_PUBLIC_STATS'] === 'true',
-  // Optional instance-wide override. When unset, request recordings follow the
-  // Cloud plan policy (Free 7 days, Pro 365 days); non-billing deployments use
-  // the 365-day default.
+  // When true, /api/v1/public/error-pages serves the published error pages
+  // without auth. Off by default; only Manifest Cloud's marketing site uses it.
+  // The variable keeps its historical name so existing deployments stay on.
+  publicErrorPagesEnabled: process.env['MANIFEST_PUBLIC_STATS'] === 'true',
+  // Self-hosted only: request recordings older than this many days are deleted.
+  // Unset keeps them forever. Manifest Cloud ignores it and never deletes them.
   requestRecordingRetentionDays: optionalPositiveInteger(
     process.env['REQUEST_RECORDING_RETENTION_DAYS'],
   ),
@@ -79,4 +77,20 @@ export const appConfig = registerAs('app', () => ({
   // `x-internal-secret` header to publish/unpublish curated error pages.
   // Empty by default — the endpoint rejects all writes until it is set.
   errorPagePushSecret: process.env['ERROR_PAGE_PUSH_SECRET'] ?? '',
+  // Shared secret guarding the internal CRM metrics feed
+  // (/api/v1/internal/crm-metrics), which the outreach CRM polls daily. Sent in
+  // the `x-internal-secret` header. Deliberately separate from
+  // errorPagePushSecret: different consumer, different credential. Empty by
+  // default, and anything shorter than 32 chars counts as unset — this route
+  // exports user email addresses across tenants.
+  crmMetricsSecret: process.env['CRM_METRICS_SECRET'] ?? '',
+  // Sliding lifetime (days) of a CLI-minted management PAT. Every successful
+  // authentication pushes the key's `expires_at` this far into the future, so
+  // an active CLI never has to re-login and an abandoned one lapses.
+  cliTokenTtlDays: optionalPositiveInteger(process.env['CLI_TOKEN_TTL_DAYS']) ?? 30,
+  // Absolute ceiling for a CLI PAT, in days from issuance. The sliding window
+  // renews on every use, so this is what ultimately retires a token that is in
+  // constant use. Must be >= cliTokenTtlDays to be meaningful.
+  cliTokenAbsoluteTtlDays:
+    optionalPositiveInteger(process.env['CLI_TOKEN_ABSOLUTE_TTL_DAYS']) ?? 90,
 }));

@@ -7,6 +7,7 @@
 @import './custom-select.css';
 @import './data.css';
 @import './agents.css';
+@import './platform-icons.css';
 @import './modals.css';
 @import './tokens.css';
 @import './wizard.css';
@@ -19,6 +20,7 @@
 @import './agent-type-select.css';
 @import './action-menu.css';
 @import './feedback.css';
+@import './params-card.css';
 
 /*
  * Route-scoped stylesheets are intentionally NOT imported here. They are
@@ -30,126 +32,9 @@
  *   - model-filter.css → MessageLog.tsx + ModelPricesFilterBar.tsx
  */
 
-/* ── shadcn/ui design tokens — Light (default) ───── */
-@layer base {
-  :root {
-    --background: 45 49% 97%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 44 60% 99%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 44 60% 99%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 45 30% 97%;
-    --secondary: 40 33% 93%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 40 33% 93%;
-    --muted-foreground: 215 13% 34%;
-    --accent: 40 33% 93%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 45 30% 97%;
-    --border: 36 25% 88%;
-    --input: 36 25% 88%;
-    --ring: 222.2 84% 4.9%;
-    --radius: 0.5rem;
-    --radius-sm: 0.375rem;
-
-    /* Chart palette */
-    --chart-1: 178 75% 44%;
-    --chart-2: 197 37% 24%;
-    --chart-3: 167 70% 48%;
-    --chart-4: 349 52% 61%;
-    --chart-5: 43 96% 56%;
-
-    /* Sidebar */
-    --sidebar-background: 43 38% 95%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 45 30% 97%;
-    --sidebar-accent: 40 28% 93%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 36 20% 89%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
-
-    /* Success (emerald accent for our dashboard) */
-    --success: 178 75% 44%;
-    --success-foreground: 0 0% 100%;
-
-    --warning: 38 92% 50%;
-  }
-
-  .dark {
-    --background: 0 0% 9%;
-    --foreground: 0 0% 93%;
-    --card: 0 0% 11%;
-    --card-foreground: 0 0% 93%;
-    --popover: 0 0% 11%;
-    --popover-foreground: 0 0% 93%;
-    --primary: 0 0% 93%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 15%;
-    --secondary-foreground: 0 0% 93%;
-    --muted: 0 0% 15%;
-    --muted-foreground: 0 0% 55%;
-    --accent: 0 0% 15%;
-    --accent-foreground: 0 0% 93%;
-    --destructive: 0 80% 62%;
-    --destructive-foreground: 0 0% 93%;
-    --border: 0 0% 18%;
-    --input: 0 0% 18%;
-    --ring: 0 0% 60%;
-
-    --chart-1: 178 70% 50%;
-    --chart-2: 197 50% 55%;
-    --chart-3: 167 70% 55%;
-    --chart-4: 349 52% 65%;
-    --chart-5: 43 96% 65%;
-
-    --sidebar-background: 0 0% 7%;
-    --sidebar-foreground: 0 0% 93%;
-    --sidebar-primary: 0 0% 93%;
-    --sidebar-primary-foreground: 0 0% 9%;
-    --sidebar-accent: 0 0% 14%;
-    --sidebar-accent-foreground: 0 0% 93%;
-    --sidebar-border: 0 0% 18%;
-    --sidebar-ring: 0 0% 60%;
-
-    --success: 178 70% 50%;
-    --success-foreground: 0 0% 100%;
-
-    --warning: 38 92% 50%;
-  }
-}
-
-/* ── Shared tokens ────────────────────────────────── */
-:root {
-  --sidebar-width: 230px;
-  --header-height: 48px;
-
-  --gap-xs: 4px;
-  --gap-sm: 8px;
-  --gap-md: 16px;
-  --gap-lg: 24px;
-  --gap-xl: 32px;
-  --gap-2xl: 48px;
-
-  --font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-heading: 'Bricolage Grotesque', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', ui-monospace, monospace;
-  --font-size-xs: 0.75rem;
-  --font-size-sm: 0.875rem;
-  --tooltip-font-size: var(--font-size-sm);
-  --font-size-base: 0.9375rem;
-  --font-size-lg: 1.125rem;
-  --font-size-xl: 1.5rem;
-  --font-size-2xl: 1.875rem;
-  --font-size-3xl: 2.25rem;
-  --font-size-4xl: 3rem;
-
-  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
-}
+/* Design tokens: single source of truth is tokens.css (imported above).
+ * Never declare a --token here — a duplicate silently wins the cascade
+ * and forks the palette. */
 
 /* ── Reset ─────────────────────────────────────────── */
 *,
@@ -931,9 +816,7 @@ h6 {
   letter-spacing: 0.05em;
 }
 
-/* Base styling shared by global nav links and harness switcher items. */
-.sidebar__link,
-.sidebar__agent-item {
+.sidebar__link {
   display: flex;
   align-items: center;
   gap: var(--gap-xs);
@@ -946,8 +829,7 @@ h6 {
   transition: all var(--transition-fast);
 }
 
-.sidebar__link:hover,
-.sidebar__agent-item:hover {
+.sidebar__link:hover {
   background: hsl(var(--sidebar-accent));
   color: hsl(var(--sidebar-accent-foreground));
 }
@@ -958,49 +840,30 @@ h6 {
   font-weight: 500;
 }
 
-/* HARNESSES section header — a row holding the collapse toggle and + button. */
-.sidebar__section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: var(--gap-md) 0.5rem 1px;
-  border-radius: var(--radius);
-  transition: background var(--transition-fast);
+/* "New" pill on a nav entry. A showcase device with a short life: delete this
+   rule and the matching spans in Sidebar.tsx once the entries stop being new.
+   Same token pair as .setup-method__badge, so it follows the theme. */
+.sidebar__badge {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-3xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: hsl(var(--chart-1) / 0.15);
+  color: hsl(var(--chart-1));
 }
 
-.sidebar__section-header:hover {
-  background: hsl(var(--sidebar-accent));
-}
-
-/* Collapse toggle: carries the uppercased section label styling so it reads as
-   a section heading, with the caret icon trailing the text. */
-.sidebar__section-caret {
+/* Nav row pairing a link with the create button (Harnesses). */
+.sidebar__link-row {
   display: flex;
   align-items: center;
-  gap: 4px;
+}
+
+.sidebar__link-row .sidebar__link {
   flex: 1;
   min-width: 0;
-  padding: 6px var(--gap-md);
-  background: none;
-  border: none;
-  border-radius: var(--radius);
-  font-size: var(--font-size-xs);
-  font-weight: 500;
-  color: hsl(var(--muted-foreground));
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  text-align: left;
-  cursor: pointer;
-  transition: background var(--transition-fast);
-}
-
-.sidebar__section-caret:focus-visible {
-  background: hsl(var(--sidebar-accent));
-  color: hsl(var(--sidebar-foreground));
-}
-
-.sidebar__section-header:hover .sidebar__section-caret {
-  color: hsl(var(--sidebar-foreground));
 }
 
 .sidebar__section-add {
@@ -1013,7 +876,7 @@ h6 {
   border: none;
   border-radius: var(--radius-sm);
   padding: 0;
-  margin-right: 2px;
+  margin-right: var(--gap-md);
   color: hsl(var(--muted-foreground));
   cursor: pointer;
   transition:
@@ -1025,42 +888,6 @@ h6 {
 .sidebar__section-add:focus-visible {
   color: hsl(var(--sidebar-foreground));
   background: hsl(var(--border));
-}
-
-/* Harness list items reuse the shared link base (above); these are the only
-   harness-specific overrides — a wider icon gap and a bolder label. */
-.sidebar__agents-list {
-  padding: 0;
-}
-
-.sidebar__agent-item {
-  gap: 8px;
-  font-weight: 500;
-}
-
-.sidebar__agent-item--active {
-  background: hsl(var(--sidebar-accent));
-  color: hsl(var(--sidebar-primary));
-  font-weight: 600;
-}
-
-.sidebar__agent-icon {
-  width: 16px;
-  height: 16px;
-  flex-shrink: 0;
-}
-
-.sidebar__agent-item-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar__agents-empty {
-  padding: 6px var(--gap-lg);
-  margin: 1px 0.5rem;
-  font-size: var(--font-size-sm);
-  color: hsl(var(--muted-foreground));
 }
 
 .sidebar__spacer {
@@ -1420,14 +1247,43 @@ h6 {
 @media (max-width: 768px) {
   .header {
     padding: 0 var(--gap-md);
+    /* The left group grows to fill the row here, so without a gap the
+       truncated breadcrumb would butt against the nav toggle. */
+    gap: var(--gap-md);
   }
   .header__left {
     flex: 1;
-    overflow: hidden;
+    min-width: 0;
   }
-  .header__logo-img {
-    width: 124px;
-    margin-bottom: 7px;
+  .chart-card__subtitle {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .chart-card__filters {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .chart-card__filters > button {
+    flex: 1 1 140px;
+  }
+  .chart-card__filters > div {
+    flex: 1 1 100%;
+  }
+  .chart-card__filters .agent-filter-select__trigger {
+    width: 100%;
+  }
+  .header__gear .header__dropdown {
+    /* Anchor to the viewport so short harness names cannot push the menu off-screen. */
+    position: fixed;
+    top: var(--header-height);
+    left: auto !important;
+    right: var(--gap-md) !important;
+  }
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
   }
   .header__separator,
   .header__breadcrumb-link,
@@ -1438,12 +1294,34 @@ h6 {
   }
   .header__breadcrumb-current {
     max-width: min(38vw, 180px);
+    /* Also shrink below the natural width when the logo + badge leave less
+       room than that cap, so the name ellipsizes instead of being clipped
+       by the left group's overflow. */
+    min-width: 0;
+    flex: 0 1 auto;
   }
   .header__breadcrumb-current > span {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .header__breadcrumb-current > .header__breadcrumb-provider-icon,
+  .header__breadcrumb-current > .header__breadcrumb-label {
+    display: none;
+  }
+  /* Tab bars (harness detail, routing layers, …) are inline-flex pills that
+     never shrink: when the tabs outgrow a phone screen the bar scrolls
+     sideways inside its own box instead of widening the whole page. The
+     pill is only 2.25rem tall, so the scrollbar is hidden rather than
+     squeezed in. */
+  .panel__tabs {
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .panel__tabs::-webkit-scrollbar {
+    display: none;
   }
   .header__gear {
     flex-shrink: 0;
@@ -1664,9 +1542,6 @@ h6 {
 }
 
 @media (max-width: 480px) {
-  .header__logo-img {
-    width: 112px;
-  }
   .header__mode-badge {
     display: none;
   }
@@ -1689,11 +1564,6 @@ h6 {
   .header__gear {
     display: none;
   }
-}
-
-/* ── Dark-mode icon overrides ─────────────────────── */
-.dark img[src$='/icons/hermes.svg'] {
-  filter: brightness(0) invert(1);
 }
 
 /* ── Requests tables: pinned lead-column widths ──

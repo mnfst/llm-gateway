@@ -1,6 +1,7 @@
 import { onMount, onCleanup, createEffect, on } from 'solid-js';
 import type { Accessor } from 'solid-js';
 import uPlot from 'uplot';
+import { formatNumber } from './formatters';
 
 interface UseChartLifecycleOptions<T> {
   el: () => HTMLDivElement;
@@ -102,16 +103,7 @@ export function createFormatLegendTimestamp(
 
 export function formatLegendTokens(_u: uPlot, val: number): string {
   if (val == null || isNaN(val)) return '';
-  val = Math.round(val);
-  if (val >= 1_000_000) {
-    const v = val / 1_000_000;
-    return `${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}M`;
-  }
-  if (val >= 1_000) {
-    const v = val / 1_000;
-    return `${v % 1 === 0 ? v.toFixed(0) : v.toFixed(1)}k`;
-  }
-  return val.toString();
+  return formatNumber(Math.round(val));
 }
 
 const RANGE_MAP: Record<string, number> = {

@@ -5,8 +5,8 @@ import type { MessageRow } from '../../src/components/message-table-types';
 // This suite renders the REAL MessageDetails inside an expanded MessageTable
 // row (unlike MessageTable.test.tsx, which stubs MessageDetails). It proves the
 // `onOpenMessage` prop is threaded end-to-end: table → ExpandableRow →
-// MessageDetails → Auto-fix link → handler. The api layer is mocked so the
-// resource resolves to an Auto-fixed original with a sibling.
+// MessageDetails → Autofix link → handler. The api layer is mocked so the
+// resource resolves to an Autofixed original with a sibling.
 
 const mockGetMessageDetails = vi.fn();
 const mockFlagMiscategorized = vi.fn();
@@ -134,7 +134,7 @@ describe('MessageTable onOpenMessage passthrough', () => {
     cleanup();
   });
 
-  it('threads onOpenMessage into an expanded row so the Auto-fix link opens the sibling', async () => {
+  it('threads onOpenMessage into an expanded row so the Autofix link opens the sibling', async () => {
     mockGetMessageDetails.mockResolvedValue(originalDetail);
     const onOpenMessage = vi.fn();
     const { container } = render(() => (
@@ -154,13 +154,13 @@ describe('MessageTable onOpenMessage passthrough', () => {
     expect(chevron).not.toBeNull();
     fireEvent.click(chevron);
 
-    // The real MessageDetails resource resolves and renders the Auto-fix link.
+    // The real MessageDetails resource resolves and renders the Autofix link.
     const link = await vi.waitFor(() => {
       const el = container.querySelector('.error-autofix-row__autofix-btn');
       expect(el).not.toBeNull();
       return el as HTMLButtonElement;
     });
-    expect(link.textContent).toContain('View Auto-fix retry');
+    expect(link.textContent).toContain('View Autofix retry');
 
     // Clicking the sibling link calls the table's onOpenMessage with the id.
     fireEvent.click(link);

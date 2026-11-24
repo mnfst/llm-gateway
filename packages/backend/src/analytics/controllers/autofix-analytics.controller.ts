@@ -1,5 +1,15 @@
-import { Controller, Get, Query, UseInterceptors } from '@nestjs/common';
-import { CacheTTL } from '@nestjs/cache-manager';
+import { AnalyticsScopeService } from '../services/analytics-scope.service';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Inject,
+  Post,
+  Query,
+  UseInterceptors,
+} from '@nestjs/common';
+import { CACHE_MANAGER, CacheTTL } from '@nestjs/cache-manager';
+import type { Cache } from 'cache-manager';
 import { IsIn, IsOptional, IsString } from 'class-validator';
 import { RangeQueryDto } from '../../common/dto/range-query.dto';
 import { AUTOFIX_TS_DIMENSIONS } from '../services/autofix-stats.service';
@@ -23,11 +33,29 @@ class AutofixTimeseriesQueryDto extends RangeQueryDto {
 @UseInterceptors(UserCacheInterceptor)
 @CacheTTL(DASHBOARD_CACHE_TTL_MS)
 export class AutofixAnalyticsController {
-  constructor(private readonly autofixStats: AutofixStatsService) {}
+  constructor(
+    private readonly analyticsScope: AnalyticsScopeService,
+    private readonly autofixStats: AutofixStatsService,
+    @Inject(CACHE_MANAGER) private readonly cacheManager: Cache,
+  ) {}
 
   @Get('autofix/status')
   async getStatus(@TenantCtx() ctx: TenantContext) {
     return this.autofixStats.getWorkspaceStatus(ctx.tenantId);
+  }
+
+  /** Enable Autofix for every agent in the workspace and record consent. */
+  @Post('autofix/enable-all')
+  async enableAll(@TenantCtx() ctx: TenantContext) {
+    if (!ctx.tenantId) {
+      throw new BadRequestException('No workspace resolved');
+    }
+    const result = await this.autofixStats.enableAll(ctx.tenantId);
+    // UserCacheInterceptor keys GET /autofix/status as `${tenantId}:/api/v1/autofix/status`.
+    // Bust it so a subsequent status read reflects the consent just recorded —
+    // otherwise a second tab can re-show the modal for the dashboard TTL.
+    await this.cacheManager.del(`${ctx.tenantId}:/api/v1/autofix/status`);
+    return result;
   }
 
   @Get('overview/autofix-stats')
@@ -35,7 +63,7 @@ export class AutofixAnalyticsController {
     return this.autofixStats.getStats({
       tenantId: ctx.tenantId,
       range: query.range,
-      agentName: query.agent_name,
+      agentScope: await this.analyticsScope.resolve(ctx.tenantId, query.agent_name),
     });
   }
 
@@ -45,7 +73,7 @@ export class AutofixAnalyticsController {
       tenantId: ctx.tenantId,
       range: query.range,
       by: query.by,
-      agentName: query.agent_name,
+      agentScope: await this.analyticsScope.resolve(ctx.tenantId, query.agent_name),
       failedOnly: query.failed_only === 'true',
     });
   }
@@ -63,7 +91,7 @@ export class AutofixAnalyticsController {
     return this.autofixStats.getPerProviderStats({
       tenantId: ctx.tenantId,
       range: query.range,
-      agentName: query.agent_name,
+      agentScope: await this.analyticsScope.resolve(ctx.tenantId, query.agent_name),
     });
   }
 
@@ -72,7 +100,7 @@ export class AutofixAnalyticsController {
     return this.autofixStats.getPerModelStats({
       tenantId: ctx.tenantId,
       range: query.range,
-      agentName: query.agent_name,
+      agentScope: await this.analyticsScope.resolve(ctx.tenantId, query.agent_name),
     });
   }
 }

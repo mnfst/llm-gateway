@@ -1,7 +1,7 @@
 name: Publish n8n Community Node
 
-# Publishes automatically when a version bump in
-# integrations/n8n-nodes-manifest/package.json lands on main.
+# Publishes automatically when the n8n package manifest or lockfile lands on
+# main with a version that has not been published yet.
 # The committed package.json is the single source of truth: the workflow
 # skips if that exact version is already on npm, and pushes the matching
 # n8n-nodes-manifest-v<version> tag after a successful publish.
@@ -12,6 +12,7 @@ on:
       - main
     paths:
       - 'integrations/n8n-nodes-manifest/package.json'
+      - 'integrations/n8n-nodes-manifest/package-lock.json'
   workflow_dispatch:
 
 jobs:

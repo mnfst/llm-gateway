@@ -2,7 +2,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Makes `agents.autofix_enabled` nullable so NULL can mean "no explicit choice —
- * inherit the deployment-mode default" (Auto-fix defaults ON in cloud, OFF in
+ * inherit the deployment-mode default" (Autofix defaults ON in cloud, OFF in
  * self-hosted; resolved at read time in AutofixService). The column previously
  * defaulted to a blanket `false`, which cannot express a mode-dependent default.
  *

@@ -58,6 +58,7 @@ describe('route-credentials', () => {
         model: 'gpt-5.5',
         authType: 'api_key',
         tenantProviderId: null,
+        keyLabel: 'Work',
         presentation,
         startProviderAttempt,
       });
@@ -68,7 +69,7 @@ describe('route-credentials', () => {
       expect(forward.attempt?.completedAtMs).toBeDefined();
       expect(await forward.response.text()).toContain('M100');
       expect(startProviderAttempt).toHaveBeenCalledWith(
-        expect.objectContaining({ provider: 'openai', model: 'gpt-5.5' }),
+        expect.objectContaining({ provider: 'openai', model: 'gpt-5.5', keyLabel: 'Work' }),
       );
     });
 
@@ -79,6 +80,7 @@ describe('route-credentials', () => {
         fallbackIndex: 0,
         authType: 'api_key',
         tenantProviderId: null,
+        keyLabel: 'Backup',
         presentation,
       });
 
@@ -88,6 +90,9 @@ describe('route-credentials', () => {
         fallbackIndex: 0,
         status: 401,
         providerCallStarted: true,
+        // The failed hop names its own connection instead of inheriting the
+        // primary's label at record time.
+        keyLabel: 'Backup',
       });
       expect(entry.errorBody).toBe(presentation.errorBody);
     });
@@ -187,6 +192,52 @@ describe('route-credentials', () => {
         tenantProviderId: 'up-1',
         keyLabel: 'Work',
       });
+    });
+
+    // The returned label is what gets recorded, so it must name the row
+    // `tenantProviderId` points at — never the pin that failed to match.
+    it('reports the selected row label when the pin matched no connection', async () => {
+      providerKeyService.selectProviderKey.mockResolvedValue({
+        apiKey: 'sk-live',
+        id: 'up-default',
+        region: null,
+        label: 'Default',
+        priority: 0,
+      });
+
+      const result = await resolveRouteCredentials(
+        { providerKeyService, oauth },
+        {
+          agentId: 'a1',
+          tenantId: 't1',
+          provider: 'openai',
+          authType: 'api_key',
+          providerKeyLabel: 'Retired',
+        },
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        tenantProviderId: 'up-default',
+        keyLabel: 'Default',
+      });
+    });
+
+    it('reports the selected row label when no pin was supplied', async () => {
+      providerKeyService.selectProviderKey.mockResolvedValue({
+        apiKey: 'sk-live',
+        id: 'up-work',
+        region: null,
+        label: 'Work',
+        priority: 1,
+      });
+
+      const result = await resolveRouteCredentials(
+        { providerKeyService, oauth },
+        { agentId: 'a1', tenantId: 't1', provider: 'openai', authType: 'api_key' },
+      );
+
+      expect(result).toMatchObject({ ok: true, tenantProviderId: 'up-work', keyLabel: 'Work' });
     });
   });
 });

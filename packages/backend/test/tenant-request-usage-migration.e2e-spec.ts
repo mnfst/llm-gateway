@@ -1,13 +1,32 @@
 import { DataSource } from 'typeorm';
 import { AddTenantRequestUsage1801300000000 } from '../src/database/migrations/1801300000000-AddTenantRequestUsage';
 import { PlanService } from '../src/billing/plan.service';
-import { toSqlTimestamp } from '../src/common/utils/postgres-sql';
+import { REQUEST_QUOTA_RESET_AT_ENV } from '../src/billing/request-quota-window';
+import { toLocalSqlTimestamp, toSqlTimestamp } from '../src/common/utils/postgres-sql';
 
 const TENANT = 'usage-tenant';
 const AGENT = 'usage-agent';
 const PLAYGROUND = 'usage-playground';
-const WINDOW_START = toSqlTimestamp(new Date('2026-07-09T09:06:52Z'));
-const REQUEST_TIMESTAMP = '2026-07-20 12:00:00';
+
+// A tenant's quota window is `GREATEST(date_trunc('month', row_timestamp),
+// PLAN_REQUEST_QUOTA_RESET_AT)` — see the trigger in the migration and
+// `requestQuotaWindowStartMs()`. The shipped reset default (2026-07-09) only
+// *is* that window while the clock sits inside July 2026: from 2026-08-01 on,
+// the trigger buckets live rows into the calendar-month window while a fixture
+// pinned to the reset instant keeps reading the July row, so every "live"
+// assertion silently saw only the historical baseline. Anchor the whole fixture
+// to a reset instant inside the current window instead, so these tests pin the
+// counter's behaviour rather than the month they were written in.
+const NOW_MS = Date.now();
+const NOW = new Date(NOW_MS);
+const MONTH_START_MS = Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth(), 1);
+// Clamped to the month start so the reset never precedes the calendar window it
+// is meant to dominate (otherwise `GREATEST` would pick the month start back).
+const RESET_AT_MS = Math.max(NOW_MS - 2 * 60 * 60 * 1000, MONTH_START_MS);
+const WINDOW_START = toSqlTimestamp(new Date(RESET_AT_MS));
+// Historical fixture rows: inside the quota window, before the cutover the
+// migration stamps with `clock_timestamp()` when it runs.
+const REQUEST_TIMESTAMP = toLocalSqlTimestamp(new Date((RESET_AT_MS + NOW_MS) / 2));
 let afterCutoverTimestamp: string;
 let futureTimestamp: string;
 let futureWindow: string;
@@ -89,10 +108,15 @@ async function usageRow(
 describe('AddTenantRequestUsage migration (e2e)', () => {
   let ds: DataSource;
   let originalManifestMode: string | undefined;
+  let originalQuotaResetAt: string | undefined;
 
   beforeAll(async () => {
     originalManifestMode = process.env['MANIFEST_MODE'];
     process.env['MANIFEST_MODE'] = 'cloud';
+    // Must be set before the migration runs: `up()` reads it to build the
+    // trigger's window expression.
+    originalQuotaResetAt = process.env[REQUEST_QUOTA_RESET_AT_ENV];
+    process.env[REQUEST_QUOTA_RESET_AT_ENV] = new Date(RESET_AT_MS).toISOString();
     ds = new DataSource({
       type: 'postgres',
       url:
@@ -167,6 +191,11 @@ describe('AddTenantRequestUsage migration (e2e)', () => {
     } else {
       process.env['MANIFEST_MODE'] = originalManifestMode;
     }
+    if (originalQuotaResetAt === undefined) {
+      delete process.env[REQUEST_QUOTA_RESET_AT_ENV];
+    } else {
+      process.env[REQUEST_QUOTA_RESET_AT_ENV] = originalQuotaResetAt;
+    }
   });
 
   it('publishes only schema and cutover metadata during migration', async () => {
@@ -193,12 +222,45 @@ describe('AddTenantRequestUsage migration (e2e)', () => {
     expect(legacyColumn).toEqual([]);
   });
 
-  it('lazily initializes the exact historical baseline once', async () => {
+  it('accepts the installed trigger timezone at Cloud boot', async () => {
+    const previousStripeEnv = {
+      secret: process.env['STRIPE_SECRET_KEY'],
+      webhook: process.env['STRIPE_WEBHOOK_SECRET'],
+      price: process.env['STRIPE_PRO_PRICE_ID'],
+    };
+    process.env['STRIPE_SECRET_KEY'] = 'sk_test_x';
+    process.env['STRIPE_WEBHOOK_SECRET'] = 'whsec_x';
+    process.env['STRIPE_PRO_PRICE_ID'] = 'price_x';
+    try {
+      await expect(new PlanService({} as never, ds).onModuleInit()).resolves.toBeUndefined();
+    } finally {
+      if (previousStripeEnv.secret === undefined) delete process.env['STRIPE_SECRET_KEY'];
+      else process.env['STRIPE_SECRET_KEY'] = previousStripeEnv.secret;
+      if (previousStripeEnv.webhook === undefined) delete process.env['STRIPE_WEBHOOK_SECRET'];
+      else process.env['STRIPE_WEBHOOK_SECRET'] = previousStripeEnv.webhook;
+      if (previousStripeEnv.price === undefined) delete process.env['STRIPE_PRO_PRICE_ID'];
+      else process.env['STRIPE_PRO_PRICE_ID'] = previousStripeEnv.price;
+    }
+  });
+
+  it('initializes the exact historical baseline once in the background', async () => {
     const planService = new PlanService({} as never, ds);
 
-    expect(await planService.countRequestsSince(TENANT, Date.UTC(2026, 6, 1))).toBe(2);
-    expect(await usageRow(ds)).toEqual({ count: 2, initialized: true });
-    expect(await planService.countRequestsSince(TENANT, Date.UTC(2026, 6, 1))).toBe(2);
+    // The hot path returns the live counter immediately (no row yet → 0) and
+    // schedules the one-shot historical baseline off the request path.
+    expect(await planService.countRequestsSince(TENANT, MONTH_START_MS)).toBe(0);
+
+    // The background init lands the exact baseline and flips the flag.
+    const deadline = Date.now() + 10_000;
+    let row = await usageRow(ds);
+    while (!row?.initialized && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      row = await usageRow(ds);
+    }
+    expect(row).toEqual({ count: 2, initialized: true });
+
+    // Steady state: subsequent reads serve the initialized counter directly.
+    expect(await planService.countRequestsSince(TENANT, MONTH_START_MS)).toBe(2);
     expect(await usageRow(ds)).toEqual({ count: 2, initialized: true });
   });
 

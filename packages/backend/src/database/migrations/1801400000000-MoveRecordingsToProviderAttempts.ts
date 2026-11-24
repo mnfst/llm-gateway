@@ -2,7 +2,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Request recordings shipped only to pre-release staging. They cannot be
- * truthfully assigned to one attempt because Auto-fix and fallbacks may have
+ * truthfully assigned to one attempt because Autofix and fallbacks may have
  * combined several provider calls into that single payload, so discard their
  * metadata instead of attaching it to the wrong attempt. The replacement is a
  * nullable external-storage pointer directly on the physical Provider Attempt

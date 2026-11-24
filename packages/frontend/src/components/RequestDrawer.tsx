@@ -37,7 +37,7 @@ type AttemptTab = 'details' | 'messages' | 'tools' | 'raw' | 'headers' | 'params
 interface Attempt {
   id: string;
   index: number;
-  type: 'initial' | 'fallback' | 'auto-fix';
+  type: 'initial' | 'fallback' | 'autofix';
   status: string;
   provider: string;
   model: string;
@@ -83,7 +83,7 @@ function statusLabel(status: string): string {
   if (status === 'pending') return 'Pending';
   if (status === 'cancelled') return 'Cancelled';
   if (isSuccessStatus(status)) return 'Success';
-  if (status === 'auto_fixed') return 'Auto-fixed';
+  if (status === 'auto_fixed') return 'Autofixed';
   if (status === 'rate_limited') return 'Rate limited';
   return 'Failed';
 }
@@ -122,11 +122,11 @@ function attemptErrorMessage(
 }
 
 function inferType(att: any, index: number, msg: any): Attempt['type'] {
-  if (att.autofix_role === 'retry') return 'auto-fix';
+  if (att.autofix_role === 'retry') return 'autofix';
   if (att.fallback_from_model || att.fallback_index) return 'fallback';
   // For backend summary attempts (no autofix_role/fallback fields),
   // use position: first = initial, rest = fallback (unless autofix on the request)
-  if (index > 0 && msg.autofix_applied) return 'auto-fix';
+  if (index > 0 && msg.autofix_applied) return 'autofix';
   if (index > 0) return 'fallback';
   return 'initial';
 }
@@ -173,7 +173,7 @@ function buildAttempts(msg: any): Attempt[] {
   // Fallback: single attempt from the message row itself
   let type: Attempt['type'] = 'initial';
   if (msg.fallback_from_model) type = 'fallback';
-  if (msg.autofix_role === 'retry') type = 'auto-fix';
+  if (msg.autofix_role === 'retry') type = 'autofix';
 
   return [
     {
@@ -334,7 +334,7 @@ const RequestDrawer: Component<RequestDrawerProps> = (props) => {
                       <>
                         <span class="drawer__meta-sep">&middot;</span>
                         <span class="drawer__meta-text">
-                          Auto-fix: {AUTOFIX_STATUS_LABELS[autofixStatus()]}
+                          Autofix: {AUTOFIX_STATUS_LABELS[autofixStatus()]}
                         </span>
                       </>
                     )}
@@ -378,7 +378,7 @@ const RequestDrawer: Component<RequestDrawerProps> = (props) => {
                           <span class="attempt-item__icon">
                             {att.type === 'fallback' ? (
                               <FallbackIcon />
-                            ) : att.type === 'auto-fix' ? (
+                            ) : att.type === 'autofix' ? (
                               <AutofixIcon />
                             ) : (
                               <svg
@@ -568,18 +568,18 @@ const RequestDrawer: Component<RequestDrawerProps> = (props) => {
                                   Cumulative by design: the error card is never
                                   replaced by a context card. ── */}
 
-                                {/* Origin: this attempt IS the healed Auto-fix retry */}
+                                {/* Origin: this attempt IS the healed Autofix retry */}
                                 <Show when={att().autofix_role === 'retry'}>
                                   <div class="drawer-context-card drawer-context-card--autofix">
                                     <div style="margin-bottom: 8px;">
                                       <span class="trigger-badge trigger-badge--autofix">
                                         <AutofixIcon />
-                                        auto-fix
+                                        autofix
                                       </span>
                                     </div>
                                     <div style="font-size: var(--font-size-sm); color: hsl(var(--foreground)); margin-bottom: 8px;">
                                       {isSuccessStatus(att().status)
-                                        ? 'This Auto-fix retry recovered the request.'
+                                        ? 'This Autofix retry recovered the request.'
                                         : 'Manifest applied a fix and retried, but this attempt failed.'}
                                     </div>
                                     <Show when={att().autofix_decision?.explanation?.summary}>
@@ -681,7 +681,7 @@ const RequestDrawer: Component<RequestDrawerProps> = (props) => {
                                   </div>
                                 </Show>
 
-                                {/* Consequence: this failed attempt was auto-fixed
+                                {/* Consequence: this failed attempt was autofixed
                                   and retried right after */}
                                 <Show
                                   when={att().autofix_applied && att().autofix_role !== 'retry'}
@@ -690,11 +690,11 @@ const RequestDrawer: Component<RequestDrawerProps> = (props) => {
                                     <div style="margin-bottom: 8px;">
                                       <span class="trigger-badge trigger-badge--autofix">
                                         <AutofixIcon />
-                                        auto-fix
+                                        autofix
                                       </span>
                                     </div>
                                     <div style="font-size: var(--font-size-sm); color: hsl(var(--foreground)); margin-bottom: 8px;">
-                                      {`This attempt failed and was auto-fixed.${
+                                      {`This attempt failed and was autofixed.${
                                         attempts().length > att().index
                                           ? ` Retried as attempt ${att().index + 1}.`
                                           : ''

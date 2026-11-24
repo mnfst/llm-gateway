@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AutofixService } from './autofix.service';
-import { HEALING_CLIENT, type HealingClient } from './healing-client';
+import { HEALING_CLIENT, type HealingClient, type HealingRequestContext } from './healing-client';
 import { toObservation, type ObservationInput } from './observation-payload';
 import type { HealRequest } from './phoenix.types';
 
@@ -19,17 +19,21 @@ const MAX_QUEUE = 500;
 /**
  * Ceiling on consent checks awaiting a verdict. Each one retains a request body,
  * and {@link MAX_QUEUE} only bounds what has already cleared the gate — so a slow
- * gate (a cache miss storm against a struggling DB) would otherwise let bodies
- * pile up behind it, unbounded. The gate is cached per tenant and per agent, so
- * in steady state almost nothing is ever in flight.
+ * gate against a struggling DB would otherwise let bodies pile up behind it,
+ * unbounded. Concurrent gates for the same agent share one in-flight DB read.
  */
 const MAX_IN_FLIGHT_GATES = 100;
+
+interface QueuedObservation {
+  observation: HealRequest;
+  context: HealingRequestContext;
+}
 
 /**
  * Streams an agent's request-side 4xx to Phoenix as observations, carrying the
  * full request body.
  *
- * Auto-fix itself only reports the requests it actually heals: the narrow
+ * Autofix itself only reports the requests it actually heals: the narrow
  * `AUTOFIX_REPAIRABLE_STATUSES` set, the primary attempt only, and only when the
  * heal call gets through. Everything else reached Phoenix solely through
  * Peacock's hourly scrape of `agent_messages`, which stores the model-parameter
@@ -38,8 +42,8 @@ const MAX_IN_FLIGHT_GATES = 100;
  * Manifest: the body is scrubbed, batched, and POSTed to Phoenix, which is where
  * request evidence already lives.
  *
- * **Only for agents with Auto-fix on** ({@link AutofixService.isActiveFor}).
- * Turning Auto-fix on is what agrees to send failing requests to the healing
+ * **Only for agents with Autofix on** ({@link AutofixService.isActiveFor}).
+ * Turning Autofix on is what agrees to send failing requests to the healing
  * service; an agent that never did must not have its callers' prompt content
  * shipped there. The gate is checked per report and fails closed.
  *
@@ -54,7 +58,7 @@ const MAX_IN_FLIGHT_GATES = 100;
 export class ObservationReporter implements OnModuleDestroy {
   private readonly logger = new Logger(ObservationReporter.name);
   private readonly enabled: boolean;
-  private queue: HealRequest[] = [];
+  private queue: QueuedObservation[] = [];
   /** Consent checks that have not resolved yet — awaited on shutdown, capped on entry. */
   private readonly inFlight = new Set<Promise<void>>();
   private timer: NodeJS.Timeout | null = null;
@@ -70,10 +74,11 @@ export class ObservationReporter implements OnModuleDestroy {
   }
 
   /**
-   * Queue a failed forward for reporting, if the agent has Auto-fix on.
+   * Queue a failed forward for reporting, if the agent has Autofix on.
    * Synchronous and non-throwing by contract — the caller is on the request path
    * and must never wait on, or fail because of, evidence collection. The consent
-   * gate is async (cached, an occasional DB read), so it runs detached.
+   * gate is async (a fresh DB read, coalesced per agent while in flight), so it
+   * runs detached.
    */
   report(input: ObservationInput): void {
     if (!this.enabled) return;
@@ -103,15 +108,16 @@ export class ObservationReporter implements OnModuleDestroy {
       // nothing to reject, and skips the gate's DB read entirely.
       const observation = toObservation(input);
       if (!observation) return;
-      if (!(await this.autofix.isActiveFor(input.tenantId, input.agentId))) return;
-      this.enqueue(observation);
+      const context = await this.autofix.getHealingContext(input.tenantId, input.agentId);
+      if (!context) return;
+      this.enqueue({ observation, context });
     } catch (err) {
       // Includes a gate that threw (DB hiccup): no consent proven, no body sent.
       this.logger.warn(`observation dropped: ${(err as Error).message}`);
     }
   }
 
-  private enqueue(observation: HealRequest): void {
+  private enqueue(observation: QueuedObservation): void {
     if (this.queue.length >= MAX_QUEUE) {
       this.queue.shift();
       this.countDrop();
@@ -141,10 +147,22 @@ export class ObservationReporter implements OnModuleDestroy {
       this.timer = null;
     }
     if (this.queue.length === 0) return;
-    const batch = this.queue.slice(0, BATCH_MAX);
-    this.queue = this.queue.slice(batch.length);
+    const context = this.queue[0].context;
+    const batch: QueuedObservation[] = [];
+    const remaining: QueuedObservation[] = [];
+    for (const item of this.queue) {
+      if (batch.length < BATCH_MAX && item.context.harness === context.harness) {
+        batch.push(item);
+      } else {
+        remaining.push(item);
+      }
+    }
+    this.queue = remaining;
     try {
-      await this.client.observe(batch);
+      await this.client.observe(
+        batch.map((item) => item.observation),
+        context,
+      );
     } catch (err) {
       this.logger.warn(`observe batch of ${batch.length} failed: ${(err as Error).message}`);
     }

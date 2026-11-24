@@ -509,7 +509,7 @@ describe('MessageTable', () => {
       ));
       expect(container.querySelector('td')!.textContent).toContain('2');
       // Icons moved to selfheal column
-      expect(container.querySelector('[title="Auto-fix"]')).toBeNull();
+      expect(container.querySelector('[title="Autofix"]')).toBeNull();
     });
 
     it('renders just the attempt count (no icons) when fallback_from_model is set', () => {
@@ -535,9 +535,9 @@ describe('MessageTable', () => {
           agentName="agent-1"
         />
       ));
-      const badge = container.querySelector('[title="Auto-fix"]') as HTMLElement;
+      const badge = container.querySelector('[title="Autofix"]') as HTMLElement;
       expect(badge).not.toBeNull();
-      expect(badge.textContent).toContain('auto-fix');
+      expect(badge.textContent).toContain('autofix');
     });
 
     it('renders fallback icon with text label when fallback_from_model is set', () => {

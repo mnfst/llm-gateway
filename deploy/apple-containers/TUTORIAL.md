@@ -100,7 +100,7 @@ From the repository root, run:
 The script:
 
 1. Starts the Apple Containers service.
-2. Creates or reuses the `mnfst-postgres-data` named volume.
+2. Creates or reuses the `mnfst-postgres-data` database volume and `mnfst-request-recordings` recording volume.
 3. Starts PostgreSQL and verifies an authenticated connection.
 4. Discovers the PostgreSQL container address.
 5. Recreates the Manifest container so it always receives the current database address.
@@ -128,7 +128,7 @@ Stop and remove both containers:
 ./deploy/apple-containers/start.sh down
 ```
 
-The PostgreSQL named volume is retained, so a later `up` restores the same database.
+Both named volumes are retained, so a later `up` restores the same database and request recordings.
 
 Running `up` repeatedly is safe. A running PostgreSQL container is reused, while Manifest is recreated to pick up the current PostgreSQL IP and configuration.
 
@@ -147,7 +147,7 @@ container image pull manifestdotbuild/manifest:latest
 ./deploy/apple-containers/start.sh up
 ```
 
-`up` recreates the Manifest container, so it starts from the freshly pulled image. Database migrations run automatically on boot — no manual steps. The PostgreSQL container and the `mnfst-postgres-data` named volume are not touched, so all data is preserved across upgrades.
+`up` recreates the Manifest container, so it starts from the freshly pulled image. Database migrations run automatically on boot — no manual steps. The PostgreSQL container, database volume, and request-recording volume are not touched, so all data is preserved across upgrades.
 
 ## Local LLM Servers
 
@@ -180,22 +180,25 @@ The script prints the complete `container inspect` output if it cannot identify 
 
 ## Persistence and Backups
 
-PostgreSQL data is stored in the Apple Containers named volume `mnfst-postgres-data`. Override the volume name before startup with:
+PostgreSQL data is stored in `mnfst-postgres-data`, and compressed request recordings are stored in `mnfst-request-recordings`. Override either volume name before startup with:
 
 ```bash
 MANIFEST_PG_VOLUME=my-manifest-data ./deploy/apple-containers/start.sh up
+MANIFEST_RECORDINGS_VOLUME=my-manifest-recordings ./deploy/apple-containers/start.sh up
 ```
 
 The script mounts the named volume at `/var/lib/postgresql/data` and uses `/var/lib/postgresql/data/pgdata` as `PGDATA`. The nested directory is required because a newly formatted Apple Containers volume may contain a root-level `lost+found` directory.
 
-`down` never deletes the named volume. Use Apple Containers volume commands to inspect or deliberately remove it:
+`down` never deletes either named volume. Use Apple Containers volume commands to inspect or deliberately remove them:
 
 ```bash
 container volume inspect mnfst-postgres-data
+container volume inspect mnfst-request-recordings
 container volume delete mnfst-postgres-data
+container volume delete mnfst-request-recordings
 ```
 
-Deleting the volume permanently deletes the bundled PostgreSQL database. Back up important data before removing it.
+Deleting either volume permanently deletes its database or recording data. PostgreSQL dumps do not include recordings, so back up the recording volume separately before removing it.
 
 ## Troubleshooting
 
@@ -262,10 +265,11 @@ Stop the containers first:
 ./deploy/apple-containers/start.sh down
 ```
 
-To also discard all database state, deliberately delete the named volume:
+To also discard all database and request-recording state, deliberately delete both named volumes:
 
 ```bash
 container volume delete mnfst-postgres-data
+container volume delete mnfst-request-recordings
 ```
 
 Then run `up` again. This is destructive and returns Manifest to a fresh-install state.

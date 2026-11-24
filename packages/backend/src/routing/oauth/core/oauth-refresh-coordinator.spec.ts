@@ -5,6 +5,7 @@ import {
   __resetOAuthRefreshCoordinator,
   PERSIST_MAX_ATTEMPTS,
   REFRESH_EXPIRY_SKEW_MS,
+  REJECTED_TOKEN_EXPIRY,
   type CoordinatedRefreshParams,
   type CredentialLockOps,
 } from './oauth-refresh-coordinator';
@@ -93,6 +94,37 @@ describe('coordinateOAuthRefresh', () => {
     expect(result).toEqual(dbBlob);
     expect(refresh).not.toHaveBeenCalled();
     expect(persist).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a token the provider rejected even though the DB copy has not expired yet', async () => {
+    // A 401 marks the caller's token as rejected, while the DB still holds
+    // that same token with a future expiry.
+    const dbBlob = valid('rejected');
+    const refreshed = valid('brand-new');
+    const { params, refresh, persist } = makeParams({
+      callerBlob: { ...dbBlob, e: REJECTED_TOKEN_EXPIRY },
+      readFreshRaw: jest.fn().mockResolvedValue(JSON.stringify(dbBlob)),
+      refresh: jest.fn().mockResolvedValue(refreshed),
+    });
+
+    const result = await coordinateOAuthRefresh(params);
+
+    expect(result).toBe(refreshed);
+    expect(refresh).toHaveBeenCalledWith(dbBlob);
+    expect(persist).toHaveBeenCalledWith(refreshed);
+  });
+
+  it('reuses a valid DB copy that kept the same token when the caller only saw it expire', async () => {
+    // Some providers reissue the same access token with a new expiry; a caller
+    // holding the old expiry must not trigger a second refresh.
+    const dbBlob = valid('reissued');
+    const { params, refresh } = makeParams({
+      callerBlob: { ...dbBlob, e: Date.now() - 1_000 },
+      readFreshRaw: jest.fn().mockResolvedValue(JSON.stringify(dbBlob)),
+    });
+
+    await expect(coordinateOAuthRefresh(params)).resolves.toEqual(dbBlob);
+    expect(refresh).not.toHaveBeenCalled();
   });
 
   it('refreshes using the fresher DB refresh token when the DB copy is also expired', async () => {

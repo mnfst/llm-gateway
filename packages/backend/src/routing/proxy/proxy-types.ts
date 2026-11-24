@@ -1,4 +1,5 @@
 import type { IncomingHttpHeaders } from 'http';
+import type { RequestParamDefaults } from 'manifest-shared';
 import type { RecordingResponseBody } from './attempt-recording.types';
 import { ProviderEndpoint } from './provider-endpoints';
 import type { AttemptRecordingCapture } from './attempt-recording-capture';
@@ -21,13 +22,6 @@ export type ThinkingBlockLookup = (
   firstToolUseId: string,
   routeContext?: ThinkingBlockRouteContext,
 ) => ThinkingBlock[] | null;
-
-/**
- * Optional lookup to re-inject cached reasoning_content strings that were
- * stripped by OpenAI-compatible clients. Called with the first tool_call id
- * from the assistant turn; returns the cached reasoning_content or null.
- */
-export type ReasoningContentLookup = (firstToolCallId: string) => string | null;
 
 export type ProxyApiMode = 'chat_completions' | 'responses' | 'messages';
 
@@ -53,9 +47,17 @@ export interface ProviderAttemptStart {
   model: string;
   authType?: string;
   tenantProviderId?: string | null;
+  /** Reserve ordering for a Manifest-local route failure without a pending provider-call row. */
+  providerCallStarted?: boolean;
+  /**
+   * Label of the connection serving this attempt. Carried from the start so a
+   * row that never reaches a terminal writer (a cancelled request) still names
+   * the connection it was billed against.
+   */
+  keyLabel?: string;
 }
 
-/** Identity and measured start of one persisted pending Provider Attempt. */
+/** Identity and measured start of one Attempt. */
 export interface ProviderAttemptRef {
   id: string;
   attemptNumber: number;
@@ -94,10 +96,14 @@ export interface ForwardOptions {
   apiKey: string;
   model: string;
   body: Record<string, unknown>;
+  /** Saved overrides already merged into the body under their catalog names. */
+  savedRequestParams?: RequestParamDefaults;
   resolveChatBody?: ResolveChatBody;
   apiMode?: ProxyApiMode;
-  /** Stable Manifest conversation/session key for provider prompt-cache affinity. */
+  /** Legacy caller session identifier. Provider cache affinity must use providerCacheKey. */
   sessionKey?: string;
+  /** Opaque, tenant/agent/session-scoped provider prompt-cache affinity key. */
+  providerCacheKey?: string;
   stream: boolean;
   signal?: AbortSignal;
   extraHeaders?: Record<string, string>;
@@ -109,8 +115,15 @@ export interface ForwardOptions {
   thinkingLookup?: ThinkingBlockLookup;
   /** Route scope used to decide whether cached Anthropic thinking can be replayed. */
   thinkingRouteContext?: ThinkingBlockRouteContext;
-  /** Lookup for re-injecting cached reasoning_content (DeepSeek-compatible providers). */
-  reasoningContentLookup?: ReasoningContentLookup;
+  /**
+   * The caller's raw `anthropic-beta` header, merged into (never replacing)
+   * Manifest's own flags when the resolved endpoint is Anthropic itself (the
+   * `anthropic` route or a custom row pointed at it, never the
+   * Anthropic-compatible third parties). Without it, beta-gated
+   * body fields the caller legitimately sent come back as
+   * `<field>: Extra inputs are not permitted`. Sanitized at the merge.
+   */
+  clientAnthropicBeta?: string | string[];
   /**
    * Provider-specific routing field carried in the OAuth token blob's `u`
    * slot. For Gemini OAuth this is the CodeAssist
@@ -137,11 +150,17 @@ export interface ProxyRequestOptions {
   routingBody?: Record<string, unknown>;
   apiMode?: ProxyApiMode;
   sessionKey: string;
+  /** Fixed-length tenant/agent/session key for internal replay caches. */
+  sessionCacheKey: string;
+  /** Scoped provider prompt-cache key; absent when the caller omitted x-session-key. */
+  providerCacheKey?: string;
+  /** Scoped routing-momentum key; absent when the caller omitted x-session-key. */
+  sessionMomentumKey?: string;
   agentName?: string;
   signal?: AbortSignal;
   specificityOverride?: string;
   callerAttribution?: CallerAttribution | null;
   headers?: IncomingHttpHeaders;
-  /** Called immediately before Manifest invokes one upstream provider transport. */
+  /** Allocates the next Attempt; local route failures set providerCallStarted=false. */
   startProviderAttempt?: StartProviderAttempt;
 }

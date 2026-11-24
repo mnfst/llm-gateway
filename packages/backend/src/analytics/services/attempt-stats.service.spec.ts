@@ -1,3 +1,4 @@
+import { selectedAgent } from '../__tests__/scope.fixture';
 import { AttemptStatsService } from './attempt-stats.service';
 import { EXCLUDE_PLAYGROUND_AGENTS_PREDICATE } from './query-helpers';
 
@@ -43,7 +44,11 @@ describe('AttemptStatsService', () => {
     const service = makeService([current, previous]);
 
     await expect(
-      service.getStats({ tenantId: 'tenant-1', range: '7d', agentName: 'bot-1' }),
+      service.getStats({
+        tenantId: 'tenant-1',
+        range: '7d',
+        agentScope: selectedAgent('tenant-1', 'bot-1'),
+      }),
     ).resolves.toEqual({
       total_attempts: { value: 8, previous: 5 },
       fallbacked_attempts: { value: 3, previous: 1 },
@@ -61,7 +66,7 @@ describe('AttemptStatsService', () => {
       });
       expect(qb.andWhere).toHaveBeenCalledWith(EXCLUDE_PLAYGROUND_AGENTS_PREDICATE);
       expect(
-        qb.andWhere.mock.calls.some(([clause]) => String(clause).includes('liveAgentName')),
+        qb.andWhere.mock.calls.some(([clause]) => String(clause).includes('liveAgentId')),
       ).toBe(true);
       expect(qb.addSelect.mock.calls.flat()).not.toContain('autofix_role');
     }
@@ -76,8 +81,8 @@ describe('AttemptStatsService', () => {
       total_attempts: { value: 0, previous: 0 },
       fallbacked_attempts: { value: 0, previous: 0 },
     });
-    expect(current.andWhere).toHaveBeenCalledWith('1 = 0');
-    expect(previous.andWhere).toHaveBeenCalledWith('1 = 0');
+    expect(current.andWhere).toHaveBeenCalledWith('1 = 0', { tenantId: null });
+    expect(previous.andWhere).toHaveBeenCalledWith('1 = 0', { tenantId: null });
   });
 
   it('returns daily pivoted buckets in the #2485 timeseries shape', async () => {
@@ -108,14 +113,14 @@ describe('AttemptStatsService', () => {
     const result = await service.getTimeseries({
       tenantId: 'tenant-1',
       range: '24h',
-      agentName: 'bot-1',
+      agentScope: selectedAgent('tenant-1', 'bot-1'),
     });
 
     expect(result.buckets).toEqual([]);
     expect(qb.select.mock.calls[0][0]).toContain("date_trunc('hour'");
-    expect(
-      qb.andWhere.mock.calls.some(([clause]) => String(clause).includes('liveAgentName')),
-    ).toBe(true);
+    expect(qb.andWhere.mock.calls.some(([clause]) => String(clause).includes('liveAgentId'))).toBe(
+      true,
+    );
   });
 
   it('buckets a connection attempt-status timeseries as success/error', async () => {
@@ -241,7 +246,7 @@ describe('AttemptStatsService', () => {
       autofix_attempts_succeeded: 10,
     });
     const selects = qb.addSelect.mock.calls.flat().join(' ');
-    // A fallback is a retry; an auto-fix produces an attempt (autofix_role).
+    // A fallback is a retry; an autofix produces an attempt (autofix_role).
     expect(selects).toContain('at.fallback_from_model IS NOT NULL');
     expect(selects).toContain("at.autofix_role = 'retry'");
   });

@@ -45,8 +45,22 @@ const MultiSelect: Component<MultiSelectProps> = (props) => {
   };
 
   const handleClickOutside = (e: MouseEvent) => {
-    if (ref && !ref.contains(e.target as Node)) setOpen(false);
+    if (!ref) return;
+    // Asked AFTER the option's own handler has run. When a caller derives its
+    // options from the selection — the Requests log's model filter does, so a
+    // picked model stays listed even if it leaves the range window — toggling
+    // rebuilds the option nodes, and `contains` on the clicked-and-replaced
+    // node would call it "outside" and shut the menu after one pick.
+    // composedPath() is the path captured when the event was dispatched, so it
+    // still names this dropdown for a replaced option, and still does NOT name
+    // it for an outside element that removed itself. Stopping propagation on
+    // the dropdown cannot do this job: Solid delegates onClick to its own
+    // document listener, not to the element.
+    const path = e.composedPath();
+    const inside = path.length > 0 ? path.includes(ref) : ref.contains(e.target as Node);
+    if (!inside) setOpen(false);
   };
+
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Escape') setOpen(false);
   };

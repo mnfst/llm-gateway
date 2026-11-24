@@ -1,3 +1,4 @@
+import { getEmailAssetUrl } from '../../common/utils/dashboard-url';
 import * as React from 'react';
 import {
   Html,
@@ -19,33 +20,33 @@ export interface DoctorReleaseProps {
   /** The tutorial article (blog). Optional until published. */
   tutorialUrl?: string;
   logoUrl?: string;
-  /** The Auto-fix gradient sparkle mark (hosted PNG). */
+  /** The Autofix gradient sparkle mark (hosted PNG). */
   autofixIconUrl?: string;
 }
 
 /**
- * The Auto-fix release announcement, sent once to every waitlist member when
+ * The Autofix release announcement, sent once to every waitlist member when
  * the Doctor version ships. Copy rules: recovery vocabulary (a fallback is a
- * retry, an auto-fix produces an attempt), no em dashes, short sentences.
+ * retry, an autofix produces an attempt), no em dashes, short sentences.
  */
 export function DoctorReleaseEmail(props: DoctorReleaseProps) {
   const {
     appUrl,
     tutorialUrl,
-    logoUrl = 'https://app.manifest.build/manifest-logo.png',
-    autofixIconUrl = 'https://app.manifest.build/autofix-icon-email.png',
+    logoUrl = getEmailAssetUrl('manifest-logo.png', props.appUrl),
+    autofixIconUrl = getEmailAssetUrl('autofix-icon-email.png', props.appUrl),
   } = props;
 
   return (
     <Html>
       <Head />
       <Preview>
-        Auto-fix is live on your account. Your failing requests can now repair themselves.
+        Autofix is live on your account. Your failing requests can now repair themselves.
       </Preview>
       <Body style={body}>
         <Container style={container}>
           <Section style={logoSection}>
-            <Img src={logoUrl} alt="Manifest" height="32" style={logoImg} />
+            <Img src={logoUrl} alt="Manifest LLM Gateway" width="174" height="32" style={logoImg} />
           </Section>
 
           <Section style={card}>
@@ -53,14 +54,14 @@ export function DoctorReleaseEmail(props: DoctorReleaseProps) {
               <Text style={newLine}>
                 <span style={newLabel}>New:</span>{' '}
                 <Img src={autofixIconUrl} alt="" width="18" height="18" style={autofixIcon} />{' '}
-                <span style={autofixName}>Auto-fix</span>
+                <span style={autofixName}>Autofix</span>
               </Text>
             </Section>
 
-            <Text style={heading}>Auto-fix is live on your account</Text>
+            <Text style={heading}>Autofix is live on your account</Text>
 
             <Text style={paragraph}>
-              You joined the waitlist. Here it is: Auto-fix shipped today, and it is already running
+              You joined the waitlist. Here it is: Autofix shipped today, and it is already running
               on your account. You have nothing to turn on.
             </Text>
 
@@ -72,7 +73,7 @@ export function DoctorReleaseEmail(props: DoctorReleaseProps) {
             </Text>
 
             <Text style={paragraph}>
-              Auto-fix learns from real traffic. Each new error we patch works for every account, so
+              Autofix learns from real traffic. Each new error we patch works for every account, so
               the share of requests it can repair grows week after week.
             </Text>
 
@@ -82,7 +83,7 @@ export function DoctorReleaseEmail(props: DoctorReleaseProps) {
               </Button>
               {tutorialUrl ? (
                 <Button href={tutorialUrl} style={buttonSecondary}>
-                  How Auto-fix works
+                  How Autofix works
                 </Button>
               ) : null}
             </Section>
@@ -90,7 +91,7 @@ export function DoctorReleaseEmail(props: DoctorReleaseProps) {
             <Hr style={hr} />
 
             <Text style={footer}>
-              You are receiving this email because you joined the Auto-fix waitlist on Manifest.
+              You are receiving this email because you joined the Autofix waitlist on Manifest.
             </Text>
           </Section>
         </Container>

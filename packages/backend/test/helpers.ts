@@ -41,6 +41,8 @@ import { BackfillState } from '../src/entities/backfill-state.entity';
 import { PublicErrorPage } from '../src/entities/public-error-page.entity';
 import { WaitlistClaim } from '../src/entities/waitlist-claim.entity';
 import { TenantRequestUsage } from '../src/entities/tenant-request-usage.entity';
+import { CliAuthCode } from '../src/entities/cli-auth-code.entity';
+import { AuthModule } from '../src/auth/auth.module';
 import { HealthModule } from '../src/health/health.module';
 import { AnalyticsModule } from '../src/analytics/analytics.module';
 import { OtlpModule } from '../src/otlp/otlp.module';
@@ -50,9 +52,10 @@ import { ModelPricingCacheService } from '../src/model-prices/model-pricing-cach
 import { RoutingModule } from '../src/routing/routing.module';
 import { PlaygroundModule } from '../src/playground/playground.module';
 import { CommonModule } from '../src/common/common.module';
-import { PublicStatsModule } from '../src/public-stats/public-stats.module';
 import { SetupModule } from '../src/setup/setup.module';
 import { WaitlistModule } from '../src/waitlist/waitlist.module';
+import { CrmMetricsModule } from '../src/crm-metrics/crm-metrics.module';
+import { ProviderModelFetcherService } from '../src/model-discovery/provider-model-fetcher.service';
 
 export const TEST_USER_ID = 'test-user-001';
 export const TEST_API_KEY = 'test-api-key-001';
@@ -85,6 +88,7 @@ const entities = [
   PublicErrorPage,
   WaitlistClaim,
   TenantRequestUsage,
+  CliAuthCode,
 ];
 const OPENROUTER_MODELS_URL = 'https://openrouter.ai/api/v1/models';
 const OPENROUTER_MODELS_FIXTURE = {
@@ -145,6 +149,7 @@ const OPENROUTER_MODELS_FIXTURE = {
 } as const;
 
 export interface CreateTestAppOptions {
+  configureApp?: (app: INestApplication) => void;
   dropSchema?: boolean;
   seed?: boolean;
 }
@@ -196,6 +201,13 @@ class MockSessionGuard implements CanActivate {
 
     request.user = { id: userId, email: 'test@test.com', name: 'Test' };
     request.session = { id: 'test-session', userId };
+    // Production's SessionGuard/ApiKeyGuard stamp how the caller authenticated;
+    // session-only endpoints read it. Tests impersonate API-key auth with the
+    // `x-test-auth-method` header.
+    request.authMethod =
+      typeof request.headers['x-test-auth-method'] === 'string'
+        ? request.headers['x-test-auth-method']
+        : 'session';
 
     // Resolve the user's tenant via owner_user_id (no caching: tests create
     // tenants on the fly and must see them on the next request).
@@ -227,6 +239,7 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
         TypeOrmModule.forRoot(buildTypeOrmConfig(options)),
         TypeOrmModule.forFeature(entities),
         CommonModule,
+        AuthModule,
         HealthModule,
         AnalyticsModule,
         OtlpModule,
@@ -234,12 +247,17 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
         ModelPricesModule,
         RoutingModule,
         PlaygroundModule,
-        PublicStatsModule,
         SetupModule,
         WaitlistModule,
+        CrmMetricsModule,
       ],
       providers: [{ provide: APP_GUARD, useClass: MockSessionGuard }],
-    }).compile();
+    })
+      // Provider-connect tests use fake credentials. Keep model discovery
+      // deterministic instead of waiting on live provider APIs to reject them.
+      .overrideProvider(ProviderModelFetcherService)
+      .useValue({ fetch: async () => [] })
+      .compile();
 
     const app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
@@ -251,6 +269,7 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
         forbidNonWhitelisted: true,
       }),
     );
+    options.configureApp?.(app);
     await app.init();
 
     const ds = app.get(DataSource);
@@ -301,6 +320,41 @@ export async function createTestApp(options: CreateTestAppOptions = {}): Promise
   } finally {
     restoreFetch();
   }
+}
+
+/**
+ * Persistent stub for provider model-discovery calls. Provider connects run
+ * live discovery against the provider's real /models API with the spec's fake
+ * key; on a healthy network that is an instant 401, but a degraded network
+ * turns every connect into a multi-second hang and times the suite out.
+ * Answering the 401 locally keeps the exact same code path (discovery falls
+ * back to the OpenRouter fixture) while making it deterministic.
+ *
+ * Install after createTestApp() and restore in afterAll.
+ */
+export function stubProviderDiscoveryFetch(): () => void {
+  const originalFetch = global.fetch;
+  const DISCOVERY_HOSTS = ['api.openai.com', 'api.anthropic.com'];
+
+  global.fetch = (async (
+    input: Parameters<typeof fetch>[0],
+    init?: Parameters<typeof fetch>[1],
+  ): Promise<Response> => {
+    const url = getFetchUrl(input);
+    if (DISCOVERY_HOSTS.some((host) => url.includes(host))) {
+      return new Response(
+        JSON.stringify({
+          error: { message: 'Incorrect API key provided', type: 'invalid_request_error' },
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+    return originalFetch(input, init);
+  }) as typeof fetch;
+
+  return () => {
+    global.fetch = originalFetch;
+  };
 }
 
 function stubOpenRouterPricingFetch(): () => void {

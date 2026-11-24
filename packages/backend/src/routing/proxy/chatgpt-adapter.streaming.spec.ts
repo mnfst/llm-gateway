@@ -10,7 +10,11 @@
  * Split out of chatgpt-adapter.spec.ts to keep each file under 300 lines.
  */
 
-import { collectChatGptSseResponse, transformResponsesStreamChunk } from './chatgpt-adapter';
+import {
+  collectChatGptSseResponse,
+  createChatGptStreamTransformer,
+  transformResponsesStreamChunk,
+} from './chatgpt-adapter';
 
 function parseFrame(frame: string | null): Record<string, unknown> | null {
   if (!frame) return null;
@@ -231,5 +235,59 @@ describe('chatgpt-adapter streaming: truncated tool-call argument JSON', () => {
       expect(fnArgs).toBe('{"k":42}');
       expect(JSON.parse(fnArgs)).toEqual({ k: 42 });
     });
+  });
+});
+
+describe('chatgpt-adapter streaming: finish_reason with empty response.completed output', () => {
+  it('emits finish_reason tool_calls when the tool call streamed before completed (output: [])', () => {
+    // GPT/Codex Responses streams frequently emit response.completed with an
+    // empty output array — the tool call was already streamed earlier via
+    // response.output_item.added + response.function_call_arguments.delta.
+    // Inspecting only the completed payload mislabels this as "stop", which
+    // makes OpenAI Chat Completions clients end the turn without executing
+    // the tool. The transformer tracks tool calls across the whole stream.
+    const stream = createChatGptStreamTransformer('gpt-5');
+    const seen: string[] = [];
+    for (const chunk of [
+      'event: response.output_item.added\ndata: {"output_index":0,"item":{"type":"function_call","call_id":"c1","name":"read_file"}}',
+      'event: response.function_call_arguments.delta\ndata: {"output_index":0,"delta":"{\\"path\\":\\"/tmp/test.txt\\"}"}',
+      'event: response.completed\ndata: {"response":{"output":[]}}',
+    ]) {
+      const out = stream(chunk);
+      if (out) seen.push(out);
+    }
+    const final = seen[seen.length - 1];
+    expect(final).toContain('"finish_reason":"tool_calls"');
+  });
+
+  it('still emits finish_reason stop for a plain text completion', () => {
+    // Guard against the fix leaking: a stream that produced only text must
+    // keep finishing as "stop".
+    const stream = createChatGptStreamTransformer('gpt-5');
+    const seen: string[] = [];
+    for (const chunk of [
+      'event: response.output_text.delta\ndata: {"delta":"hello"}',
+      'event: response.completed\ndata: {"response":{"output":[{"type":"output_text","text":"hello"}]}}',
+    ]) {
+      const out = stream(chunk);
+      if (out) seen.push(out);
+    }
+    const final = seen[seen.length - 1];
+    expect(final).toContain('"finish_reason":"stop"');
+  });
+
+  it('keeps finish_reason tool_calls when completed payload still contains the function call', () => {
+    // Isolate the completed-payload path: without a preceding streamed tool
+    // call, this assertion specifically guards hasFunctionCalls.
+    const stream = createChatGptStreamTransformer('gpt-5');
+    const seen: string[] = [];
+    for (const chunk of [
+      'event: response.completed\ndata: {"response":{"output":[{"type":"function_call"}]}}',
+    ]) {
+      const out = stream(chunk);
+      if (out) seen.push(out);
+    }
+    const final = seen[seen.length - 1];
+    expect(final).toContain('"finish_reason":"tool_calls"');
   });
 });

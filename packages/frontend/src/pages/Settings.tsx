@@ -9,6 +9,7 @@ import SetupModal from '../components/SetupModal.jsx';
 import SettingsAutofixSection from './SettingsAutofixSection.jsx';
 import SettingsRecordingSection from './SettingsRecordingSection.jsx';
 import { agentDisplayName } from '../services/agent-display-name.js';
+import { installOrigin } from '../services/install-endpoints.js';
 import {
   deleteAgent,
   getAgentInfo,
@@ -93,9 +94,7 @@ const Settings: Component = () => {
   };
 
   const baseUrl = () => {
-    const host = window.location.hostname;
-    if (host === 'app.manifest.build') return 'https://app.manifest.build/v1';
-    return `${window.location.origin}/v1`;
+    return `${installOrigin()}/v1`;
   };
 
   const handleDeleteAgent = async () => {
@@ -205,7 +204,7 @@ const Settings: Component = () => {
                   alt=""
                   width="18"
                   height="18"
-                  class="settings-type__icon"
+                  class="platform-icon settings-type__icon"
                 />
               </Show>
               {currentPlatform()
@@ -227,7 +226,7 @@ const Settings: Component = () => {
         </div>
       </div>
 
-      {/* -- Auto-fix ---------------------------------- */}
+      {/* -- Autofix ---------------------------------- */}
       <SettingsAutofixSection agentName={agentName} />
 
       {/* -- Message recording ------------------------- */}

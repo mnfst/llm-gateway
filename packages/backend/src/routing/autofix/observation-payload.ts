@@ -1,4 +1,6 @@
+import { isAnthropicExtraUsageError } from 'manifest-shared';
 import { scrubSecrets } from '../../common/utils/secret-scrub';
+import { redactInlineImageDataUrls } from '../proxy/inline-image-redaction';
 import type { ProviderWireFormat, ProxyApiMode } from '../proxy/proxy-types';
 import type { AuthType } from 'manifest-shared';
 import { normalizeProviderError } from './provider-error-normalizer';
@@ -99,13 +101,19 @@ function scrubValue(value: unknown): unknown {
 }
 
 /**
- * Strip credentials from a request body before it leaves this process, or return
- * null when the body is too large to ship. The body is the caller's, not ours,
- * and it can carry a key a user pasted into a prompt or a tool definition.
+ * Strip credentials and inline base64 images from a request body before it
+ * leaves this process, or return null when the body is too large to ship. The
+ * body is the caller's, not ours, and it can carry a key a user pasted into a
+ * prompt or a tool definition.
  */
 export function scrubBody(body: Record<string, unknown>): Record<string, unknown> | null {
-  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_BODY_BYTES) return null;
-  return scrubValue(body) as Record<string, unknown>;
+  // Inline base64 images go first: an observation is evidence about the shape of
+  // a request, and no Phoenix operation reads image bytes. Dropping them before
+  // the size check also keeps a request that only failed the cap because of a
+  // screenshot reportable.
+  const withoutImages = redactInlineImageDataUrls(body);
+  if (Buffer.byteLength(JSON.stringify(withoutImages), 'utf8') > MAX_BODY_BYTES) return null;
+  return scrubValue(withoutImages) as Record<string, unknown>;
 }
 
 export interface ObservationInput {
@@ -118,7 +126,7 @@ export interface ObservationInput {
   traceId: string;
   tenantId: string;
   /**
-   * The agent the request routed through. Used ONLY to resolve the Auto-fix
+   * The agent the request routed through. Used ONLY to resolve the Autofix
    * consent gate (`isActiveFor`) — never part of the observation, since Phoenix
    * attributes failures to a tenant, not to an agent.
    */
@@ -150,6 +158,15 @@ export interface ObservationInput {
  */
 export function toObservation(input: ObservationInput): HealRequest | null {
   if (!isReportableStatus(input.status)) return null;
+  if (
+    isAnthropicExtraUsageError({
+      provider: input.provider,
+      httpStatus: input.status,
+      errorBody: input.errorBody,
+    })
+  ) {
+    return null;
+  }
   const scrubbed = scrubBody(input.requestBody);
   if (!scrubbed) return null;
   const scrubbedProviderBody = input.providerWire ? scrubBody(input.providerWire.body) : null;

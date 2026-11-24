@@ -1,3 +1,4 @@
+import { redactInlineImageDataUrls } from './inline-image-redaction';
 import type { RecordingResponseBody, StoredAttemptRecording } from './attempt-recording.types';
 
 export interface AttemptRecordingCapture {
@@ -16,6 +17,15 @@ export function recordingResponseFromText(raw: string): RecordingResponseBody {
   }
 }
 
+/**
+ * Build one Provider Attempt recording. The stored request body is the
+ * provider-facing body with inline base64 images replaced by a short marker:
+ * the recording is a debugging artifact, and a single screenshot pasted by an
+ * agent would otherwise be persisted in full for every attempt. The body sent
+ * to the provider is untouched — only this stored copy is redacted, and
+ * {@link redactInlineImageDataUrls} returns a copy so the caller's object is
+ * never mutated.
+ */
 export function createAttemptRecordingCapture(
   requestBody: Record<string, unknown>,
   wireFormat: string,
@@ -46,7 +56,7 @@ export function createAttemptRecordingCapture(
       return {
         version: 1,
         wire_format: wireFormat,
-        request_body: requestBody,
+        request_body: redactInlineImageDataUrls(requestBody),
         response_body: buildResponseBody(),
       };
     },

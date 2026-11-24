@@ -12,15 +12,16 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@better-auth/stripe": "1.6.25",
+    "@better-auth/stripe": "1.7.4",
     "@solidjs/meta": "^0.29.4",
     "@solidjs/router": "^0.16.2",
-    "better-auth": "1.6.25",
-    "dompurify": "^3.4.12",
-    "highlight.js": "^11.11.1",
+    "better-auth": "1.7.4",
+    "dompurify": "^3.4.14",
+    "highlight.js": "^11.12.0",
     "manifest-shared": "*",
-    "marked": "^18.0.7",
-    "solid-js": "^1.9.14",
+    "marked": "^18.0.11",
+    "motion": "^12.42.2",
+    "solid-js": "^1.9.15",
     "uplot": "^1.6.31"
   },
   "devDependencies": {
@@ -28,11 +29,11 @@
     "@solidjs/testing-library": "^0.8.0",
     "@types/dompurify": "^3.2.0",
     "@types/node": "^22.20.1",
-    "@vitest/coverage-v8": "^4.1.10",
-    "jsdom": "^30.0.0",
+    "@vitest/coverage-v8": "^5.0.0",
+    "jsdom": "^30.0.1",
     "typescript": "^5.7.0",
     "vite": "^6.1.0",
-    "vite-plugin-solid": "^2.11.13",
-    "vitest": "^4.1.10"
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^5.0.0"
   }
 }

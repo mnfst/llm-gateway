@@ -35,8 +35,8 @@
 }
 
 .auth-logo__img {
-  width: 104px;
-  height: auto;
+  height: 32px;
+  width: auto;
   object-fit: contain;
 }
 
@@ -146,6 +146,17 @@
 .auth-form__submit:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.auth-form__submit--secondary {
+  background: transparent;
+  color: hsl(var(--foreground));
+  border: 1px solid hsl(var(--border));
+}
+
+.auth-form__submit--secondary:hover:not(:disabled) {
+  background: hsl(var(--muted));
+  opacity: 1;
 }
 
 .auth-form__error {

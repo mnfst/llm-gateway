@@ -1,0 +1,77 @@
+/* Shared "params card" pattern: a section label over a bordered card of rows,
+   each row a title + hint on the left and a control on the right, split by
+   hairline separators. Canonical consumer is the Model parameters dialog
+   (routing.css keeps its dialog-specific rules); the Connect Harness modal and
+   the Welcome first-harness form reuse it for their Autofix / logs toggles,
+   which is why these rules are global rather than in the Routing chunk. */
+
+.model-params__row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+}
+
+.model-params__row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.model-params__row-control {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+}
+
+.model-params__group {
+  padding: 0;
+}
+
+.model-params__group + .model-params__group {
+  margin-top: 16px;
+}
+
+.model-params__group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px 8px;
+  font-size: var(--font-size-base);
+  font-weight: 600;
+  color: hsl(var(--foreground));
+}
+
+.model-params__group-card {
+  background: hsl(var(--background));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  padding: 4px 16px;
+}
+
+.model-params__separator {
+  height: 1px;
+  background: hsl(var(--border));
+}
+
+.model-params__group .model-params__row {
+  padding: 12px 0;
+}
+
+.model-params__label-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+}
+
+.model-params__label-hint {
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+  color: hsl(var(--muted-foreground));
+}

@@ -40,6 +40,7 @@ function setWithEviction<T>(map: Map<string, CachedEntry<T>>, key: string, data:
 
 /** Notified with the agentId whenever that agent's routing cache is invalidated. */
 export type AgentInvalidationListener = (agentId: string) => void;
+export type TenantInvalidationListener = (tenantId: string) => void;
 
 @Injectable()
 export class RoutingCacheService {
@@ -56,6 +57,9 @@ export class RoutingCacheService {
   // subscribe without forming an import cycle — every provider mutation already
   // funnels through invalidateAgent(), so this is the one place to fan out.
   private readonly invalidationListeners: AgentInvalidationListener[] = [];
+  // Same idea for tenant-wide mutations (custom provider create/update/delete),
+  // which change the model list of every agent in the tenant at once.
+  private readonly tenantInvalidationListeners: TenantInvalidationListener[] = [];
 
   getTiers(agentId: string): TierAssignment[] | null {
     return getOrExpire(this.tiers, agentId) ?? null;
@@ -160,6 +164,15 @@ export class RoutingCacheService {
     this.invalidationListeners.push(listener);
   }
 
+  /**
+   * Register a callback fired (with the tenantId) on every invalidateTenant().
+   * Custom providers are tenant-global, so an alias or model-list change must
+   * drop every agent's discovered-model cache, not one agent's.
+   */
+  addTenantInvalidationListener(listener: TenantInvalidationListener): void {
+    this.tenantInvalidationListeners.push(listener);
+  }
+
   invalidateAgent(agentId: string): void {
     this.tiers.delete(agentId);
     this.specificity.delete(agentId);
@@ -193,5 +206,12 @@ export class RoutingCacheService {
     const prefix = `${tenantId}\u0000`;
     const toDelete = [...this.providerKeys.keys()].filter((k) => k.startsWith(prefix));
     for (const k of toDelete) this.providerKeys.delete(k);
+    for (const listener of this.tenantInvalidationListeners) {
+      try {
+        listener(tenantId);
+      } catch {
+        // Best-effort fan-out, as for agent listeners.
+      }
+    }
   }
 }

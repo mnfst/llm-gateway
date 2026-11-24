@@ -1,4 +1,5 @@
 import { ProviderModelFetcherService, PROVIDER_CONFIGS } from './provider-model-fetcher.service';
+import { CODEX_CLI_VERSION } from '../common/constants/subscription-clients';
 
 describe('ProviderModelFetcherService', () => {
   let service: ProviderModelFetcherService;
@@ -36,6 +37,7 @@ describe('ProviderModelFetcherService', () => {
       'nvidia',
       'xai',
       'minimax',
+      'meta',
       'minimax-subscription',
       'xiaomi',
       'xiaomi-subscription',
@@ -243,6 +245,226 @@ describe('ProviderModelFetcherService', () => {
       }),
     );
     expect(result.map((m) => m.id)).toEqual(['mistral.ministral-3-8b-instruct']);
+  });
+
+  describe('AWS Bedrock CRIS profiles', () => {
+    const mantleResponse = (ids: string[]) => ({
+      ok: true,
+      json: async () => ({ data: ids.map((id) => ({ id })) }),
+    });
+    const profilesResponse = (body: Record<string, unknown>) => ({
+      ok: true,
+      json: async () => body,
+    });
+    const routeFetches = (
+      mantle: unknown,
+      controlPlane: unknown | (() => Promise<unknown>),
+    ): void => {
+      fetchSpy.mockImplementation(async (url: string) => {
+        if (!url.includes('/inference-profiles')) return mantle;
+        return typeof controlPlane === 'function' ? controlPlane() : controlPlane;
+      });
+    };
+    const warnSpy = () => jest.spyOn((service as any).logger, 'warn').mockImplementation(() => {});
+
+    it('adds the active, catalogued CRIS profiles of the connection region', async () => {
+      routeFetches(
+        mantleResponse(['openai.gpt-6-sol']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.openai.gpt-6-luna', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.openai.gpt-6.1-sol', status: 'ACTIVE' },
+            { inferenceProfileId: 'eu.openai.gpt-6.1-sol', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.openai.gpt-6-astra', status: 'INACTIVE' },
+            { inferenceProfileId: 'global.anthropic.claude-sonnet-4-6', status: 'ACTIVE' },
+          ],
+        }),
+      );
+
+      const result = await service.fetch(
+        'bedrock',
+        'ABSK-test',
+        'api_key',
+        'https://bedrock-mantle.eu-west-1.api.aws',
+      );
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://bedrock.eu-west-1.amazonaws.com/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000',
+        expect.objectContaining({ headers: { Authorization: 'Bearer ABSK-test' } }),
+      );
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'global.moonshotai.kimi-k3',
+        'global.openai.gpt-6-luna',
+        'global.openai.gpt-6.1-sol',
+      ]);
+      expect(result[1]).toMatchObject({
+        provider: 'bedrock',
+        supportedEndpoints: ['/v1/chat/completions', '/v1/responses'],
+      });
+      expect(result[0].supportedEndpoints).toBeUndefined();
+    });
+
+    it('uses the default region and warns when the profile list is truncated', async () => {
+      const warn = warnSpy();
+      routeFetches(
+        mantleResponse(['mistral.ministral-3-8b-instruct']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
+          ],
+          nextToken: 'more',
+        }),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://bedrock.us-east-1.amazonaws.com/inference-profiles?type=SYSTEM_DEFINED&maxResults=1000',
+        expect.anything(),
+      );
+      expect(result.map((m) => m.id)).toEqual([
+        'mistral.ministral-3-8b-instruct',
+        'us.openai.gpt-6-sol',
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        'Bedrock listed more than 1000 inference profiles; only the first 1000 were checked',
+      );
+    });
+
+    it('returns nothing when Mantle returns nothing, so discovery keeps its usual fallbacks', async () => {
+      routeFetches(
+        { ok: false, status: 503 },
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
+          ],
+        }),
+      );
+
+      await expect(service.fetch('bedrock', 'ABSK-test', 'api_key')).resolves.toEqual([]);
+    });
+
+    it('keeps the CRIS profiles from the last discovery when the control plane rejects the call', async () => {
+      const warn = warnSpy();
+      routeFetches(mantleResponse(['openai.gpt-6-sol']), { ok: false, status: 403 });
+      const previous = [
+        { id: 'openai.gpt-6-sol' },
+        { id: 'us.moonshotai.kimi-k3' },
+        { id: 'us.anthropic.claude-sonnet-4-6' },
+      ].map((m) => ({ ...m, provider: 'bedrock' })) as never[];
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key', undefined, {
+        previousModels: previous,
+      });
+
+      expect(result.map((m) => m.id)).toEqual(['openai.gpt-6-sol', 'us.moonshotai.kimi-k3']);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not list Bedrock inference profiles (Error: HTTP 403); kept 1 from the last discovery',
+      );
+    });
+
+    it('adds the active Claude CRIS profiles that Runtime Messages serves', async () => {
+      routeFetches(
+        mantleResponse(['openai.gpt-6-sol']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.anthropic.claude-sonnet-5-5', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.anthropic.claude-opus-5-5', status: 'ACTIVE' },
+            {
+              inferenceProfileId: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+              status: 'ACTIVE',
+            },
+            { inferenceProfileId: 'us.anthropic.claude-fable-5', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.anthropic.claude-fable-5-1', status: 'ACTIVE' },
+            { inferenceProfileId: 'global.moonshotai.kimi-k3', status: 'ACTIVE' },
+            { inferenceProfileId: 'eu.anthropic.claude-opus-5', status: 'INACTIVE' },
+          ],
+        }),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'us.anthropic.claude-sonnet-5-5',
+        'global.anthropic.claude-opus-5-5',
+        'us.anthropic.claude-fable-5',
+        'global.anthropic.claude-fable-5-1',
+        'global.moonshotai.kimi-k3',
+      ]);
+      expect(result[1]).toMatchObject({
+        provider: 'bedrock',
+        supportedEndpoints: ['/v1/chat/completions', '/v1/messages'],
+      });
+      expect(result[2].supportedEndpoints).toEqual(['/v1/chat/completions', '/v1/messages']);
+      expect(
+        result.find((m) => m.id === 'us.anthropic.claude-fable-5')?.supportedEndpoints,
+      ).toEqual(['/v1/chat/completions', '/v1/messages']);
+      expect(result.find((m) => m.id === 'global.moonshotai.kimi-k3')?.supportedEndpoints).toEqual([
+        '/v1/chat/completions',
+        '/v1/responses',
+      ]);
+    });
+
+    it('keeps previously discovered Claude profiles when the control plane fails, and drops unsupported ones', async () => {
+      const warn = warnSpy();
+      routeFetches(mantleResponse(['openai.gpt-6-sol']), { ok: false, status: 403 });
+      const previous = [
+        { id: 'openai.gpt-6-sol' },
+        { id: 'us.moonshotai.kimi-k3' },
+        { id: 'us.anthropic.claude-sonnet-5-5' },
+        { id: 'global.anthropic.claude-opus-5' },
+        { id: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0' },
+        { id: 'us.anthropic.claude-fable-5' },
+        { id: 'us.anthropic.claude-opus-4-6-v1' },
+      ].map((m) => ({ ...m, provider: 'bedrock' })) as never[];
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key', undefined, {
+        previousModels: previous,
+      });
+
+      expect(result.map((m) => m.id)).toEqual([
+        'openai.gpt-6-sol',
+        'us.moonshotai.kimi-k3',
+        'us.anthropic.claude-sonnet-5-5',
+        'global.anthropic.claude-opus-5',
+        'us.anthropic.claude-fable-5',
+      ]);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not list Bedrock inference profiles (Error: HTTP 403); kept 4 from the last discovery',
+      );
+    });
+
+    it('keeps nothing extra when the control plane is unreachable on a first discovery', async () => {
+      const warn = warnSpy();
+      routeFetches(mantleResponse(['openai.gpt-6-sol']), () =>
+        Promise.reject(new Error('socket hang up')),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual(['openai.gpt-6-sol']);
+      expect(warn).toHaveBeenCalledWith(
+        'Could not list Bedrock inference profiles (Error: socket hang up); kept 0 from the last discovery',
+      );
+    });
+
+    it('does not duplicate a profile that Mantle also lists', async () => {
+      routeFetches(
+        mantleResponse(['us.openai.gpt-6-sol']),
+        profilesResponse({
+          inferenceProfileSummaries: [
+            { inferenceProfileId: 'us.openai.gpt-6-sol', status: 'ACTIVE' },
+          ],
+        }),
+      );
+
+      const result = await service.fetch('bedrock', 'ABSK-test', 'api_key');
+
+      expect(result.map((m) => m.id)).toEqual(['us.openai.gpt-6-sol']);
+    });
   });
 
   it('should fetch Cerebras models from the OpenAI-compatible models endpoint', async () => {
@@ -772,6 +994,45 @@ describe('ProviderModelFetcherService', () => {
       );
       expect(result.map((m) => m.id)).toEqual(['grok-3', 'grok-4']);
       expect(result.every((m) => m.provider === 'xai')).toBe(true);
+    });
+  });
+
+  describe('meta provider', () => {
+    it('discovers only current Muse Spark models with their native capabilities', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'muse-spark-1.2' },
+            { id: 'muse-spark-1.2-contributor' },
+            { id: 'muse-spark-1.1' },
+            { id: 'retired-or-unrelated-model' },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('meta', 'LLM_test-meta-key-value');
+
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.meta.ai/v1/models',
+        expect.objectContaining({
+          headers: { Authorization: 'Bearer LLM_test-meta-key-value' },
+        }),
+      );
+      expect(result.map((model) => model.id)).toEqual([
+        'muse-spark-1.2',
+        'muse-spark-1.2-contributor',
+        'muse-spark-1.1',
+      ]);
+      expect(result[1]).toMatchObject({
+        displayName: 'Muse Spark 1.2 Contributor (inputs and outputs may train Meta)',
+        provider: 'meta',
+        contextWindow: 1_048_576,
+        capabilityReasoning: true,
+        capabilityCode: true,
+        inputModalities: ['text', 'image', 'audio', 'video'],
+        outputModalities: ['text'],
+      });
     });
   });
 
@@ -1444,6 +1705,25 @@ describe('ProviderModelFetcherService', () => {
       ]);
     });
 
+    it('should read the modalities Groq publishes on each model', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'allam-2-7b', input_modalities: ['text'], output_modalities: ['text'] },
+            { id: 'openai/gpt-oss-20b' },
+          ],
+        }),
+      });
+
+      const [allam, gptOss] = await service.fetch('groq', 'gsk_test');
+
+      expect(allam.inputModalities).toEqual(['text']);
+      expect(allam.outputModalities).toEqual(['text']);
+      expect(gptOss.inputModalities).toBeUndefined();
+      expect(gptOss.outputModalities).toBeUndefined();
+    });
+
     it('should hit the Groq models endpoint with bearer auth', async () => {
       fetchSpy.mockResolvedValue({
         ok: true,
@@ -2031,6 +2311,32 @@ describe('ProviderModelFetcherService', () => {
       );
     });
 
+    it('should filter out :batch variants (only served via the async Batch API)', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'openai/gpt-5',
+              name: 'GPT-5',
+              context_length: 400000,
+              architecture: { output_modalities: ['text'] },
+            },
+            {
+              id: 'openai/gpt-5:batch',
+              name: 'GPT-5 (batch)',
+              context_length: 400000,
+              architecture: { output_modalities: ['text'] },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('openrouter', '');
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('openai/gpt-5');
+    });
+
     it('should normalize OpenRouter input and output modalities', async () => {
       fetchSpy.mockResolvedValue({
         ok: true,
@@ -2424,6 +2730,7 @@ describe('ProviderModelFetcherService', () => {
           displayName: 'GPT-5.5',
           provider: 'openai',
           contextWindow: 192000,
+          contextWindowSource: 'provider',
           inputPricePerToken: 0,
           outputPricePerToken: 0,
           capabilityCode: true,
@@ -2493,6 +2800,7 @@ describe('ProviderModelFetcherService', () => {
 
       const result = await service.fetch('openai', 'token', 'subscription');
       expect(result[0].contextWindow).toBe(200000);
+      expect(result[0].contextWindowSource).toBe('subscription_config');
     });
 
     it('should return [] when models is not an array', async () => {
@@ -2541,7 +2849,7 @@ describe('ProviderModelFetcherService', () => {
       await service.fetch('openai', 'my-oauth-token', 'subscription');
 
       expect(fetchSpy).toHaveBeenCalledWith(
-        'https://chatgpt.com/backend-api/codex/models?client_version=0.128.0',
+        `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLI_VERSION}`,
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: 'Bearer my-oauth-token',
@@ -2585,6 +2893,169 @@ describe('ProviderModelFetcherService', () => {
         }),
       );
       expect(result[1].id).toBe('copilot/gpt-4o');
+    });
+
+    it('should convert Copilot AI-credit prices to USD per token', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'claude-sonnet-4.6',
+              billing: {
+                token_prices: {
+                  batch_size: 1_000_000,
+                  default: {
+                    input_price: 300,
+                    output_price: 1500,
+                    cache_read_price: 30,
+                    cache_write_price: 375,
+                    max_prompt_tokens: 200_000,
+                  },
+                  long_context: {
+                    input_price: 600,
+                    output_price: 2250,
+                    cache_read_price: 60,
+                    cache_write_price: 750,
+                    max_prompt_tokens: 936_000,
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        inputPricePerToken: 3 / 1_000_000,
+        outputPricePerToken: 15 / 1_000_000,
+        cacheReadPricePerToken: 0.3 / 1_000_000,
+        cacheWritePricePerToken: 3.75 / 1_000_000,
+        longContextPricing: {
+          thresholdTokens: 200_000,
+          inputPricePerToken: 6 / 1_000_000,
+          outputPricePerToken: 22.5 / 1_000_000,
+          cacheReadPricePerToken: 0.6 / 1_000_000,
+          cacheWritePricePerToken: 7.5 / 1_000_000,
+        },
+      });
+    });
+
+    it('should preserve Copilot long-context prices and their prompt threshold', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'gpt-5.6-terra',
+              billing: {
+                token_prices: {
+                  default: {
+                    input_price: 200,
+                    output_price: 1200,
+                    cache_price: 20,
+                    cache_write_price: 250,
+                    context_max: 272_000,
+                  },
+                  long_context: {
+                    input_price: 400,
+                    output_price: 1800,
+                    cache_price: 40,
+                    cache_write_price: 500,
+                    context_max: 936_000,
+                  },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        contextWindow: 936_000,
+        inputPricePerToken: 2 / 1_000_000,
+        outputPricePerToken: 12 / 1_000_000,
+        cacheReadPricePerToken: 0.2 / 1_000_000,
+        cacheWritePricePerToken: 2.5 / 1_000_000,
+        longContextPricing: {
+          thresholdTokens: 272_000,
+          inputPricePerToken: 4 / 1_000_000,
+          outputPricePerToken: 18 / 1_000_000,
+          cacheReadPricePerToken: 0.4 / 1_000_000,
+          cacheWritePricePerToken: 5 / 1_000_000,
+        },
+      });
+    });
+
+    it('should omit unavailable Copilot cache prices', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'gpt-5-mini',
+              billing: {
+                token_prices: {
+                  batch_size: 1_000_000,
+                  default: { input_price: 25, output_price: 200 },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        inputPricePerToken: 0.25 / 1_000_000,
+        outputPricePerToken: 2 / 1_000_000,
+      });
+      expect(result[0]).not.toHaveProperty('cacheReadPricePerToken');
+      expect(result[0]).not.toHaveProperty('cacheWritePricePerToken');
+    });
+
+    it('should keep subscription pricing at zero when Copilot billing is invalid', async () => {
+      fetchSpy.mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'gpt-4o',
+              billing: {
+                token_prices: {
+                  batch_size: 0,
+                  default: { input_price: 100, output_price: 500 },
+                },
+              },
+            },
+            {
+              id: 'gpt-4.1',
+              billing: {
+                token_prices: {
+                  batch_size: 1_000_000,
+                  default: { input_price: -1, output_price: Number.POSITIVE_INFINITY },
+                },
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await service.fetch('copilot', 'tid=token');
+
+      expect(result[0]).toMatchObject({
+        inputPricePerToken: 0,
+        outputPricePerToken: 0,
+      });
+      expect(result[1]).toMatchObject({
+        inputPricePerToken: 0,
+        outputPricePerToken: 0,
+      });
     });
 
     it('should send correct Copilot headers', async () => {
@@ -3309,9 +3780,28 @@ describe('ProviderModelFetcherService', () => {
 
     await service.fetch('minimax', 'api-key', 'api_key');
 
-    expect(fetchSpy).toHaveBeenCalledWith(
-      expect.stringContaining('api.minimaxi.chat'),
-      expect.anything(),
-    );
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
+  });
+
+  it('should use the endpoint override for MiniMax CN API-key discovery', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch('minimax', 'api-key', 'api_key', 'https://api.minimaxi.com/v1');
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimaxi.com/v1/models', expect.anything());
+  });
+
+  it('should ignore a non-MiniMax endpoint override for MiniMax API-key discovery', async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    });
+
+    await service.fetch('minimax', 'api-key', 'api_key', 'https://attacker.example/v1');
+
+    expect(fetchSpy).toHaveBeenCalledWith('https://api.minimax.io/v1/models', expect.anything());
   });
 });
