@@ -317,6 +317,15 @@ describe('routing API client (additional coverage)', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
+    it('is dropped by any mutation, e.g. connecting a provider key', async () => {
+      const fetchMock = setupFetch([]);
+      await routing.getCustomProviders('demo');
+      await routing.connectProvider('demo', { provider: 'openai', apiKey: 'sk-x' });
+      await routing.getCustomProviders('demo');
+      // GET, POST, GET: the second GET was not served from the module cache.
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
     it('invalidateCustomProvidersCache() with no arg clears the entire cache', async () => {
       const fetchMock = setupFetch([]);
       await routing.getCustomProviders('a');

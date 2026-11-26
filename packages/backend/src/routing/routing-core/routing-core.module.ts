@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TenantProvider } from '../../entities/tenant-provider.entity';
 import { AgentEnabledProvider } from '../../entities/agent-enabled-provider.entity';
@@ -16,6 +17,8 @@ import { TierService } from './tier.service';
 import { ProviderKeyService } from './provider-key.service';
 import { RoutingCacheService } from './routing-cache.service';
 import { RoutingInvalidationService } from './routing-invalidation.service';
+import { RoutingCacheSyncService } from './routing-cache-sync.service';
+import { RoutingCacheFlushInterceptor } from './routing-cache-flush.interceptor';
 import { ResolveAgentService } from './resolve-agent.service';
 import { SpecificityService } from './specificity.service';
 import { SpecificityPenaltyService } from './specificity-penalty.service';
@@ -43,6 +46,8 @@ import { ProviderParamSpecService } from './provider-param-spec.service';
     TierService,
     ProviderKeyService,
     RoutingCacheService,
+    RoutingCacheSyncService,
+    { provide: APP_INTERCEPTOR, useClass: RoutingCacheFlushInterceptor },
     RoutingInvalidationService,
     ResolveAgentService,
     SpecificityService,
@@ -56,6 +61,7 @@ import { ProviderParamSpecService } from './provider-param-spec.service';
     TierService,
     ProviderKeyService,
     RoutingCacheService,
+    RoutingCacheSyncService,
     RoutingInvalidationService,
     ResolveAgentService,
     SpecificityService,

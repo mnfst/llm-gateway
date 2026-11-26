@@ -268,7 +268,6 @@ export function registerRoutingTools(
             const agent = await deps.resolveAgent.resolve(operator.tenantId, agentName);
             if (enabled) await deps.autofixStats.recordAutofixConsent();
             await deps.agentRepo.update(agent.id, { autofix_enabled: enabled });
-            deps.resolveAgent.invalidate(agent.tenant_id, agentName);
             await deps.cacheManager.del(`${agent.tenant_id}:/api/v1/autofix/status`);
             return { enabled: deps.autofix.resolveEnabled(enabled) };
           })(),
@@ -305,7 +304,6 @@ export function registerRoutingTools(
           (async () => {
             const agent = await deps.resolveAgent.resolve(operator.tenantId, agentName);
             await deps.agentRepo.update(agent.id, { record_messages: enabled });
-            deps.resolveAgent.invalidate(agent.tenant_id, agentName);
             return { enabled };
           })(),
         ),
@@ -597,13 +595,11 @@ export function registerRoutingTools(
             if (autofix !== undefined) {
               if (autofix) await deps.autofixStats.recordAutofixConsent();
               await deps.agentRepo.update(agent.id, { autofix_enabled: autofix });
-              deps.resolveAgent.invalidate(agent.tenant_id, agentName);
               await deps.cacheManager.del(`${agent.tenant_id}:/api/v1/autofix/status`);
               output['autofix'] = { enabled: deps.autofix.resolveEnabled(autofix) };
             }
             if (recording !== undefined) {
               await deps.agentRepo.update(agent.id, { record_messages: recording });
-              deps.resolveAgent.invalidate(agent.tenant_id, agentName);
               output['recording'] = { enabled: recording };
             }
             return output;

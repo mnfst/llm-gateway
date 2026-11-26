@@ -108,7 +108,6 @@ function makeDeps(): McpToolDeps {
     specificity: { getAssignments: jest.fn().mockResolvedValue([]) } as never,
     resolveAgent: {
       resolve: jest.fn().mockResolvedValue(AGENT),
-      invalidate: jest.fn(),
     } as never,
     headerTiers: {
       list: jest.fn().mockResolvedValue([{ id: 'h1', name: 'tier' }]),

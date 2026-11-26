@@ -5,6 +5,7 @@ import {
   invalidate,
   invalidatePredicate,
   invalidateAll,
+  onInvalidateAll,
   invalidateGroup,
   INVALIDATION_GROUPS,
   DEFAULT_TTL_MS,
@@ -299,6 +300,16 @@ describe('api SWR cache', () => {
       await cachedFetch('/api/v1/messages', b);
       expect(a).toHaveBeenCalledTimes(1);
       expect(b).toHaveBeenCalledTimes(1);
+    });
+
+    it('notifies onInvalidateAll listeners until they unsubscribe', () => {
+      const listener = vi.fn();
+      const unsubscribe = onInvalidateAll(listener);
+      invalidateAll();
+      expect(listener).toHaveBeenCalledTimes(1);
+      unsubscribe();
+      invalidateAll();
+      expect(listener).toHaveBeenCalledTimes(1);
     });
   });
 

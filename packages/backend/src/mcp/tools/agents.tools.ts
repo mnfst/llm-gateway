@@ -183,10 +183,6 @@ export function registerAgentTools(
               throw new Error('"Playground" is a reserved name');
             }
             await deps.lifecycle.renameAgent(operator.tenantId, agent, slug, name.trim());
-            // The resolver caches by name; drop the old slug or it keeps serving
-            // the renamed agent for the cache TTL.
-            deps.resolveAgent.invalidate(operator.tenantId, agent);
-            deps.resolveAgent.invalidate(operator.tenantId, slug);
           }
           if (agent_category !== undefined || agent_platform !== undefined) {
             await deps.lifecycle.updateAgentType(operator.tenantId, name ? slugify(name) : agent, {

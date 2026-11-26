@@ -164,7 +164,6 @@ export class TierController {
     const agent = await this.resolveAgentService.resolve(ctx.tenantId, agentName);
     const newValue = !agent.complexity_routing_enabled;
     await this.agentRepo.update(agent.id, { complexity_routing_enabled: newValue });
-    this.resolveAgentService.invalidate(agent.tenant_id, agentName);
     return { enabled: newValue };
   }
 
@@ -190,7 +189,6 @@ export class TierController {
     const applied = typeof body.enabled === 'boolean';
     if (applied) {
       await this.agentRepo.update(agent.id, { autofix_enabled: body.enabled });
-      this.resolveAgentService.invalidate(agent.tenant_id, agentName);
 
       if (body.enabled) {
         // Per-agent enable also records consent-once so the sidebar CTA doesn't
@@ -255,7 +253,6 @@ export class TierController {
     }
 
     await this.agentRepo.update(agent.id, { record_messages: body.enabled });
-    this.resolveAgentService.invalidate(agent.tenant_id, agentName);
     return { enabled: body.enabled };
   }
 

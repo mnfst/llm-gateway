@@ -7,6 +7,7 @@ import type {
   OutputModality,
 } from 'manifest-shared';
 import { BASE_URL, fetchJson, fetchMutate, parseErrorMessage, routingPath } from './core.js';
+import { onInvalidateAll } from './cache.js';
 
 export type { AuthType, ModelCapability, ModelModality, ModelRoute, ResponseMode, OutputModality };
 
@@ -488,6 +489,10 @@ export interface CustomProviderData {
 // SSE event (emitted by the backend on those mutations) does the same for other
 // already-open clients.
 const customProvidersCache = new Map<string, Promise<CustomProviderData[]>>();
+// Connecting a key or disconnecting a provider changes fields of this list
+// (`has_api_key`, …) without going through the custom-provider mutations, so
+// drop it with the shared GET cache on every mutation.
+onInvalidateAll(() => customProvidersCache.clear());
 
 export function invalidateCustomProvidersCache(agentName?: string): void {
   if (agentName === undefined) {

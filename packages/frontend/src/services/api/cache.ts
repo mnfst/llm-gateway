@@ -184,10 +184,23 @@ export function invalidatePredicate(predicate: (url: string) => boolean): void {
   }
 }
 
+const invalidateAllListeners = new Set<() => void>();
+
+/**
+ * Run `listener` whenever the whole cache is dropped, so module-level caches
+ * kept outside this one (e.g. the custom-providers list) are dropped with it.
+ * Returns an unsubscribe function.
+ */
+export function onInvalidateAll(listener: () => void): () => void {
+  invalidateAllListeners.add(listener);
+  return () => invalidateAllListeners.delete(listener);
+}
+
 /** Drop the entire cache. Used by mutations with broad blast radius and tests. */
 export function invalidateAll(): void {
   generation++;
   cache.clear();
+  for (const listener of invalidateAllListeners) listener();
 }
 
 /**

@@ -40,6 +40,7 @@ function makeDeps(overrides: { findOneResult?: CustomProvider | null } = {}) {
   const removeProvider = jest.fn().mockResolvedValue(undefined);
   const reloadPricing = jest.fn().mockResolvedValue(undefined);
   const emit = jest.fn();
+  const invalidateTenant = jest.fn();
 
   const svc = new CustomProviderService(
     repo,
@@ -47,7 +48,7 @@ function makeDeps(overrides: { findOneResult?: CustomProvider | null } = {}) {
     {
       getCustomProviders: jest.fn().mockReturnValue(null),
       setCustomProviders: jest.fn(),
-      invalidateTenant: jest.fn(),
+      invalidateTenant,
     } as unknown as RoutingCacheService,
     { reload: reloadPricing } as unknown as ModelPricingCacheService,
     { emit } as unknown as IngestEventBusService,
@@ -64,6 +65,7 @@ function makeDeps(overrides: { findOneResult?: CustomProvider | null } = {}) {
     emit,
     txManager,
     transaction,
+    invalidateTenant,
   };
 }
 
@@ -89,8 +91,21 @@ describe('CustomProviderService — transactional create/remove', () => {
     );
   });
 
+  it('create() invalidates the tenant routing cache again once the tx has committed', async () => {
+    const { svc, transaction, invalidateTenant } = makeDeps();
+    await svc.create('tenant-1', dto);
+
+    // Invalidations fired inside the transaction ran before commit; a read in
+    // between could have re-cached the old provider list.
+    expect(invalidateTenant).toHaveBeenCalledWith('tenant-1');
+    expect(invalidateTenant.mock.invocationCallOrder[0]).toBeGreaterThan(
+      transaction.mock.invocationCallOrder[0],
+    );
+  });
+
   it('create() propagates a companion-upsert failure so the cp insert rolls back with it', async () => {
-    const { svc, insert, upsertProvider, reloadPricing, emit, transaction } = makeDeps();
+    const { svc, insert, upsertProvider, reloadPricing, emit, transaction, invalidateTenant } =
+      makeDeps();
     upsertProvider.mockRejectedValue(new Error('encryption secret missing'));
 
     await expect(svc.create('tenant-1', dto)).rejects.toThrow('encryption secret missing');
@@ -101,6 +116,7 @@ describe('CustomProviderService — transactional create/remove', () => {
     expect(insert).toHaveBeenCalledTimes(1);
     expect(reloadPricing).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
+    expect(invalidateTenant).not.toHaveBeenCalled();
   });
 
   it('remove() deletes the custom_providers row through the tx manager repository', async () => {

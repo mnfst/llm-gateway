@@ -30,8 +30,6 @@ describe('TierController', () => {
   let tierService: jest.Mocked<Partial<TierService>>;
   let resolveAgentService: {
     resolve: jest.Mock;
-    invalidate: jest.Mock;
-    invalidateTenant: jest.Mock;
   };
   let agentRepo: jest.Mocked<Partial<Repository<Agent>>>;
   let autofixService: {
@@ -60,8 +58,6 @@ describe('TierController', () => {
     };
     resolveAgentService = {
       resolve: jest.fn().mockResolvedValue(agent),
-      invalidate: jest.fn(),
-      invalidateTenant: jest.fn(),
     };
     agentRepo = {
       update: jest.fn().mockResolvedValue(undefined),
@@ -171,13 +167,12 @@ describe('TierController', () => {
     expect(result).toEqual({ enabled: true });
   });
 
-  it('POST complexity/toggle flips the flag and invalidates cache', async () => {
+  it('POST complexity/toggle flips the flag', async () => {
     const result = await controller.toggleComplexity(ctx, 'demo');
     expect(result).toEqual({ enabled: false });
     expect(agentRepo.update).toHaveBeenCalledWith('agent-1', {
       complexity_routing_enabled: false,
     });
-    expect(resolveAgentService.invalidate).toHaveBeenCalledWith('tenant-1', 'demo');
   });
 
   it('GET autofix returns the enabled flag', async () => {
@@ -194,14 +189,12 @@ describe('TierController', () => {
     expect(autofixService.resolveEnabled).toHaveBeenCalledWith(null);
   });
 
-  it('PATCH autofix updates the enabled flag and invalidates the agent lookup', async () => {
+  it('PATCH autofix updates the enabled flag', async () => {
     const out = await controller.updateAutofix(ctx, 'demo', { enabled: true });
     expect(out).toEqual({ enabled: true, consented: true });
     expect(agentRepo.update).toHaveBeenCalledWith('agent-1', { autofix_enabled: true });
-    expect(resolveAgentService.invalidate).toHaveBeenCalledWith('tenant-1', 'demo');
     // Cloud: no consent to record, and no backfill requested.
     expect(installMetadataRepo.createQueryBuilder).not.toHaveBeenCalled();
-    expect(resolveAgentService.invalidateTenant).not.toHaveBeenCalled();
     // The workspace status the sidebar reads is cached per tenant; both
     // `any_enabled` and `consented` just changed, so it has to be dropped or
     // the CTA keeps prompting for the dashboard TTL.
@@ -217,7 +210,6 @@ describe('TierController', () => {
     const out = await controller.updateAutofix(ctx, 'demo', {});
     expect(out).toEqual({ enabled: false, consented: true });
     expect(agentRepo.update).not.toHaveBeenCalled();
-    expect(resolveAgentService.invalidate).not.toHaveBeenCalled();
   });
 
   it('PATCH autofix treats a null enabled as a no-op (never resets the flag to null)', async () => {
@@ -228,7 +220,6 @@ describe('TierController', () => {
     });
     expect(out).toEqual({ enabled: false, consented: true });
     expect(agentRepo.update).not.toHaveBeenCalled();
-    expect(resolveAgentService.invalidate).not.toHaveBeenCalled();
   });
 
   describe('self-hosted consent + backfill', () => {
@@ -295,12 +286,11 @@ describe('TierController', () => {
     expect(recordingConfig.isRecording).toHaveBeenCalledWith('agent-1');
   });
 
-  it('PATCH recording updates the flag and invalidates the agent lookup', async () => {
+  it('PATCH recording updates the flag', async () => {
     expect(await controller.updateRecording(ctx, 'demo', { enabled: true })).toEqual({
       enabled: true,
     });
     expect(agentRepo.update).toHaveBeenCalledWith('agent-1', { record_messages: true });
-    expect(resolveAgentService.invalidate).toHaveBeenCalledWith('tenant-1', 'demo');
   });
 
   it('PATCH recording with no boolean is a no-op', async () => {

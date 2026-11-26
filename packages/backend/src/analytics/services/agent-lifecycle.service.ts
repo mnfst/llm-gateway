@@ -2,7 +2,6 @@ import { Injectable, ConflictException, NotFoundException } from '@nestjs/common
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { Agent } from '../../entities/agent.entity';
-import { ResolveAgentService } from '../../routing/routing-core/resolve-agent.service';
 import { RoutingCacheService } from '../../routing/routing-core/routing-cache.service';
 import { AgentKeyAuthGuard } from '../../otlp/guards/agent-key-auth.guard';
 
@@ -12,7 +11,6 @@ export class AgentLifecycleService {
     @InjectRepository(Agent)
     private readonly agentRepo: Repository<Agent>,
     private readonly dataSource: DataSource,
-    private readonly resolveAgent: ResolveAgentService,
     private readonly routingCache: RoutingCacheService,
     private readonly otlpAuthGuard: AgentKeyAuthGuard,
   ) {}
@@ -43,7 +41,7 @@ export class AgentLifecycleService {
       throw new NotFoundException(`Agent "${agentName}" not found`);
     }
 
-    const { id: agentId, tenant_id: agentTenantId } = agent;
+    const { id: agentId } = agent;
 
     await this.dataSource.transaction(async (manager) => {
       await manager
@@ -63,7 +61,6 @@ export class AgentLifecycleService {
         .execute();
     });
 
-    this.resolveAgent.invalidate(agentTenantId, agentName);
     this.routingCache.invalidateAgent(agentId);
     this.otlpAuthGuard.clearCache();
   }
