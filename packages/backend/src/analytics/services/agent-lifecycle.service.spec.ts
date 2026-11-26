@@ -4,7 +4,6 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { AgentLifecycleService } from './agent-lifecycle.service';
 import { Agent } from '../../entities/agent.entity';
-import { ResolveAgentService } from '../../routing/routing-core/resolve-agent.service';
 import { RoutingCacheService } from '../../routing/routing-core/routing-cache.service';
 import { AgentKeyAuthGuard } from '../../otlp/guards/agent-key-auth.guard';
 
@@ -13,7 +12,6 @@ describe('AgentLifecycleService', () => {
   let mockAgentGetOne: jest.Mock;
   let mockTransaction: jest.Mock;
   let mockAgentCreateQueryBuilder: jest.Mock;
-  let mockResolveInvalidate: jest.Mock;
   let mockRoutingInvalidate: jest.Mock;
   let mockOtlpClearCache: jest.Mock;
 
@@ -23,7 +21,6 @@ describe('AgentLifecycleService', () => {
       .mockImplementation(async (cb: (...args: unknown[]) => unknown) => cb());
 
     mockAgentGetOne = jest.fn().mockResolvedValue(null);
-    mockResolveInvalidate = jest.fn();
     mockRoutingInvalidate = jest.fn();
     mockOtlpClearCache = jest.fn();
 
@@ -51,10 +48,6 @@ describe('AgentLifecycleService', () => {
         {
           provide: DataSource,
           useValue: { transaction: mockTransaction },
-        },
-        {
-          provide: ResolveAgentService,
-          useValue: { invalidate: mockResolveInvalidate },
         },
         {
           provide: RoutingCacheService,
@@ -145,7 +138,6 @@ describe('AgentLifecycleService', () => {
       const keySet = mockManagerQb.set.mock.calls[1][0];
       expect(keySet).toEqual({ is_active: false });
 
-      expect(mockResolveInvalidate).toHaveBeenCalledWith('tenant-1', 'my-agent');
       expect(mockRoutingInvalidate).toHaveBeenCalledWith('agent-id-1');
       expect(mockOtlpClearCache).toHaveBeenCalledTimes(1);
     });
@@ -157,7 +149,6 @@ describe('AgentLifecycleService', () => {
         NotFoundException,
       );
       expect(mockTransaction).not.toHaveBeenCalled();
-      expect(mockResolveInvalidate).not.toHaveBeenCalled();
       expect(mockRoutingInvalidate).not.toHaveBeenCalled();
       expect(mockOtlpClearCache).not.toHaveBeenCalled();
     });

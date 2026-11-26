@@ -26,7 +26,13 @@ function makeDeps(overrides: { findOneResult?: CustomProvider | null } = {}) {
   const insert = jest.fn().mockResolvedValue(undefined);
   const remove = jest.fn().mockResolvedValue(undefined);
   const txManager = { getRepository: jest.fn(() => repo) };
-  const transaction = jest.fn(async (cb: (manager: unknown) => Promise<unknown>) => cb(txManager));
+  // Records when the callback has settled, i.e. when the real tx would commit.
+  const commit = jest.fn();
+  const transaction = jest.fn(async (cb: (manager: unknown) => Promise<unknown>) => {
+    const result = await cb(txManager);
+    commit();
+    return result;
+  });
   const repo = {
     findOne: jest.fn().mockResolvedValue(overrides.findOneResult ?? null),
     find: jest.fn().mockResolvedValue([]),
@@ -40,6 +46,7 @@ function makeDeps(overrides: { findOneResult?: CustomProvider | null } = {}) {
   const removeProvider = jest.fn().mockResolvedValue(undefined);
   const reloadPricing = jest.fn().mockResolvedValue(undefined);
   const emit = jest.fn();
+  const invalidateTenant = jest.fn();
 
   const svc = new CustomProviderService(
     repo,
@@ -47,7 +54,7 @@ function makeDeps(overrides: { findOneResult?: CustomProvider | null } = {}) {
     {
       getCustomProviders: jest.fn().mockReturnValue(null),
       setCustomProviders: jest.fn(),
-      invalidateTenant: jest.fn(),
+      invalidateTenant,
     } as unknown as RoutingCacheService,
     { reload: reloadPricing } as unknown as ModelPricingCacheService,
     { emit } as unknown as IngestEventBusService,
@@ -64,6 +71,8 @@ function makeDeps(overrides: { findOneResult?: CustomProvider | null } = {}) {
     emit,
     txManager,
     transaction,
+    commit,
+    invalidateTenant,
   };
 }
 
@@ -89,8 +98,21 @@ describe('CustomProviderService — transactional create/remove', () => {
     );
   });
 
+  it('create() invalidates the tenant routing cache again once the tx has committed', async () => {
+    const { svc, commit, invalidateTenant } = makeDeps();
+    await svc.create('tenant-1', dto);
+
+    // Invalidations fired inside the transaction ran before commit; a read in
+    // between could have re-cached the old provider list.
+    expect(invalidateTenant).toHaveBeenCalledWith('tenant-1');
+    expect(invalidateTenant.mock.invocationCallOrder[0]).toBeGreaterThan(
+      commit.mock.invocationCallOrder[0],
+    );
+  });
+
   it('create() propagates a companion-upsert failure so the cp insert rolls back with it', async () => {
-    const { svc, insert, upsertProvider, reloadPricing, emit, transaction } = makeDeps();
+    const { svc, insert, upsertProvider, reloadPricing, emit, transaction, invalidateTenant } =
+      makeDeps();
     upsertProvider.mockRejectedValue(new Error('encryption secret missing'));
 
     await expect(svc.create('tenant-1', dto)).rejects.toThrow('encryption secret missing');
@@ -101,6 +123,7 @@ describe('CustomProviderService — transactional create/remove', () => {
     expect(insert).toHaveBeenCalledTimes(1);
     expect(reloadPricing).not.toHaveBeenCalled();
     expect(emit).not.toHaveBeenCalled();
+    expect(invalidateTenant).not.toHaveBeenCalled();
   });
 
   it('remove() deletes the custom_providers row through the tx manager repository', async () => {

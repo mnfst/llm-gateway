@@ -359,6 +359,10 @@ export class CustomProviderService {
       }
       throw err;
     }
+    // The invalidations fired inside the transaction ran before commit, so a
+    // read in between could re-cache the pre-create provider list. Clear it
+    // again now that the rows are visible.
+    this.routingCache.invalidateTenant(tenantId);
 
     // Rebuild the shared pricing cache so the proxy can compute cost for
     // requests routed to this custom provider's models immediately (without
