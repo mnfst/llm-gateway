@@ -96,6 +96,23 @@ describe('Google Adapter', () => {
       expect(result.generationConfig).toEqual({ seed: 42 });
     });
 
+    it('maps top_k to generationConfig topK', () => {
+      const body = {
+        messages: [{ role: 'user', content: 'Hi' }],
+        top_k: 40,
+      };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+
+      expect(result.generationConfig).toEqual({ topK: 40 });
+    });
+
+    it('omits topK when the client does not send top_k', () => {
+      const body = { messages: [{ role: 'user', content: 'Hi' }], temperature: 0.5 };
+      const result = toGoogleRequest(body, 'gemini-2.0-flash');
+
+      expect(result.generationConfig).toEqual({ temperature: 0.5 });
+    });
+
     it('maps max_completion_tokens to maxOutputTokens', () => {
       const body = {
         messages: [{ role: 'user', content: 'Hi' }],
