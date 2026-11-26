@@ -1,6 +1,6 @@
 import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
 import type { Request } from 'express';
-import { Observable, concatMap } from 'rxjs';
+import { Observable, catchError, concatMap, from, mergeMap, throwError } from 'rxjs';
 import { RoutingCacheSyncService } from './routing-cache-sync.service';
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -25,6 +25,10 @@ export class RoutingCacheFlushInterceptor implements NestInterceptor {
         await this.cacheSync.flushPending();
         return value;
       }),
+      // A write can invalidate and then fail; publish before the error responds too.
+      catchError((error: unknown) =>
+        from(this.cacheSync.flushPending()).pipe(mergeMap(() => throwError(() => error))),
+      ),
     );
   }
 }

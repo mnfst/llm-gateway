@@ -94,12 +94,39 @@ describe('RoutingCacheSyncService', () => {
       expect(query).not.toHaveBeenCalled();
     });
 
-    it('logs and swallows a failed insert', async () => {
-      const { query, cache, sync } = setup();
-      query.mockRejectedValue(new Error('db down'));
+    it('logs a failed insert and retries the batch on the next flush', async () => {
+      const { query, cache, sync, inserts } = setup();
+      query.mockRejectedValueOnce(new Error('db down')).mockResolvedValue([]);
       cache.invalidateAgent('agent-1');
       await expect(sync.flushPending()).resolves.toBeUndefined();
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('db down'));
+
+      cache.invalidateAgent('agent-2');
+      cache.invalidateAgent('agent-1'); // already queued again: not duplicated
+      await sync.flushPending();
+      expect(inserts()).toHaveLength(2);
+      expect(inserts()[1][1]).toEqual([
+        ['agent', 'agent'],
+        ['agent-1', 'agent-2'],
+      ]);
+    });
+
+    it('the poll timer retries a batch a failed insert put back', async () => {
+      jest.useFakeTimers();
+      const { query, cache, sync, inserts } = setup();
+      query.mockImplementation(async (sql: string) => {
+        if (sql.includes('INSERT') && inserts().length === 1) throw new Error('db down');
+        return feed();
+      });
+      cache.invalidateAgent('agent-1');
+      await sync.flushPending();
+      expect(inserts()).toHaveLength(1);
+
+      sync.onApplicationBootstrap();
+      await jest.advanceTimersByTimeAsync(SYNC_POLL_INTERVAL_MS);
+      expect(inserts()).toHaveLength(2);
+      expect(inserts()[1][1]).toEqual([['agent'], ['agent-1']]);
+      await sync.onModuleDestroy();
     });
   });
 

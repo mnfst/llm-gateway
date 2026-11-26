@@ -1,5 +1,5 @@
 import { CallHandler, ExecutionContext } from '@nestjs/common';
-import { firstValueFrom, of } from 'rxjs';
+import { firstValueFrom, of, throwError } from 'rxjs';
 import { RoutingCacheFlushInterceptor } from './routing-cache-flush.interceptor';
 import { RoutingCacheSyncService } from './routing-cache-sync.service';
 
@@ -41,6 +41,15 @@ describe('RoutingCacheFlushInterceptor', () => {
       await expect(result).resolves.toBe('body');
     },
   );
+
+  it('publishes before an error responds and rethrows it', async () => {
+    const failure = new Error('write failed');
+    const failing: CallHandler = { handle: () => throwError(() => failure) };
+    await expect(firstValueFrom(interceptor.intercept(httpContext('PUT'), failing))).rejects.toBe(
+      failure,
+    );
+    expect(flushPending).toHaveBeenCalledTimes(1);
+  });
 
   it.each(['GET', 'HEAD', 'OPTIONS'])('passes a %s straight through', async (method) => {
     await expect(firstValueFrom(interceptor.intercept(httpContext(method), handler))).resolves.toBe(

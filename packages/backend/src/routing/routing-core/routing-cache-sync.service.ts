@@ -99,7 +99,7 @@ export class RoutingCacheSyncService implements OnApplicationBootstrap, OnModule
 
   private enqueue(scope: Scope, id: string): void {
     if (this.applyingFeed) return;
-    this.pending.set(`${scope}\u0000${id}`, { scope, id });
+    this.pending.set(pendingKey(scope, id), { scope, id });
     if (this.flushScheduled) return;
     this.flushScheduled = true;
     // Coalesce the per-agent fan-out of one write (e.g. a provider connect
@@ -115,6 +115,12 @@ export class RoutingCacheSyncService implements OnApplicationBootstrap, OnModule
         [batch.map((b) => b.scope), batch.map((b) => b.id)],
       );
     } catch (err) {
+      // Put the batch back so the next timer tick retries it, rather than
+      // leaving the other instances on stale config until their TTL expires.
+      for (const entry of batch) {
+        const key = pendingKey(entry.scope, entry.id);
+        if (!this.pending.has(key)) this.pending.set(key, entry);
+      }
       this.logger.warn(`Could not publish routing cache invalidations: ${describe(err)}`);
     }
   }
@@ -123,6 +129,8 @@ export class RoutingCacheSyncService implements OnApplicationBootstrap, OnModule
     if (this.timerPollRunning) return;
     this.timerPollRunning = true;
     try {
+      // Retries any batch a failed insert put back.
+      await this.flushPending();
       await this.catchUp();
       if (++this.polls % PRUNE_EVERY_POLLS === 0) await this.prune();
     } finally {
@@ -153,7 +161,7 @@ export class RoutingCacheSyncService implements OnApplicationBootstrap, OnModule
     try {
       for (const { scope, target_id } of rows) {
         if (!scope || !target_id) continue;
-        const key = `${scope}\u0000${target_id}`;
+        const key = pendingKey(scope, target_id);
         if (seen.has(key)) continue;
         seen.add(key);
         if (scope === 'agent') this.routingCache.invalidateAgent(target_id);
@@ -174,6 +182,10 @@ export class RoutingCacheSyncService implements OnApplicationBootstrap, OnModule
       this.logger.warn(`Could not prune routing cache invalidations: ${describe(err)}`);
     }
   }
+}
+
+function pendingKey(scope: Scope, id: string): string {
+  return `${scope}\u0000${id}`;
 }
 
 function describe(err: unknown): string {

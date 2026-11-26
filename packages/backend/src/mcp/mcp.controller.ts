@@ -26,6 +26,7 @@ import { ProviderService } from '../routing/routing-core/provider.service';
 import { TierService } from '../routing/routing-core/tier.service';
 import { SpecificityService } from '../routing/routing-core/specificity.service';
 import { ResolveAgentService } from '../routing/routing-core/resolve-agent.service';
+import { RoutingCacheSyncService } from '../routing/routing-core/routing-cache-sync.service';
 import { HeaderTierService } from '../routing/header-tiers/header-tier.service';
 import { CustomProviderService } from '../routing/custom-provider/custom-provider.service';
 import { AutofixService } from '../routing/autofix/autofix.service';
@@ -87,6 +88,7 @@ export class McpController {
     private readonly agentEnabledProviderRepo: Repository<AgentEnabledProvider>,
     @InjectRepository(Agent)
     private readonly agentRepo: Repository<Agent>,
+    private readonly cacheSync: RoutingCacheSyncService,
   ) {}
 
   private deps(): McpToolDeps {
@@ -167,6 +169,10 @@ export class McpController {
         },
       );
       const response = await verify(webRequest);
+      // This handler writes the response itself, so the global flush
+      // interceptor cannot hold it: publish the routing-cache invalidations
+      // the tools caused before the client sees the result.
+      await this.cacheSync.flushPending();
       await sendWebResponse(response, res, this.logger);
     } catch (error) {
       // Log the detail server-side; the OAuth caller gets a constant message so
