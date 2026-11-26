@@ -149,7 +149,7 @@ const NVIDIA_NEMOTRON_FAMILY_RE = /^nemotron(?:[-_.\d]|$)/i;
  * OpenAI models that require `max_completion_tokens` instead of `max_tokens`.
  * All o-series reasoning models and GPT-5+ models use the new parameter.
  */
-const OPENAI_MAX_COMPLETION_TOKENS_RE = /^(o\d|gpt-5)/i;
+const OPENAI_MAX_COMPLETION_TOKENS_RE = /^(o\d|gpt-[5-9])/i;
 
 /**
  * Endpoints that ultimately hit OpenAI infrastructure and therefore need

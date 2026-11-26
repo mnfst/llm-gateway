@@ -905,6 +905,19 @@ describe('provider-client-converters', () => {
       expect(result).not.toHaveProperty('max_tokens');
     });
 
+    it('should convert max_tokens for GPT-6 models on OpenAI and Copilot', () => {
+      for (const [endpoint, model] of [
+        ['openai', 'gpt-6-sol'],
+        ['openai', 'openai/gpt-6-luna'],
+        ['copilot', 'copilot/gpt-6-sol'],
+      ]) {
+        const result = sanitizeOpenAiBody({ messages: [], max_tokens: 4096 }, endpoint, model);
+
+        expect(result).toHaveProperty('max_completion_tokens', 4096);
+        expect(result).not.toHaveProperty('max_tokens');
+      }
+    });
+
     it('should convert max_tokens for gpt-5-chat-latest model', () => {
       const body = { messages: [], max_tokens: 4096 };
 
