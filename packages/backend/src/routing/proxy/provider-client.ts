@@ -13,6 +13,13 @@ import { validatePublicUrl } from '../../common/utils/url-validation';
 import { isSelfHosted } from '../../common/utils/detect-self-hosted';
 import { resolveSubscriptionEndpointKey } from './provider-hooks';
 import { isAnthropicHost, mergeAnthropicBeta } from './anthropic-beta';
+import {
+  AnthropicThinkingBindingSessionStore,
+  applyThinkingDropBlock,
+  buildThinkingBindingRecovery,
+  isAnthropicThinkingBindingError,
+  withThinkingBindingBetaIfNeeded,
+} from './anthropic-thinking-binding';
 import { injectOpenAiMessageCacheControl, injectOpenRouterCacheControl } from './cache-injection';
 import {
   applyAnthropicAutomaticCacheControl,
@@ -347,6 +354,7 @@ function stripModelPrefix(model: string, endpointKey: string): string {
 export class ProviderClient {
   private readonly logger = new Logger(ProviderClient.name);
   private readonly codexAffinity: CodexSessionAffinity;
+  private readonly thinkingBindingSessions = new AnthropicThinkingBindingSessionStore();
 
   constructor(
     @Optional()
@@ -434,7 +442,11 @@ export class ProviderClient {
           opts.apiMode === 'responses' ? responsesToolNames(body.tools) : undefined,
       };
     }
-    const { url, headers, requestBody } = this.buildRequest({
+    const {
+      url,
+      headers,
+      requestBody: builtRequestBody,
+    } = this.buildRequest({
       endpoint,
       endpointKey,
       provider,
@@ -456,6 +468,20 @@ export class ProviderClient {
       providerCacheKey: opts.providerCacheKey,
     });
 
+    const isAnthropicHostEndpoint = isAnthropic && isAnthropicHost(endpoint.baseUrl);
+    const bindingSessionId =
+      opts.providerCacheKey?.trim() ||
+      opts.sessionCacheKey?.trim() ||
+      (opts.sessionKey && opts.sessionKey !== 'default' ? opts.sessionKey.trim() : undefined);
+    const bindingScopeKey =
+      isAnthropicHostEndpoint && bindingSessionId
+        ? this.thinkingBindingSessions.buildKey(endpoint.baseUrl, bareModel, bindingSessionId)
+        : undefined;
+    const requestBody =
+      bindingScopeKey && this.thinkingBindingSessions.has(bindingScopeKey)
+        ? applyThinkingDropBlock(builtRequestBody, { preserveExplicitBehavior: true })
+        : builtRequestBody;
+
     // The Codex backend only serves prompt-cache hits with session affinity
     // headers the real Codex CLI sends — see CodexSessionAffinity.
     const affinity =
@@ -467,9 +493,10 @@ export class ProviderClient {
     const finalHeaders =
       affinity || extraHeaders ? { ...headers, ...extraHeaders, ...affinity?.headers } : headers;
 
-    const retryWireBody = async (
+    const sendWireBody = async (
       wireRequestBody: Record<string, unknown>,
-      attempt: ProviderAttemptRef | undefined = opts.attempt,
+      attemptHeaders: Record<string, string>,
+      attempt: ProviderAttemptRef | undefined,
     ): Promise<ForwardResult> => {
       if (resolvedWireFormat) {
         attempt?.startRecording?.({
@@ -491,7 +518,7 @@ export class ProviderClient {
         }
       }
 
-      const result = await this.executeFetch(url, finalHeaders, wireRequestBody, signal, stream, {
+      const result = await this.executeFetch(url, attemptHeaders, wireRequestBody, signal, stream, {
         isGoogle,
         isAnthropic,
         isChatGpt,
@@ -531,6 +558,38 @@ export class ProviderClient {
         wireApiMode: resolvedWireApiMode,
         retryWireBody,
       };
+    };
+
+    const retryWireBody = async (
+      wireRequestBody: Record<string, unknown>,
+      attempt: ProviderAttemptRef | undefined = opts.attempt,
+    ): Promise<ForwardResult> => {
+      const attemptHeaders = withThinkingBindingBetaIfNeeded(
+        finalHeaders,
+        isAnthropicHostEndpoint,
+        wireRequestBody,
+      );
+      const firstResult = await sendWireBody(wireRequestBody, attemptHeaders, attempt);
+      if (!isAnthropicHostEndpoint || firstResult.response.status !== HttpStatus.BAD_REQUEST) {
+        return firstResult;
+      }
+
+      const errorText = await firstResult.response
+        .clone()
+        .text()
+        .catch(() => '');
+      if (!isAnthropicThinkingBindingError(errorText)) {
+        return firstResult;
+      }
+
+      const recovery = buildThinkingBindingRecovery(wireRequestBody, attemptHeaders);
+      if (!recovery) {
+        return firstResult;
+      }
+      if (recovery.rememberDropBlock && bindingScopeKey) {
+        this.thinkingBindingSessions.remember(bindingScopeKey);
+      }
+      return sendWireBody(recovery.body, recovery.headers, attempt);
     };
 
     return retryWireBody(requestBody);

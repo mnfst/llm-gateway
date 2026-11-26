@@ -102,6 +102,8 @@ export interface ForwardOptions {
   apiMode?: ProxyApiMode;
   /** Legacy caller session identifier. Provider cache affinity must use providerCacheKey. */
   sessionKey?: string;
+  /** Tenant/agent/session-scoped key for internal replay and compatibility memory. */
+  sessionCacheKey?: string;
   /** Opaque, tenant/agent/session-scoped provider prompt-cache affinity key. */
   providerCacheKey?: string;
   stream: boolean;
