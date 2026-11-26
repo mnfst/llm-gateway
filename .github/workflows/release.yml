@@ -149,7 +149,9 @@ jobs:
     needs: release
     if: needs.release.outputs.should_publish == 'true'
     uses: ./.github/workflows/docker.yml
-    secrets: inherit
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     permissions:
       contents: read
       id-token: write

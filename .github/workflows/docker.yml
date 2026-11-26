@@ -13,6 +13,11 @@ on:
         description: "Optional version override. Leave blank to use the current version from packages/manifest/package.json."
         required: false
         type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
   pull_request:
     branches: [main]
     paths:
