@@ -310,6 +310,11 @@ const PROVIDER_UI: Record<string, ProviderUIOverlay> = {
     subtitle: 'Open models through Hugging Face Inference Providers',
     models: [],
   },
+  crowllm: {
+    initial: 'C',
+    subtitle: 'OpenAI-compatible gateway with a one-key free shelf',
+    models: [],
+  },
   kilo: {
     initial: 'K',
     subtitle: 'Kilo Gateway unified model access',
@@ -525,6 +530,7 @@ const PROVIDER_ORDER = [
   'cerebras',
   'cline-pass',
   'commandcode',
+  'crowllm',
   'deepseek',
   'fireworks',
   'gemini-free',

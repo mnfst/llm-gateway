@@ -957,6 +957,12 @@ export const PROVIDER_CONFIGS: Record<string, FetcherConfig> = {
     buildHeaders: bearerHeaders,
     parse: parseFireworks,
   },
+  crowllm: {
+    endpoint: 'https://crowllm.com/v1/models',
+    buildHeaders: bearerHeaders,
+    parse: parseOpenAI,
+  },
+
   kilo: {
     endpoint: `${KILO_GATEWAY_BASE}/models`,
     buildHeaders: bearerHeaders,
