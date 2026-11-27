@@ -35,6 +35,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -140,6 +142,7 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           path: .gateway-contract-baseline
           sparse-checkout: contracts/gateway
+          persist-credentials: false
 
       - name: Run baseline gateway contracts
         if: github.event_name == 'pull_request'
@@ -340,6 +343,8 @@ jobs:
     # healthy with the existing data and session intact.
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
 
       - uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
 
