@@ -10,7 +10,7 @@ import {
   Show,
 } from 'solid-js';
 import SocialButtons from '../components/SocialButtons.jsx';
-import PlanPicker, { type PlanId } from '../components/PlanPicker.jsx';
+import PlanPicker from '../components/PlanPicker.jsx';
 import { authClient } from '../services/auth-client.js';
 import { appendSearch } from '../services/auth-redirects.js';
 import { getLastAuthMethod, setLastAuthMethod } from '../services/last-auth-method.js';
@@ -132,15 +132,7 @@ const Register: Component = () => {
     startCooldown();
   };
 
-  const handlePlanSelect = async (plan: PlanId) => {
-    if (plan === 'free') {
-      markPlanChosen(userId());
-      window.location.replace('/');
-      return;
-    }
-    if (plan === 'enterprise') {
-      return;
-    }
+  const handleSubscribe = async () => {
     setPlanBusy(true);
     try {
       const origin = window.location.origin;
@@ -156,6 +148,11 @@ const Register: Component = () => {
       toast.error('Could not start the upgrade. Please try again.');
       setPlanBusy(false);
     }
+  };
+
+  const handleSignOut = async () => {
+    await authClient.signOut();
+    window.location.replace('/login');
   };
 
   const handleResend = async () => {
@@ -343,7 +340,7 @@ const Register: Component = () => {
             </h1>
             <p class="auth-header__subtitle">
               {searchParams.context === 'login'
-                ? 'Manifest Cloud is $19/month. The self-hosted gateway is free.'
+                ? 'Subscribe to Manifest Cloud to route your requests.'
                 : "Monitor your AI harnesses' costs and usage"}
             </p>
           </div>
@@ -351,11 +348,20 @@ const Register: Component = () => {
           <Show when={searchParams.context !== 'login'}>
             <div class="plan-picker__section-header">
               <h2 class="plan-picker__section-title">Choose your plan</h2>
-              <p class="plan-picker__section-subtitle">You can change your plan anytime</p>
+              <p class="plan-picker__section-subtitle">Cancel anytime</p>
             </div>
           </Show>
 
-          <PlanPicker proPrice={proPrice()} onSelect={handlePlanSelect} busy={planBusy()} />
+          <PlanPicker proPrice={proPrice()} onSubscribe={handleSubscribe} busy={planBusy()} />
+          <div class="auth-footer">
+            <button
+              type="button"
+              class="auth-footer__link plan-picker__sign-out"
+              onClick={handleSignOut}
+            >
+              Sign out
+            </button>
+          </div>
         </Show>
       </Show>
     </>
