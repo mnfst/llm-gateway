@@ -157,7 +157,7 @@ export class AnthropicThinkingBindingSessionStore {
   private lastCleanup = Date.now();
 
   buildKey(baseUrl: string, bareModel: string, sessionId: string): string {
-    return `${baseUrl.trim().toLowerCase()}\u0000${bareModel.trim().toLowerCase()}\u0000${sessionId}`;
+    return `${baseUrl.trim().toLowerCase()}\u0000${bareModel.trim()}\u0000${sessionId}`;
   }
 
   has(key: string): boolean {

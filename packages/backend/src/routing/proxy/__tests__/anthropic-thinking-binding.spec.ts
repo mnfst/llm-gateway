@@ -36,6 +36,9 @@ describe('anthropic-thinking-binding helpers', () => {
       Date.now = () => 1_000_000;
       const store = new AnthropicThinkingBindingSessionStore();
       const key = store.buildKey('https://api.anthropic.com', 'claude-opus-5-5', 'v1:sess-1');
+      expect(store.buildKey('https://api.anthropic.com', 'Claude-Opus-5-5', 'v1:sess-1')).not.toBe(
+        key,
+      );
       store.remember(key);
       expect(store.has(key)).toBe(true);
 
@@ -162,6 +165,9 @@ describe('ProviderClient — Anthropic thinking block binding', () => {
       )
       .mockResolvedValueOnce(
         new Response('{"content":[{"type":"text","text":"ok-other"}]}', { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response('{"content":[{"type":"text","text":"ok-distinct-case"}]}', { status: 200 }),
       );
 
     const baseRequest = {
@@ -209,6 +215,16 @@ describe('ProviderClient — Anthropic thinking block binding', () => {
     });
     expect(mockFetch).toHaveBeenCalledTimes(4);
     expect(mockFetch.mock.calls[3][1].headers).not.toHaveProperty('anthropic-beta');
+
+    // Distinct model casing in the same session does NOT share the remembered scope.
+    await client.forward({
+      ...baseRequest,
+      model: 'Claude-Opus-5-5',
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(5);
+    expect(mockFetch.mock.calls[4][1].headers).not.toHaveProperty('anthropic-beta');
+    const distinctCaseBody = JSON.parse(mockFetch.mock.calls[4][1].body as string);
+    expect(distinctCaseBody.thinking).toEqual({ type: 'adaptive' });
   });
 
   it('merges thinking-binding-controls onto subscription anthropic-beta flags during recovery', async () => {
