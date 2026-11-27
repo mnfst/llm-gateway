@@ -1099,6 +1099,7 @@ export class ProxyFallbackService {
         authType,
         apiMode: opts.apiMode,
         sessionKey: opts.sessionKey,
+        ...(opts.reasoningCacheKey ? { sessionCacheKey: opts.reasoningCacheKey } : {}),
         providerCacheKey: opts.providerCacheKey,
         signatureLookup,
         thinkingLookup,
