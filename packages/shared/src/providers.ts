@@ -496,6 +496,18 @@ export const SHARED_PROVIDERS: readonly SharedProviderEntry[] = [
     minKeyLength: 30,
     keyPlaceholder: 'API key',
   },
+  {
+    id: 'edenai',
+    displayName: 'Eden AI',
+    aliases: ['eden-ai', 'eden ai'],
+    openRouterPrefixes: [],
+    requiresApiKey: true,
+    localOnly: false,
+    color: '#5646ff',
+    keyPrefix: '',
+    minKeyLength: 40,
+    keyPlaceholder: 'Eden AI API key',
+  },
 ] as const;
 
 /**
